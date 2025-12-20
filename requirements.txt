@@ -1,0 +1,10 @@
+# Core JAX with CUDA support (Linux/GPU)
+# Note: The [cuda12] extra ensures NVIDIA GPU support
+jax[cuda12]
+
+# Data structures (PyTrees)
+flax
+
+# Utilities
+chex
+numpy

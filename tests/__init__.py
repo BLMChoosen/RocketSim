@@ -1,0 +1,3 @@
+"""
+RocketSim tests package.
+"""
