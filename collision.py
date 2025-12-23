@@ -711,63 +711,56 @@ GOAL_PLANES_NEG = jnp.array([
 def arena_sdf(pos: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
     """
     Exact Arena SDF using extracted plane equations.
+    Returns POSITIVE distance when INSIDE the arena (safe).
+    Returns NEGATIVE distance when PENETRATING a wall.
     """
     # Main Arena
-    # dist = d - dot(n, p)
-    # pos: (B, 3)
-    # planes: (N, 4)
+    # dist = dot(n, p) - d
+    # We are inside if dist > 0 for ALL planes.
+    # So dist_vol = min(dist_planes)
     
     # Main Arena SDF
     n_main = ARENA_PLANES[:, :3]
     d_main = ARENA_PLANES[:, 3]
     dot_main = jnp.matmul(pos, n_main.T) # (B, N)
-    dist_main_all = d_main - dot_main
-    dist_main = jnp.max(dist_main_all, axis=-1) # (B,)
-    idx_main = jnp.argmax(dist_main_all, axis=-1)
+    dist_main_all = dot_main - d_main
+    dist_main = jnp.min(dist_main_all, axis=-1) # (B,)
+    idx_main = jnp.argmin(dist_main_all, axis=-1)
     norm_main = n_main[idx_main]
     
     # Goal Pos SDF
     n_gp = GOAL_PLANES_POS[:, :3]
     d_gp = GOAL_PLANES_POS[:, 3]
     dot_gp = jnp.matmul(pos, n_gp.T)
-    dist_gp_all = d_gp - dot_gp
-    dist_gp = jnp.max(dist_gp_all, axis=-1)
-    idx_gp = jnp.argmax(dist_gp_all, axis=-1)
+    dist_gp_all = dot_gp - d_gp
+    dist_gp = jnp.min(dist_gp_all, axis=-1)
+    idx_gp = jnp.argmin(dist_gp_all, axis=-1)
     norm_gp = n_gp[idx_gp]
     
     # Goal Neg SDF
     n_gn = GOAL_PLANES_NEG[:, :3]
     d_gn = GOAL_PLANES_NEG[:, 3]
     dot_gn = jnp.matmul(pos, n_gn.T)
-    dist_gn_all = d_gn - dot_gn
-    dist_gn = jnp.max(dist_gn_all, axis=-1)
-    idx_gn = jnp.argmax(dist_gn_all, axis=-1)
+    dist_gn_all = dot_gn - d_gn
+    dist_gn = jnp.min(dist_gn_all, axis=-1)
+    idx_gn = jnp.argmin(dist_gn_all, axis=-1)
     norm_gn = n_gn[idx_gn]
     
-    # Union: min(main, goal_pos, goal_neg)
+    # Union: max(main, goal_pos, goal_neg)
     # We want the union of the EMPTY spaces.
-    # Inside main: dist_main < 0
-    # Inside goal: dist_goal < 0
-    # Union of inside regions -> min(dist)
+    # Inside main: dist_main > 0
+    # Inside goal: dist_goal > 0
+    # Union of inside regions -> max(dist)
     
-    min_dist = jnp.minimum(dist_main, jnp.minimum(dist_gp, dist_gn))
+    max_dist = jnp.maximum(dist_main, jnp.maximum(dist_gp, dist_gn))
     
     # Determine which volume we are in to pick the normal
-    is_gp = dist_gp < dist_main
-    is_gn = dist_gn < dist_main
-    # Note: if both are smaller, it doesn't matter much, but goals are disjoint.
+    # We pick the normal from the volume that gives the BEST (largest) distance.
+    # i.e. if we are deep inside the goal (dist_gp large) but outside main (dist_main small/neg),
+    # we are safe because of the goal.
     
-    # If inside goal, use goal normal.
-    # If outside both, use main normal (or closest).
-    # Actually, min_dist picks the closest boundary.
-    
-    # Logic:
-    # If dist_gp < dist_main and dist_gp < dist_gn -> use gp
-    # If dist_gn < dist_main and dist_gn < dist_gp -> use gn
-    # Else use main
-    
-    use_gp = (dist_gp < dist_main) & (dist_gp < dist_gn)
-    use_gn = (dist_gn < dist_main) & (dist_gn < dist_gp)
+    use_gp = (dist_gp > dist_main) & (dist_gp > dist_gn)
+    use_gn = (dist_gn > dist_main) & (dist_gn > dist_gp)
     
     normal = jnp.where(
         use_gp[..., None],
@@ -779,7 +772,7 @@ def arena_sdf(pos: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         )
     )
     
-    return min_dist, normal
+    return max_dist, normal
 
 def resolve_ball_arena_collision(
     pos: jnp.ndarray,
