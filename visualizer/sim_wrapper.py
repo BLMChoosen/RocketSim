@@ -1,8 +1,11 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax_sim import create_initial_state, step_physics, create_zero_controls
-from visualizer.states import GameState, CarState, PhysState
+from game import create_initial_state, step_physics, create_zero_controls
+try:
+    from visualizer.states import GameState, CarState, PhysState
+except ImportError:
+    from states import GameState, CarState, PhysState
 from pyrr import Vector3, Quaternion, Matrix33
 
 class SimWrapper:
@@ -77,7 +80,7 @@ class SimWrapper:
             new_boost = update_array(self.controls.boost, user_controls.boost)
             new_handbrake = update_array(self.controls.handbrake, user_controls.handbrake)
             
-            from jax_sim import CarControls
+            from sim_types import CarControls
             self.controls = CarControls(
                 throttle=new_throttle,
                 steer=new_steer,

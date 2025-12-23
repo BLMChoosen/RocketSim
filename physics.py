@@ -8,7 +8,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
-from .constants import (
+from sim_constants import (
     DT, GRAVITY_Z, BALL_DRAG, BALL_MAX_SPEED, BALL_MAX_ANG_SPEED,
     CAR_MASS, CAR_MAX_SPEED, CAR_MAX_ANG_SPEED, CAR_INERTIA, CAR_TORQUE_SCALE,
     CAR_AIR_CONTROL_TORQUE, CAR_AIR_CONTROL_DAMPING,
@@ -22,13 +22,13 @@ from .constants import (
     DRIVE_TORQUE_CURVE_SPEEDS, DRIVE_TORQUE_CURVE_FACTORS,
     FRONT_WHEEL_MASK, STICKY_FORCE_SCALE_BASE, STOPPING_FORWARD_VEL,
 )
-from .types import BallState, CarState, CarControls
-from .math_utils import (
+from sim_types import BallState, CarState, CarControls
+from math_utils import (
     quat_rotate_vector, quat_multiply, quat_normalize, quat_from_angular_velocity,
     get_car_forward_dir, get_car_up_dir, get_car_right_dir,
     clamp_velocity, clamp_angular_velocity,
 )
-from .collision import arena_sdf, resolve_ball_arena_collision, resolve_car_arena_collision
+from collision import arena_sdf, resolve_ball_arena_collision, resolve_car_arena_collision
 
 
 # =============================================================================
@@ -218,8 +218,9 @@ def raycast_suspension(
 
 def compute_suspension_force(
     compression: jnp.ndarray,
-    wheel_vel_z: jnp.ndarray,
+    compression_vel: jnp.ndarray,
     is_contact: jnp.ndarray,
+    inv_contact_dot: jnp.ndarray,
     stiffness: float = SUSPENSION_STIFFNESS,
     damping_comp: float = WHEELS_DAMPING_COMPRESSION,
     damping_relax: float = WHEELS_DAMPING_RELAXATION,
@@ -228,12 +229,13 @@ def compute_suspension_force(
     """
     Compute suspension force using spring-damper model.
     
-    F = k * compression - c * velocity
+    F = (k * compression - c * velocity) * force_scale
     
     Args:
         compression: Suspension compression (N, MAX_CARS, 4)
-        wheel_vel_z: Vertical velocity at wheel (N, MAX_CARS, 4)
+        compression_vel: Velocity of compression (positive = compressing) (N, MAX_CARS, 4)
         is_contact: Contact flags (N, MAX_CARS, 4)
+        inv_contact_dot: 1 / dot(contact_normal, car_up) (N, MAX_CARS, 4)
         stiffness: Spring constant (N/m)
         damping_comp: Compression damping coefficient
         damping_relax: Relaxation damping coefficient
@@ -242,13 +244,24 @@ def compute_suspension_force(
     Returns:
         Suspension force magnitude (N, MAX_CARS, 4)
     """
-    spring_force = stiffness * compression
+    # C++: force = (rest - len) * stiffness * clippedInvContactDotSuspension
+    spring_force = stiffness * compression * inv_contact_dot
     
-    damping = jnp.where(wheel_vel_z < 0, damping_comp, damping_relax)
-    damper_force = -damping * wheel_vel_z
+    # C++: suspensionRelativeVelocity = projVel * clippedInvContactDotSuspension
+    effective_vel = compression_vel * inv_contact_dot
+    
+    # Damping opposes velocity
+    # If effective_vel > 0 (compressing), use compression damping
+    # If effective_vel < 0 (extending), use relaxation damping
+    damping = jnp.where(effective_vel > 0, damping_comp, damping_relax)
+    damper_force = damping * effective_vel
     
     force_scales_expanded = force_scales[None, None, :]
     total_force = (spring_force + damper_force) * force_scales_expanded
+    
+    # RL never uses downwards suspension forces
+    total_force = jnp.maximum(total_force, 0.0)
+    
     total_force = jnp.where(is_contact, total_force, 0.0)
     
     return total_force
@@ -401,9 +414,16 @@ def compute_tire_forces(
     
     is_braking = (throttle_expanded * vel_forward) < 0
     
+    # Smooth braking at low speeds to prevent chatter (match C++ logic)
+    # C++ uses ROLLING_FRICTION_SCALE_MAGIC = 113.73963
+    braking_friction = -vel_forward * 113.74
+    max_brake = jnp.abs(throttle_expanded) * BRAKE_FORCE / 4.0
+    
+    brake_force_mag = jnp.clip(braking_friction, -max_brake, max_brake)
+    
     brake_force_mag = jnp.where(
         is_braking,
-        -jnp.sign(vel_forward) * jnp.abs(throttle_expanded) * BRAKE_FORCE / 4.0,
+        brake_force_mag,
         0.0
     )
     
@@ -494,8 +514,30 @@ def solve_suspension_and_tires(
     
     compression, is_contact, contact_normal = raycast_suspension(wheel_world_pos)
     
-    wheel_vel_z = wheel_vel[..., 2]
-    suspension_force = compute_suspension_force(compression, wheel_vel_z, is_contact)
+    # Calculate compression velocity (project wheel velocity onto contact normal)
+    # compression_vel = -dot(wheel_vel, normal)
+    # If wheel moves INTO wall (vel opposes normal), compression increases.
+    compression_vel = -jnp.sum(wheel_vel * contact_normal, axis=-1)
+    
+    # Calculate inv_contact_dot for suspension scaling
+    car_up = get_car_up_dir(cars.quat)  # (N, MAX_CARS, 3)
+    car_up_expanded = car_up[..., None, :]  # (N, MAX_CARS, 1, 3)
+    
+    denominator = jnp.sum(contact_normal * car_up_expanded, axis=-1)
+    
+    # C++ logic: if denominator > 0.1, inv = 1/denom, else inv = 10
+    inv_contact_dot = jnp.where(
+        denominator > 0.1,
+        1.0 / denominator,
+        10.0
+    )
+    
+    suspension_force = compute_suspension_force(
+        compression, 
+        compression_vel, 
+        is_contact,
+        inv_contact_dot
+    )
     
     tire_force = compute_tire_forces(
         cars.quat, 

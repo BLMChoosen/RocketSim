@@ -8,7 +8,7 @@ double jumps, and boost consumption/acceleration.
 from __future__ import annotations
 import jax.numpy as jnp
 
-from .constants import (
+from sim_constants import (
     DT, CAR_MAX_SPEED,
     JUMP_IMMEDIATE_FORCE, JUMP_ACCEL, JUMP_MIN_TIME, JUMP_MAX_TIME,
     JUMP_RESET_TIME_PAD,
@@ -22,8 +22,8 @@ from .constants import (
     SUPERSONIC_START_SPEED, SUPERSONIC_MAINTAIN_MIN_SPEED,
     SUPERSONIC_MAINTAIN_MAX_TIME,
 )
-from .types import CarState, CarControls
-from .math_utils import quat_rotate_vector, get_car_forward_dir, get_car_up_dir, get_car_right_dir
+from sim_types import CarState, CarControls
+from math_utils import quat_rotate_vector, get_car_forward_dir, get_car_up_dir, get_car_right_dir
 
 
 # =============================================================================

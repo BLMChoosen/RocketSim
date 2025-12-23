@@ -9,7 +9,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
-from .constants import (
+from sim_constants import (
     DT, BALL_RADIUS, BALL_REST_Z, BALL_MAX_SPEED, CAR_MAX_SPEED, CAR_MAX_ANG_SPEED,
     CAR_MASS, CAR_INERTIA, CAR_TORQUE_SCALE, CAR_AIR_CONTROL_TORQUE, CAR_AIR_CONTROL_DAMPING,
     GRAVITY_Z, GOAL_THRESHOLD_Y, DEMO_RESPAWN_TIME,
@@ -18,20 +18,20 @@ from .constants import (
     DOUBLEJUMP_MAX_DELAY, STICKY_FORCE_SCALE_BASE, STOPPING_FORWARD_VEL,
     KICKOFF_POSITIONS_BLUE, KICKOFF_POSITIONS_ORANGE, KICKOFF_YAW_BLUE, KICKOFF_YAW_ORANGE,
 )
-from .types import BallState, CarState, CarControls, PhysicsState
-from .math_utils import (
+from sim_types import BallState, CarState, CarControls, PhysicsState
+from math_utils import (
     quat_rotate_vector, quat_from_yaw, quat_to_rotation_matrix, get_forward_up_right,
     get_car_forward_dir, get_car_up_dir, get_car_right_dir,
     clamp_velocity, clamp_angular_velocity,
 )
-from .collision import (
+from collision import (
     resolve_ball_arena_collision, resolve_car_arena_collision,
     resolve_car_ball_collision, resolve_car_car_collision,
 )
-from .physics import (
+from physics import (
     step_ball, solve_suspension_and_tires, integrate_position, integrate_rotation,
 )
-from .mechanics import (
+from mechanics import (
     handle_jump, handle_flip_or_double_jump, apply_flip_z_damping,
     apply_boost, update_supersonic_status,
 )

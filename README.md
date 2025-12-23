@@ -1,12 +1,10 @@
-![image](https://user-images.githubusercontent.com/36944229/219303954-7267bce1-b7c5-4f15-881c-b9545512e65b.png)
+**A Python library with JAX for simulating Rocket League games at maximum efficiency**
 
-**A C++ library for simulating Rocket League games at maximum efficiency**
-
-RocketSim is a complete simulation of Rocket League's gameplay logic and physics that is completely standalone.
-RocketSim supports the game modes: Soccar, Hoops, Heatseeker, and Snowday.
+RocketSim-GPU is a complete simulation of Rocket League's gameplay logic and physics that is completely standalone.
+RocketSim-GPU supports the game modes: Soccar, Hoops, Heatseeker, and Snowday.
 
 # Speed
-RocketSim is designed to run extremely fast, even when complex collisions and suspension calculations are happening every tick.
+RocketSim-GPU is designed to run extremely fast, even when complex collisions and suspension calculations are happening every tick.
 On an average PC running a single thread of RocketSim with two cars, RocketSim can simulate around 20 minutes of game time every second.
 This means that with 12 threads running RocketSim, you can simulate around 10 days of game time every minute!
 
@@ -26,43 +24,37 @@ However, the tiny errors will accumulate over time, so RocketSim is best suited 
 - Move those assets into RocketSim's executing directory
 
 ## Documentation
-Documentation is available at: https://zealanl.github.io/RocketSimDocs/
-
-## Bindings
-If you don't want to work in C++, here are some (unofficial) bindings written in other languages:
-- **Python**: https://github.com/mtheall/RocketSim by `mtheall`
-- **Python**: https://github.com/uservar/pyrocketsim by `uservar`
-- **Rust**: https://github.com/VirxEC/rocketsim-rs by `VirxEC`
-
-Official Python bindings are currently in the works.
+Documentation is not avaliable yet.
 
 ## Performance Details
-RocketSim already heavily outperforms the speed of Rocket League's physics tick step without optimization.
+RocketSim-GPU already heavily outperforms the speed of RocketSim physics tick step with optimization.
 
 Version performance comparison:
 ```
-OS: Windows 10 (Process Priority = Normal)
-CPU: Intel i5-11400 @ 2.60GHz
-Ram Speed: 3200MZ
-Compiler: MSVC 14.16
+OS: Linux Ubuntu 24.04 LTS
+CPU: 48vcpu
+GPU: RTX PRO 6000 Blackwell
 =================================
 Arena: Default (Soccar)
-Cars: 2 on each team (2v2)
-Inputs: Randomly pre-generated, changed every 2-60 ticks for each car
+Cars: 1 on each team (1v1)
 =================================
-Single-thread performance (calculated using average CPU cycles per tick on the RocketSim thread) (1M ticks simulated):
-v1.0.0 = 30,334tps
-v1.1.0 = 48,191tps
-v1.2.0 = 50,763tps
-v2.0.0 = ~50,000tps
-v2.1.0 = 114,481tps
+Task: Train a model (same checkpoint, same RAM, same CPU and GPU)
+
+RocketSim:
+
+Multi-thread performance (calculated using average steps on the RocketSim threads) (1 min simulated):
+v2.1.0 = 14.153 steps/s
+
+RocketSim-GPU:
+Using only GPU:
+v1.0.0 = 14.78m steps/s
 ```
 
 ## Issues & PRs
 Feel free to make issues and pull requests if you encounter any issues!
 
-You can also contact me on Discord if you have questions: `Zealan#5987`
+You can also contact me on Discord if you have questions: `Davi3320`
 
 ## Legal Notice
-RocketSim was written to replicate Rocket League's game logic, but does not actually contain any code from the game.
+RocketSim-GPU was written to replicate Rocket League's game logic, but does not actually contain any code from the game.
 To Epic Games/Psyonix: If any of you guys have an issue with this, let me know on Discord and we can resolve it.

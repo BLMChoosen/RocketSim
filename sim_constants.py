@@ -259,9 +259,9 @@ GOAL_ORANGE_Y = GOAL_THRESHOLD_Y        # Orange goal is at positive Y
 # =============================================================================
 # NOTE: Values below are scaled for JAX simulation stability at 120Hz.
 # Original C++ values work with Bullet's internal substeps.
-SUSPENSION_STIFFNESS = 16000.0          # Scaled for stability (C++ BTVehicle: 500.0)
-WHEELS_DAMPING_COMPRESSION = 800.0      # Scaled for stability (C++ BTVehicle: 25.0)
-WHEELS_DAMPING_RELAXATION = 1280.0      # Scaled for stability (C++ BTVehicle: 40.0)
+SUSPENSION_STIFFNESS = 500.0            # C++ BTVehicle: 500.0
+WHEELS_DAMPING_COMPRESSION = 25.0       # C++ BTVehicle: 25.0
+WHEELS_DAMPING_RELAXATION = 40.0        # C++ BTVehicle: 40.0
 MAX_SUSPENSION_TRAVEL = 12.0            # In UU (unchanged)
 SUSPENSION_SUBTRACTION = 0.05
 

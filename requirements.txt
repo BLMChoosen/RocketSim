@@ -8,3 +8,11 @@ flax
 # Utilities
 chex
 numpy
+
+# Visualizer
+moderngl
+moderngl_window
+PyQt5
+PyOpenGL
+pyrr
+pywavefront

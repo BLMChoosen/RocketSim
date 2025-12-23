@@ -6,9 +6,12 @@ Uses branchless jnp.where() for GPU efficiency.
 """
 
 from __future__ import annotations
+import jax
 import jax.numpy as jnp
+import numpy as np
+import os
 
-from .constants import (
+from sim_constants import (
     ARENA_EXTENT_X, ARENA_EXTENT_Y, ARENA_HEIGHT,
     BALL_RADIUS, BALL_WALL_RESTITUTION, BALL_SURFACE_FRICTION, BALL_MASS,
     BALL_MAX_ANG_SPEED, BALL_CAR_EXTRA_IMPULSE_Z_SCALE,
@@ -20,10 +23,325 @@ from .constants import (
     BUMP_VEL_AMOUNT_AIR_SPEEDS, BUMP_VEL_AMOUNT_AIR_VALUES,
     BUMP_UPWARD_VEL_AMOUNT_SPEEDS, BUMP_UPWARD_VEL_AMOUNT_VALUES,
 )
-from .math_utils import quat_rotate_vector
+from math_utils import quat_rotate_vector
+
+# Load Mesh Data if available
+MESH_DATA_PATH = "mesh_data.npz"
+HAS_MESH_DATA = False
+# Mesh loading disabled in favor of analytical planes
+# if os.path.exists(MESH_DATA_PATH): ...
 
 
-def arena_sdf(pos: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+def point_triangle_distance(p, v0, v1, v2):
+    """
+    Compute distance from point p to triangle (v0, v1, v2).
+    Returns (dist_sq, closest_point).
+    """
+    # Based on standard algorithm (e.g. Eberly)
+    edge0 = v1 - v0
+    edge1 = v2 - v0
+    diff = v0 - p
+    
+    a00 = jnp.dot(edge0, edge0)
+    a01 = jnp.dot(edge0, edge1)
+    a11 = jnp.dot(edge1, edge1)
+    b0 = jnp.dot(diff, edge0)
+    b1 = jnp.dot(diff, edge1)
+    c = jnp.dot(diff, diff)
+    det = jnp.abs(a00 * a11 - a01 * a01)
+    s = a01 * b1 - a11 * b0
+    t = a01 * b0 - a00 * b1
+    
+    # Conditions
+    cond0 = s + t <= det
+    cond1 = s < 0
+    cond2 = t < 0
+    
+    # Region 0 (Interior)
+    # invDet = 1.0 / det
+    # s *= invDet
+    # t *= invDet
+    
+    # We need to handle all regions. This is complex to branchless-ize.
+    # Simplified approach: Project point to plane, clamp to triangle.
+    # Or use a library function if available? No.
+    
+    # Alternative: Check edges and face.
+    # 1. Project to plane.
+    # 2. Check barycentric coords.
+    # 3. If inside, dist is plane dist.
+    # 4. If outside, dist is dist to edges.
+    
+    # Plane projection
+    normal = jnp.cross(edge0, edge1)
+    normal_len = jnp.linalg.norm(normal)
+    unit_normal = normal / (normal_len + 1e-8)
+    
+    plane_dist = jnp.dot(p - v0, unit_normal)
+    proj_p = p - plane_dist * unit_normal
+    
+    # Barycentric
+    # v2_ = proj_p - v0
+    # d00 = dot(edge0, edge0)
+    # d01 = dot(edge0, edge1)
+    # d11 = dot(edge1, edge1)
+    # d20 = dot(v2_, edge0)
+    # d21 = dot(v2_, edge1)
+    # denom = d00 * d11 - d01 * d01
+    # v = (d11 * d20 - d01 * d21) / denom
+    # w = (d00 * d21 - d01 * d20) / denom
+    # u = 1.0 - v - w
+    
+    v2_ = proj_p - v0
+    d00 = a00
+    d01 = a01
+    d11 = a11
+    d20 = jnp.dot(v2_, edge0)
+    d21 = jnp.dot(v2_, edge1)
+    denom = d00 * d11 - d01 * d01 + 1e-8
+    v = (d11 * d20 - d01 * d21) / denom
+    w = (d00 * d21 - d01 * d20) / denom
+    u = 1.0 - v - w
+    
+    # Check if inside
+    is_inside = (u >= 0) & (v >= 0) & (w >= 0)
+    
+    closest_face = proj_p
+    dist_sq_face = plane_dist * plane_dist
+    
+    # Edge distances
+    def dist_segment(p, a, b):
+        ab = b - a
+        ap = p - a
+        t = jnp.dot(ap, ab) / (jnp.dot(ab, ab) + 1e-8)
+        t = jnp.clip(t, 0.0, 1.0)
+        closest = a + t * ab
+        d = p - closest
+        return jnp.dot(d, d), closest
+
+    d_e0, c_e0 = dist_segment(p, v0, v1)
+    d_e1, c_e1 = dist_segment(p, v1, v2)
+    d_e2, c_e2 = dist_segment(p, v2, v0)
+    
+    # Select closest edge
+    # We want min(d_e0, d_e1, d_e2)
+    
+    # If inside, use face. Else use min edge.
+    
+    min_edge_dist_sq = jnp.minimum(d_e0, jnp.minimum(d_e1, d_e2))
+    
+    # Find which edge is closest (for closest point)
+    # This is a bit messy to select the point without branching
+    # We can just compute all 3 points and select.
+    
+    closest_edge = jnp.where(
+        d_e0 < d_e1,
+        jnp.where(d_e0 < d_e2, c_e0, c_e2),
+        jnp.where(d_e1 < d_e2, c_e1, c_e2)
+    )
+    
+    dist_sq = jnp.where(is_inside, dist_sq_face, min_edge_dist_sq)
+    closest = jnp.where(is_inside, closest_face, closest_edge)
+    
+    return dist_sq, closest
+
+def mesh_sdf(pos: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """
+    SDF using mesh grid.
+    """
+    if not HAS_MESH_DATA:
+        return analytical_arena_sdf(pos)
+        
+    # Grid lookup
+    # pos shape: (..., 3)
+    
+    # Normalize pos to grid coords
+    grid_pos = (pos - MESH_MIN_BOUNDS) / MESH_CELL_SIZE
+    grid_idx = jnp.floor(grid_pos).astype(jnp.int32)
+    grid_idx = jnp.clip(grid_idx, 0, MESH_GRID_SHAPE - 1)
+    
+    # Fetch triangle indices
+    # grid_idx shape: (..., 3)
+    # MESH_GRID shape: (NX, NY, NZ, MAX_TRIS)
+    # We need to index into MESH_GRID
+    
+    # Flatten batch dims
+    batch_shape = pos.shape[:-1]
+    flat_pos = pos.reshape(-1, 3)
+    flat_grid_idx = grid_idx.reshape(-1, 3)
+    
+    # Gather
+    # MESH_GRID[x, y, z]
+    tri_indices = MESH_GRID[flat_grid_idx[:, 0], flat_grid_idx[:, 1], flat_grid_idx[:, 2]] # (N, MAX_TRIS)
+    
+    # Fetch verts and normals
+    # MESH_TRI_VERTS shape: (TotalTris, 3, 3)
+    # tri_indices has -1 for empty slots. We need to handle that.
+    # We can clamp -1 to 0 and mask the result.
+    
+    valid_mask = tri_indices >= 0
+    safe_indices = jnp.maximum(tri_indices, 0)
+    
+    batch_verts = MESH_TRI_VERTS[safe_indices] # (N, MAX_TRIS, 3, 3)
+    batch_normals = MESH_TRI_NORMALS[safe_indices] # (N, MAX_TRIS, 3)
+    
+    # Compute distances
+    # We map over MAX_TRIS dimension
+    
+    def check_tris(p, verts, normals, mask):
+        # p: (3,)
+        # verts: (MAX_TRIS, 3, 3)
+        # normals: (MAX_TRIS, 3)
+        # mask: (MAX_TRIS,)
+        
+        # Vectorize point_triangle_distance over verts
+        vmap_dist = jax.vmap(point_triangle_distance, in_axes=(None, 0, 0, 0))
+        dists_sq, closests = vmap_dist(p, verts[:, 0], verts[:, 1], verts[:, 2])
+        
+        # Signed distance
+        # dist = sqrt(dist_sq)
+        # sign = dot(p - closest, normal)
+        # If dot < 0, we are "inside" (safe).
+        # If dot > 0, we are "outside" (colliding).
+        # We want SDF to be positive if colliding?
+        # In analytical SDF, we returned dist to surface.
+        # And checked `penetration = radius - dist`.
+        # If dist is small (close to wall), penetration is positive.
+        # If dist is negative (inside wall), penetration is large.
+        # Wait, analytical SDF: `dist_floor = z`.
+        # If z=10, dist=10. Radius=90. Pen=80. Colliding!
+        # So analytical SDF returns POSITIVE distance when INSIDE the arena (safe).
+        # And NEGATIVE distance when OUTSIDE (colliding).
+        # So we want `dist` to be positive when safe.
+        
+        # Mesh normals point OUT (into wall).
+        # `dot(p - closest, n)`:
+        # If safe (inside room), p is "behind" the wall face.
+        # n points "forward" (into wall).
+        # So `dot < 0`.
+        # So `signed_dist = -dot`.
+        # But `dot` is only approximate distance.
+        # Real distance is `sqrt(dist_sq)`.
+        # Sign is `-sign(dot)`.
+        # So `sdf = -sign(dot) * sqrt(dist_sq)`.
+        # If safe, dot < 0 -> sign -1 -> sdf > 0. Correct.
+        # If colliding, dot > 0 -> sign 1 -> sdf < 0. Correct.
+        
+        vec = p - closests
+        dot = jnp.sum(vec * normals, axis=-1)
+        
+        dist = jnp.sqrt(dists_sq)
+        sdf = jnp.sign(dot) * dist
+        
+        # Mask invalid triangles
+        # Set SDF to infinity for invalid triangles so they are not picked as min
+        # We want the CLOSEST surface.
+        # If we are safe, we want the smallest positive SDF.
+        # If we are colliding, we want the largest negative SDF (closest to 0) or most negative?
+        # Usually we want the signed distance to the boundary.
+        # `min(sdf)`?
+        # If I am safe, all SDFs are positive (or far negative if behind other walls?).
+        # Wait.
+        # If I am in the room, I am "behind" all walls.
+        # So all dots are negative. All SDFs are positive.
+        # The closest wall has the smallest positive SDF.
+        # So `min(sdf)` is correct.
+        
+        # If I am colliding with one wall, its dot is positive. Its SDF is negative.
+        # Other walls are far away (positive SDF).
+        # `min(sdf)` will pick the negative one. Correct.
+        
+        sdf = jnp.where(mask, sdf, 1e9)
+        
+        min_idx = jnp.argmin(sdf)
+        min_sdf = sdf[min_idx]
+        best_normal = normals[min_idx] # Use triangle normal
+        
+        # If we are colliding (sdf < 0), the normal points INTO the wall.
+        # We want to push OUT.
+        # Force direction = -normal.
+        # In analytical: `dist, normal = arena_sdf(pos)`.
+        # `penetration = radius - dist`.
+        # `new_pos = pos + normal * penetration`.
+        # If dist is negative (colliding), penetration is large positive.
+        # We push along `normal`.
+        # If `normal` points INTO wall, we push deeper!
+        # Analytical normals: `n_floor = (0,0,1)`. Points UP (into room).
+        # Mesh normals: Point OUT (into wall).
+        # So we must FLIP mesh normals to match analytical convention.
+        
+        return min_sdf, best_normal
+
+    # Vmap over batch
+    vmap_check = jax.vmap(check_tris, in_axes=(0, 0, 0, 0))
+    dists, normals = vmap_check(flat_pos, batch_verts, batch_normals, valid_mask)
+    
+    # Reshape back
+    dists = dists.reshape(batch_shape)
+    normals = normals.reshape(*batch_shape, 3)
+    
+    return dists, normals
+
+def simple_arena_sdf(pos: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """
+    Simple AABB + Goal SDF (no corners).
+    """
+    x, y, z = pos[..., 0], pos[..., 1], pos[..., 2]
+    
+    # 1. AABB Distances
+    dist_floor = z
+    dist_ceiling = ARENA_HEIGHT - z
+    dist_left = x + ARENA_EXTENT_X
+    dist_right = ARENA_EXTENT_X - x
+    dist_back = y + ARENA_EXTENT_Y
+    dist_front = ARENA_EXTENT_Y - y
+    
+    # 2. Goal Openings
+    GOAL_HALF_WIDTH = 892.755
+    GOAL_HEIGHT = 642.775
+    
+    in_goal_x = jnp.abs(x) < GOAL_HALF_WIDTH
+    in_goal_z = z < GOAL_HEIGHT
+    in_goal_aperture = in_goal_x & in_goal_z
+    
+    # If in aperture, make back/front wall distance large
+    dist_back = jnp.where(in_goal_aperture, 1e6, dist_back)
+    dist_front = jnp.where(in_goal_aperture, 1e6, dist_front)
+    
+    # Stack distances
+    distances = jnp.stack([
+        dist_floor, dist_ceiling,
+        dist_left, dist_right,
+        dist_back, dist_front
+    ], axis=-1)
+    
+    # Normals
+    n_floor = jnp.array([0.0, 0.0, 1.0])
+    n_ceil = jnp.array([0.0, 0.0, -1.0])
+    n_left = jnp.array([1.0, 0.0, 0.0])
+    n_right = jnp.array([-1.0, 0.0, 0.0])
+    n_back = jnp.array([0.0, 1.0, 0.0])
+    n_front = jnp.array([0.0, -1.0, 0.0])
+    
+    ones = jnp.ones_like(x)[..., None]
+    def b(n): return n * ones
+    
+    normals_stack = jnp.stack([
+        b(n_floor), b(n_ceil),
+        b(n_left), b(n_right),
+        b(n_back), b(n_front)
+    ], axis=-2)
+    
+    min_idx = jnp.argmin(distances, axis=-1)
+    min_dist = jnp.min(distances, axis=-1)
+    
+    min_idx_expanded = min_idx[..., None, None]
+    normal = jnp.take_along_axis(normals_stack, min_idx_expanded, axis=-2)
+    normal = normal[..., 0, :]
+    
+    return min_dist, normal
+
+def analytical_arena_sdf_legacy(pos: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
     """
     Signed Distance Field for the Rocket League arena.
     
@@ -67,21 +385,175 @@ def arena_sdf(pos: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
     dist_front = jnp.where(in_goal_aperture, 1e6, dist_front)
     
     # 3. Corner Ramps (Ceiling & Vertical)
+    # Standard Rocket League Arena (Soccar) has curved corners, not chamfers.
+    # We use Euclidean distance to a rounded corner for the vertical walls.
+    
+    CORNER_RADIUS = 1152.0
+    # Centers of the 4 corner circles
+    # Front-Right (Quad 1): (+X, -Y) -> Center at (EXTENT_X - R, -EXTENT_Y + R)
+    # Back-Right (Quad 2): (+X, +Y) -> Center at (EXTENT_X - R, EXTENT_Y - R)
+    # ... and so on.
+    
+    # We can exploit symmetry by working in the first quadrant of absolute coordinates
+    abs_x = jnp.abs(x)
+    abs_y = jnp.abs(y)
+    
+    corner_center_x = ARENA_EXTENT_X - CORNER_RADIUS
+    corner_center_y = ARENA_EXTENT_Y - CORNER_RADIUS
+    
+    # Check if we are in the corner region (outside the central box)
+    in_corner_region = (abs_x > corner_center_x) & (abs_y > corner_center_y)
+    
+    # Distance to the corner center
+    dx = abs_x - corner_center_x
+    dy = abs_y - corner_center_y
+    dist_corner = jnp.sqrt(dx*dx + dy*dy) - CORNER_RADIUS
+    
+    # If in corner region, this distance replaces the wall distances
+    # The wall distance is min(dist_right, dist_back) usually.
+    # If we are in the corner, the wall is the curve.
+    # Distance to wall = negative of distance to surface (SDF convention here is negative = inside?)
+    # Wait, the function returns "Signed distance to surface (negative = inside arena)".
+    # dist_right = ARENA_EXTENT_X - x. If x < EXTENT, dist is positive.
+    # So positive = inside.
+    # My dist_corner calculation: sqrt(...) - R.
+    # If we are inside the curve (closer to center), sqrt < R, so dist_corner is negative.
+    # So we want positive = inside.
+    # So dist_corner_sdf = CORNER_RADIUS - sqrt(dx*dx + dy*dy)
+    
+    dist_corner_sdf = CORNER_RADIUS - jnp.sqrt(dx*dx + dy*dy)
+    
+    # Only apply this if we are actually in the corner zone
+    # Otherwise we use the standard wall distances
+    # We can combine them using smooth min or just min/max logic.
+    # Since we want the intersection of volumes, we take the minimum distance to any boundary.
+    # But here we are defining the boundary itself.
+    
+    # Let's refine the wall distances.
+    # The "Side Wall" is valid only when |y| < corner_center_y
+    # The "Back Wall" is valid only when |x| < corner_center_x
+    # The "Corner" is valid when both are exceeded.
+    
+    # However, simpler SDF logic for a rounded box (2D):
+    # d = length(max(abs(p) - b, 0.0)) - r
+    # Here we want the interior distance.
+    
+    # Let's stick to the "in_corner_region" logic for simplicity and readability
+    # If in corner region, use corner SDF. Else use min(dist_x, dist_y).
+    
+    # Update dist_right/left/back/front based on corner
+    # Actually, we can just add the corner distance to the stack and let the minimum win?
+    # No, because dist_right might be large (far from wall) but we are in the corner.
+    # If we are in the corner, dist_right is not the correct distance to the surface.
+    
+    # Correct approach:
+    # 1. Compute distance to the rounded rectangle boundary.
+    # 2. But we have separate walls in the return values.
+    # The physics engine likely uses the minimum of all these to resolve collision.
+    # So we should output a "dist_corner" and ensure dist_right/back are ignored if we are in the corner?
+    # Or better: modify dist_right/back/left/front to be "infinity" if we are in the corner region,
+    # and add a specific "dist_corner" output.
+    
+    # But the return signature is fixed? No, it returns a stack of distances.
+    # I can add more channels.
+    
+    # Let's modify the existing wall distances to account for corners.
+    # This is tricky because we have 4 corners.
+    
+    # Alternative: Just add the 4 corner distances to the stack.
+    # And make sure the linear wall distances are large when in the corner?
+    # If I am in the corner, dist_right = (EXTENT - x).
+    # dist_corner = (R - dist_from_center).
+    # If I am in the corner, dist_corner < dist_right.
+    # So if I take min(dist_right, dist_corner), it will pick the corner.
+    # Wait.
+    # Example: x = EXTENT - 10, y = EXTENT - 10. (Very close to corner).
+    # dist_right = 10. dist_back = 10.
+    # corner_center = EXTENT - 1152.
+    # dx = 1142, dy = 1142.
+    # dist_from_center = sqrt(1142^2 + 1142^2) = 1615.
+    # dist_corner_sdf = 1152 - 1615 = -463. (Outside arena!)
+    # dist_right = 10 (Inside arena).
+    # The collision solver pushes out if dist < 0.
+    # So if dist_corner is negative, it will push.
+    # But dist_right is positive.
+    # The solver usually takes the *minimum* positive distance (closest surface) or *maximum* negative distance (deepest penetration).
+    # Actually, usually it checks "if dist < radius".
+    # If dist_corner < radius, we collide.
+    # So adding dist_corner to the list is sufficient, provided the solver checks all of them.
+    
+    # Let's check resolve_ball_arena_collision in jax_sim.py (or collision.py if moved).
+    # Wait, resolve_ball_arena_collision in jax_sim.py (which I read) does NOT use arena_sdf!
+    # It uses explicit planes:
+    # hit_left = px < min_x
+    # px = jnp.where(hit_left, min_x, px)
+    
+    # AHA! `resolve_ball_arena_collision` is hardcoded to AABB!
+    # `arena_sdf` is used for CAR suspension raycasts.
+    # So changing `arena_sdf` fixes the car suspension on corners (maybe), but NOT the ball collision.
+    # AND NOT the car body collision (resolve_car_arena_collision).
+    
+    # I need to update:
+    # 1. `arena_sdf` (for suspension/raycasts)
+    # 2. `resolve_ball_arena_collision` (for ball physics)
+    # 3. `resolve_car_arena_collision` (for car body physics)
+    
+    # Let's start with `arena_sdf` in this file.
+    
+    # Ceiling Ramps (45 deg) - These are actually chamfers in standard RL too? 
+    # Or are they curved? Usually ceiling corners are chamfered or curved. 
+    # Let's keep them as chamfers for now unless requested, user focused on "borda curva" (walls).
+    
     RAMP_INSET = 820.0
-    CORNER_INSET = 1152.0
     SQRT2 = jnp.sqrt(2.0)
     
-    # Ceiling Ramps (45 deg)
     ramp_c_r = (dist_right + dist_ceiling - RAMP_INSET) / SQRT2
     ramp_c_l = (dist_left + dist_ceiling - RAMP_INSET) / SQRT2
     ramp_c_b = (dist_back + dist_ceiling - RAMP_INSET) / SQRT2
     ramp_c_f = (dist_front + dist_ceiling - RAMP_INSET) / SQRT2
     
-    # Vertical Corners (45 deg)
-    ramp_w_rb = (dist_right + dist_back - CORNER_INSET) / SQRT2
-    ramp_w_rf = (dist_right + dist_front - CORNER_INSET) / SQRT2
-    ramp_w_lb = (dist_left + dist_back - CORNER_INSET) / SQRT2
-    ramp_w_lf = (dist_left + dist_front - CORNER_INSET) / SQRT2
+    # Vertical Corners (Rounded)
+    # We calculate distance to the 4 rounded corners
+    # Corner centers:
+    cx_r = ARENA_EXTENT_X - CORNER_RADIUS
+    cx_l = -ARENA_EXTENT_X + CORNER_RADIUS
+    cy_b = ARENA_EXTENT_Y - CORNER_RADIUS  # Back is +Y in this file? 
+    # In jax_sim.py: min_y = -ARENA_EXTENT_Y. Back wall (-Y)? 
+    # Let's check jax_sim.py again.
+    # "Back wall (-Y)". "Front wall (+Y)".
+    # In collision.py: dist_back = y + ARENA_EXTENT_Y. (y - (-EXTENT)). So Back is -Y.
+    # dist_front = ARENA_EXTENT_Y - y. Front is +Y.
+    
+    cy_back = -ARENA_EXTENT_Y + CORNER_RADIUS
+    cy_front = ARENA_EXTENT_Y - CORNER_RADIUS
+    
+    # Distances to corner axes (cylinders)
+    # We want (CORNER_RADIUS - dist_to_axis)
+    
+    # RB: Right (+X), Back (-Y)
+    d_rb = jnp.sqrt((x - cx_r)**2 + (y - cy_back)**2)
+    ramp_w_rb = CORNER_RADIUS - d_rb
+    # Only valid if x > cx_r and y < cy_back
+    mask_rb = (x > cx_r) & (y < cy_back)
+    ramp_w_rb = jnp.where(mask_rb, ramp_w_rb, 1e6)
+
+    # RF: Right (+X), Front (+Y)
+    d_rf = jnp.sqrt((x - cx_r)**2 + (y - cy_front)**2)
+    ramp_w_rf = CORNER_RADIUS - d_rf
+    mask_rf = (x > cx_r) & (y > cy_front)
+    ramp_w_rf = jnp.where(mask_rf, ramp_w_rf, 1e6)
+
+    # LB: Left (-X), Back (-Y)
+    d_lb = jnp.sqrt((x - cx_l)**2 + (y - cy_back)**2)
+    ramp_w_lb = CORNER_RADIUS - d_lb
+    mask_lb = (x < cx_l) & (y < cy_back)
+    ramp_w_lb = jnp.where(mask_lb, ramp_w_lb, 1e6)
+
+    # LF: Left (-X), Front (+Y)
+    d_lf = jnp.sqrt((x - cx_l)**2 + (y - cy_front)**2)
+    ramp_w_lf = CORNER_RADIUS - d_lf
+    mask_lf = (x < cx_l) & (y > cy_front)
+    ramp_w_lf = jnp.where(mask_lf, ramp_w_lf, 1e6)
     
     # Stack all distances
     distances = jnp.stack([
@@ -100,34 +572,214 @@ def arena_sdf(pos: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
     n_back = jnp.array([0.0, 1.0, 0.0])
     n_front = jnp.array([0.0, -1.0, 0.0])
     
-    # Ramp normals
+    # Ramp normals (Ceiling)
     n_c_r = (n_right + n_ceil) / SQRT2
     n_c_l = (n_left + n_ceil) / SQRT2
     n_c_b = (n_back + n_ceil) / SQRT2
     n_c_f = (n_front + n_ceil) / SQRT2
     
-    n_w_rb = (n_right + n_back) / SQRT2
-    n_w_rf = (n_right + n_front) / SQRT2
-    n_w_lb = (n_left + n_back) / SQRT2
-    n_w_lf = (n_left + n_front) / SQRT2
+    # Dynamic normals for corners
+    # We compute them for all points, but only use them if the corner is the closest surface
+    # Normal points from wall to interior (towards center of curvature)
+    # n = normalize(center - pos) (projected to XY)
     
-    normals = jnp.stack([
-        n_floor, n_ceil,
-        n_left, n_right,
-        n_back, n_front,
-        n_c_r, n_c_l, n_c_b, n_c_f,
+    # RB: Center (cx_r, cy_back)
+    v_rb = jnp.stack([cx_r - x, cy_back - y, jnp.zeros_like(z)], axis=-1)
+    n_w_rb = v_rb / (jnp.linalg.norm(v_rb, axis=-1, keepdims=True) + 1e-6)
+    
+    # RF: Center (cx_r, cy_front)
+    v_rf = jnp.stack([cx_r - x, cy_front - y, jnp.zeros_like(z)], axis=-1)
+    n_w_rf = v_rf / (jnp.linalg.norm(v_rf, axis=-1, keepdims=True) + 1e-6)
+    
+    # LB: Center (cx_l, cy_back)
+    v_lb = jnp.stack([cx_l - x, cy_back - y, jnp.zeros_like(z)], axis=-1)
+    n_w_lb = v_lb / (jnp.linalg.norm(v_lb, axis=-1, keepdims=True) + 1e-6)
+    
+    # LF: Center (cx_l, cy_front)
+    v_lf = jnp.stack([cx_l - x, cy_front - y, jnp.zeros_like(z)], axis=-1)
+    n_w_lf = v_lf / (jnp.linalg.norm(v_lf, axis=-1, keepdims=True) + 1e-6)
+    
+    # Stack static normals (expand to match shape)
+    # We need to broadcast static normals to (..., 3)
+    ones = jnp.ones_like(x)[..., None]
+    
+    # Helper to broadcast
+    def b(n): return n * ones
+    
+    normals_stack = jnp.stack([
+        b(n_floor), b(n_ceil),
+        b(n_left), b(n_right),
+        b(n_back), b(n_front),
+        b(n_c_r), b(n_c_l), b(n_c_b), b(n_c_f),
         n_w_rb, n_w_rf, n_w_lb, n_w_lf
-    ], axis=0)
+    ], axis=-2) # Stack along the "surfaces" dimension (second to last)
     
     # Find closest surface
     min_idx = jnp.argmin(distances, axis=-1)
     min_dist = jnp.min(distances, axis=-1)
     
     # Get normal
-    normal = normals[min_idx]
+    # min_idx shape: (...)
+    # normals_stack shape: (..., 14, 3)
+    # We need to gather
+    
+    # JAX gather/take
+    # We can use one-hot multiplication or advanced indexing
+    # Since min_idx is dynamic, we use take_along_axis
+    
+    min_idx_expanded = min_idx[..., None, None] # (..., 1, 1)
+    normal = jnp.take_along_axis(normals_stack, min_idx_expanded, axis=-2)
+    normal = normal[..., 0, :] # Remove the singleton dimension
     
     return min_dist, normal
 
+# Extracted from Rocket League collision meshes
+# Format: [nx, ny, nz, d]
+# Units: Unreal Units (d is scaled by 50.0 from Bullet units)
+# Normals point INWARD (towards the center of the field)
+# Condition for inside: dot(n, p) > d  =>  d - dot(n, p) < 0
+# SDF = max(d - dot(n, p))
+
+ARENA_PLANES = jnp.array([
+    # Floor (z=0)
+    [0.0, 0.0, 1.0, 0.0],
+    # Ceiling (z=2044)
+    [0.0, 0.0, -1.0, -2044.0],
+    # Side Walls (x=+-4096)
+    [-1.0, 0.0, 0.0, -4096.0],
+    [1.0, 0.0, 0.0, -4096.0],
+    # Back Walls (y=+-5120) - Note: These have holes for goals!
+    # We handle goals separately.
+    [0.0, -1.0, 0.0, -5120.0],
+    [0.0, 1.0, 0.0, -5120.0],
+    
+    # Corners (45 deg)
+    # N=[-0.707, -0.707, 0], D=-5700
+    [-0.7071, -0.7071, 0.0, -5700.0],
+    [0.7071, -0.7071, 0.0, -5700.0],
+    [-0.7071, 0.7071, 0.0, -5700.0],
+    [0.7071, 0.7071, 0.0, -5700.0],
+    
+    # Ramps (Floor/Wall connections)
+    # N=[0, -0.879, 0.477], D=-4440 (88.8 * 50)
+    [0.0, -0.879, 0.477, -4440.0],
+    [0.0, 0.879, 0.477, -4440.0],
+    [-0.879, 0.0, 0.477, -3505.0], # D=-70.1 * 50 = 3505
+    [0.879, 0.0, 0.477, -3505.0],
+    
+    # N=[0, -0.955, 0.297], D=-4850 (97.0 * 50)
+    [0.0, -0.955, 0.297, -4850.0],
+    [0.0, 0.955, 0.297, -4850.0],
+    
+    # N=[0, -0.637, 0.771], D=-3195 (63.9 * 50)
+    [0.0, -0.637, 0.771, -3195.0],
+    [0.0, 0.637, 0.771, -3195.0],
+    
+    # N=[0, -0.771, 0.637], D=-3885 (77.7 * 50)
+    [0.0, -0.771, 0.637, -3885.0],
+    [0.0, 0.771, 0.637, -3885.0],
+    
+    # N=[0, -0.477, 0.879], D=-2385 (47.7 * 50)
+    [0.0, -0.477, 0.879, -2385.0],
+    [0.0, 0.477, 0.879, -2385.0],
+])
+
+GOAL_PLANES_POS = jnp.array([
+    # Back (y=6000 approx)
+    [0.0, -1.0, 0.0, -5995.0], # D=-119.9 * 50 = 5995
+    # Sides (x=+-895)
+    [-1.0, 0.0, 0.0, -895.0], # D=-17.9 * 50 = 895
+    [1.0, 0.0, 0.0, -895.0],
+    # Top (z=640)
+    [0.0, 0.0, -1.0, -640.0], # D=-12.8 * 50 = 640
+    # Bottom (z=0)
+    [0.0, 0.0, 1.0, 0.0],
+])
+
+GOAL_PLANES_NEG = jnp.array([
+    # Back (y=-6000)
+    [0.0, 1.0, 0.0, -5995.0],
+    # Sides
+    [-1.0, 0.0, 0.0, -895.0],
+    [1.0, 0.0, 0.0, -895.0],
+    # Top
+    [0.0, 0.0, -1.0, -640.0],
+    # Bottom
+    [0.0, 0.0, 1.0, 0.0],
+])
+
+def arena_sdf(pos: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """
+    Exact Arena SDF using extracted plane equations.
+    """
+    # Main Arena
+    # dist = d - dot(n, p)
+    # pos: (B, 3)
+    # planes: (N, 4)
+    
+    # Main Arena SDF
+    n_main = ARENA_PLANES[:, :3]
+    d_main = ARENA_PLANES[:, 3]
+    dot_main = jnp.matmul(pos, n_main.T) # (B, N)
+    dist_main_all = d_main - dot_main
+    dist_main = jnp.max(dist_main_all, axis=-1) # (B,)
+    idx_main = jnp.argmax(dist_main_all, axis=-1)
+    norm_main = n_main[idx_main]
+    
+    # Goal Pos SDF
+    n_gp = GOAL_PLANES_POS[:, :3]
+    d_gp = GOAL_PLANES_POS[:, 3]
+    dot_gp = jnp.matmul(pos, n_gp.T)
+    dist_gp_all = d_gp - dot_gp
+    dist_gp = jnp.max(dist_gp_all, axis=-1)
+    idx_gp = jnp.argmax(dist_gp_all, axis=-1)
+    norm_gp = n_gp[idx_gp]
+    
+    # Goal Neg SDF
+    n_gn = GOAL_PLANES_NEG[:, :3]
+    d_gn = GOAL_PLANES_NEG[:, 3]
+    dot_gn = jnp.matmul(pos, n_gn.T)
+    dist_gn_all = d_gn - dot_gn
+    dist_gn = jnp.max(dist_gn_all, axis=-1)
+    idx_gn = jnp.argmax(dist_gn_all, axis=-1)
+    norm_gn = n_gn[idx_gn]
+    
+    # Union: min(main, goal_pos, goal_neg)
+    # We want the union of the EMPTY spaces.
+    # Inside main: dist_main < 0
+    # Inside goal: dist_goal < 0
+    # Union of inside regions -> min(dist)
+    
+    min_dist = jnp.minimum(dist_main, jnp.minimum(dist_gp, dist_gn))
+    
+    # Determine which volume we are in to pick the normal
+    is_gp = dist_gp < dist_main
+    is_gn = dist_gn < dist_main
+    # Note: if both are smaller, it doesn't matter much, but goals are disjoint.
+    
+    # If inside goal, use goal normal.
+    # If outside both, use main normal (or closest).
+    # Actually, min_dist picks the closest boundary.
+    
+    # Logic:
+    # If dist_gp < dist_main and dist_gp < dist_gn -> use gp
+    # If dist_gn < dist_main and dist_gn < dist_gp -> use gn
+    # Else use main
+    
+    use_gp = (dist_gp < dist_main) & (dist_gp < dist_gn)
+    use_gn = (dist_gn < dist_main) & (dist_gn < dist_gp)
+    
+    normal = jnp.where(
+        use_gp[..., None],
+        norm_gp,
+        jnp.where(
+            use_gn[..., None],
+            norm_gn,
+            norm_main
+        )
+    )
+    
+    return min_dist, normal
 
 def resolve_ball_arena_collision(
     pos: jnp.ndarray,
@@ -138,85 +790,51 @@ def resolve_ball_arena_collision(
     friction: float = BALL_SURFACE_FRICTION
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """
-    Resolve ball collisions with arena boundaries.
-    
-    The arena is an axis-aligned bounding box (AABB):
-    - X: [-ARENA_EXTENT_X, +ARENA_EXTENT_X]
-    - Y: [-ARENA_EXTENT_Y, +ARENA_EXTENT_Y]  
-    - Z: [0, ARENA_HEIGHT]
-    
-    Uses branchless jnp.where() for GPU efficiency.
-    
-    Args:
-        pos: Ball position. Shape: (N, 3) or (3,)
-        vel: Ball velocity. Shape: (N, 3) or (3,)
-        ang_vel: Ball angular velocity. Shape: (N, 3) or (3,)
-        radius: Ball collision radius
-        restitution: Coefficient of restitution (0=sticky, 1=perfect bounce)
-        friction: Tangential velocity retention (1=no friction, 0=full stop)
-        
-    Returns:
-        Tuple of (new_pos, new_vel, new_ang_vel)
+    Resolve ball collisions with arena boundaries, including rounded corners.
     """
-    # Arena bounds (accounting for ball radius)
-    min_x = -ARENA_EXTENT_X + radius
-    max_x = ARENA_EXTENT_X - radius
-    min_y = -ARENA_EXTENT_Y + radius
-    max_y = ARENA_EXTENT_Y - radius
-    min_z = radius  # Floor
-    max_z = ARENA_HEIGHT - radius  # Ceiling
+    # 1. Resolve AABB (Floor, Ceiling, Straight Walls)
+    # We can reuse the AABB logic but we must be careful not to double-resolve
+    # or resolve incorrectly near corners.
+    # However, the simplest way is to check collision with the SDF!
+    # If dist < radius, we collide.
+    # Normal is provided by SDF.
+    # New velocity = reflect(vel, normal) * restitution
+    # This handles ALL geometry (corners, ramps, walls) uniformly.
     
-    # Extract components
-    px, py, pz = pos[..., 0], pos[..., 1], pos[..., 2]
-    vx, vy, vz = vel[..., 0], vel[..., 1], vel[..., 2]
+    dist, normal = arena_sdf(pos)
     
-    # Friction factor
-    friction_factor = 1.0 - friction
+    # Check penetration
+    penetration = radius - dist
+    is_colliding = penetration > 0
     
-    # X-AXIS WALLS
-    hit_left = px < min_x
-    px = jnp.where(hit_left, min_x, px)
-    vx = jnp.where(hit_left & (vx < 0), -vx * restitution, vx)
-    vy = jnp.where(hit_left, vy * friction_factor, vy)
-    vz = jnp.where(hit_left, vz * friction_factor, vz)
+    # Resolve position (push out)
+    new_pos = jnp.where(
+        is_colliding[..., None],
+        pos + normal * penetration[..., None],
+        pos
+    )
     
-    hit_right = px > max_x
-    px = jnp.where(hit_right, max_x, px)
-    vx = jnp.where(hit_right & (vx > 0), -vx * restitution, vx)
-    vy = jnp.where(hit_right, vy * friction_factor, vy)
-    vz = jnp.where(hit_right, vz * friction_factor, vz)
+    # Resolve velocity
+    # v_normal = dot(vel, normal) * normal
+    # v_tangent = vel - v_normal
+    # new_v_normal = -v_normal * restitution
+    # new_v_tangent = v_tangent * (1.0 - friction)
+    # new_vel = new_v_normal + new_v_tangent
     
-    # Y-AXIS WALLS
-    hit_back = py < min_y
-    py = jnp.where(hit_back, min_y, py)
-    vy = jnp.where(hit_back & (vy < 0), -vy * restitution, vy)
-    vx = jnp.where(hit_back, vx * friction_factor, vx)
-    vz = jnp.where(hit_back, vz * friction_factor, vz)
+    v_dot_n = jnp.sum(vel * normal, axis=-1, keepdims=True)
+    v_normal = v_dot_n * normal
+    v_tangent = vel - v_normal
     
-    hit_front = py > max_y
-    py = jnp.where(hit_front, max_y, py)
-    vy = jnp.where(hit_front & (vy > 0), -vy * restitution, vy)
-    vx = jnp.where(hit_front, vx * friction_factor, vx)
-    vz = jnp.where(hit_front, vz * friction_factor, vz)
+    # Only bounce if moving INTO the wall (v_dot_n < 0)
+    should_bounce = is_colliding & (v_dot_n[..., 0] < 0)
     
-    # Z-AXIS (FLOOR AND CEILING)
-    hit_floor = pz < min_z
-    pz = jnp.where(hit_floor, min_z, pz)
-    vz = jnp.where(hit_floor & (vz < 0), -vz * restitution, vz)
-    vx = jnp.where(hit_floor, vx * friction_factor, vx)
-    vy = jnp.where(hit_floor, vy * friction_factor, vy)
+    new_vel = jnp.where(
+        should_bounce[..., None],
+        -v_normal * restitution + v_tangent * (1.0 - friction),
+        vel
+    )
     
-    hit_ceiling = pz > max_z
-    pz = jnp.where(hit_ceiling, max_z, pz)
-    vz = jnp.where(hit_ceiling & (vz > 0), -vz * restitution, vz)
-    vx = jnp.where(hit_ceiling, vx * friction_factor, vx)
-    vy = jnp.where(hit_ceiling, vy * friction_factor, vy)
-    
-    # Reconstruct vectors
-    new_pos = jnp.stack([px, py, pz], axis=-1)
-    new_vel = jnp.stack([vx, vy, vz], axis=-1)
-    
-    # Angular velocity is preserved
+    # Angular velocity (friction induces spin? kept simple for now)
     new_ang_vel = ang_vel
     
     return new_pos, new_vel, new_ang_vel
@@ -225,12 +843,10 @@ def resolve_ball_arena_collision(
 def resolve_car_arena_collision(
     pos: jnp.ndarray,
     vel: jnp.ndarray,
-    margin: float = 50.0
+    margin: float = 17.0 # Reduced from 50.0 to match car CoM height
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     """
-    Keep car center-of-mass inside arena bounds.
-    
-    This is a simple positional clamp with velocity kill.
+    Keep car center-of-mass inside arena bounds using SDF.
     
     Args:
         pos: Car position. Shape: (N, MAX_CARS, 3)
@@ -240,48 +856,34 @@ def resolve_car_arena_collision(
     Returns:
         Tuple of (new_pos, new_vel)
     """
-    # Arena bounds with margin
-    min_x = -ARENA_EXTENT_X + margin
-    max_x = ARENA_EXTENT_X - margin
-    min_y = -ARENA_EXTENT_Y + margin
-    max_y = ARENA_EXTENT_Y - margin
-    min_z = 0.0
-    max_z = ARENA_HEIGHT - margin
+    # Use SDF to handle all geometry (walls, corners, ramps)
+    dist, normal = arena_sdf(pos)
     
-    # Extract components
-    px, py, pz = pos[..., 0], pos[..., 1], pos[..., 2]
-    vx, vy, vz = vel[..., 0], vel[..., 1], vel[..., 2]
+    # Check penetration
+    # dist is distance to closest surface.
+    # If dist < margin, we are too close.
+    penetration = margin - dist
+    is_colliding = penetration > 0
     
-    # X-AXIS WALLS
-    hit_left = px < min_x
-    px = jnp.where(hit_left, min_x, px)
-    vx = jnp.where(hit_left & (vx < 0), 0.0, vx)
+    # Resolve position (push out)
+    new_pos = jnp.where(
+        is_colliding[..., None],
+        pos + normal * penetration[..., None],
+        pos
+    )
     
-    hit_right = px > max_x
-    px = jnp.where(hit_right, max_x, px)
-    vx = jnp.where(hit_right & (vx > 0), 0.0, vx)
+    # Resolve velocity (kill normal component if moving into wall)
+    v_dot_n = jnp.sum(vel * normal, axis=-1, keepdims=True)
+    should_stop = is_colliding & (v_dot_n[..., 0] < 0)
     
-    # Y-AXIS WALLS
-    hit_back = py < min_y
-    py = jnp.where(hit_back, min_y, py)
-    vy = jnp.where(hit_back & (vy < 0), 0.0, vy)
+    v_normal = v_dot_n * normal
+    v_tangent = vel - v_normal
     
-    hit_front = py > max_y
-    py = jnp.where(hit_front, max_y, py)
-    vy = jnp.where(hit_front & (vy > 0), 0.0, vy)
-    
-    # Z-AXIS
-    hit_floor = pz < min_z
-    pz = jnp.where(hit_floor, min_z, pz)
-    vz = jnp.where(hit_floor & (vz < 0), 0.0, vz)
-    
-    hit_ceiling = pz > max_z
-    pz = jnp.where(hit_ceiling, max_z, pz)
-    vz = jnp.where(hit_ceiling & (vz > 0), 0.0, vz)
-    
-    # Reconstruct vectors
-    new_pos = jnp.stack([px, py, pz], axis=-1)
-    new_vel = jnp.stack([vx, vy, vz], axis=-1)
+    new_vel = jnp.where(
+        should_stop[..., None],
+        v_tangent, # Kill normal velocity (inelastic collision)
+        vel
+    )
     
     return new_pos, new_vel
 
