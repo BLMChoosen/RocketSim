@@ -3,6 +3,7 @@ import math
 import random
 import threading
 import sys 
+import time
 import argparse
 import copy
 import struct
@@ -49,6 +50,18 @@ def safe_normalize(vec: pyrr.Vector3):
     length = max(vec.length, 1e-6)
     return vec / length
 
+class UserControls:
+    def __init__(self):
+        self.throttle = 0.0
+        self.steer = 0.0
+        self.pitch = 0.0
+        self.yaw = 0.0
+        self.roll = 0.0
+        self.jump = False
+        self.boost = False
+        self.handbrake = False
+        self.target_car_index = 0
+
 # TODO: Move game logic out of here
 class QRSVGLWidget(QtOpenGL.QGLWidget):
     def __init__(self, screen: QScreen, sim_wrapper: SimWrapper):
@@ -64,6 +77,8 @@ class QRSVGLWidget(QtOpenGL.QGLWidget):
         self.fps_counter = 0
         self.last_fps = 0
         self.prev_state = None # type: GameState
+
+        self.pressed_keys = set()
 
         ########################################################################
 
@@ -84,6 +99,24 @@ class QRSVGLWidget(QtOpenGL.QGLWidget):
         super(QRSVGLWidget, self).__init__(fmt, None)
 
         self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def keyPressEvent(self, event):
+        # Ignore auto-repeat events
+        if event.isAutoRepeat():
+            return
+        print(f"Key pressed: {event.key()}")
+        self.pressed_keys.add(event.key())
+        super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event):
+        # Ignore auto-repeat events
+        if event.isAutoRepeat():
+            return
+        print(f"Key released: {event.key()}")
+        if event.key() in self.pressed_keys:
+            self.pressed_keys.remove(event.key())
+        super().keyReleaseEvent(event)
 
     def load_texture_2d(self, path: str) -> moderngl.Texture:
         return resources.textures.load(TextureDescription(path=path))
@@ -357,8 +390,62 @@ class QRSVGLWidget(QtOpenGL.QGLWidget):
         return pos, pos + cam_dir, (self.config.camera_fov.val if is_spectating_car else self.config.camera_bird_fov.val)
 
     def paintGL(self):
+        # Process inputs
+        controls = UserControls()
+        
+        # Debug: show pressed keys count
+        if len(self.pressed_keys) > 0:
+            print(f"[DEBUG] pressed_keys = {self.pressed_keys}")
+        
+        # Get UI state
+        ui_widget = get_ui()
+        if ui_widget:
+            controls.target_car_index = ui_widget.car_spinbox.value()
+            
+            # UI Button Inputs
+            if ui_widget.btn_w.isDown():
+                controls.throttle = 1.0
+                controls.pitch = -1.0
+            if ui_widget.btn_s.isDown():
+                controls.throttle = -1.0
+                controls.pitch = 1.0
+            if ui_widget.btn_a.isDown():
+                controls.steer = -1.0
+                controls.yaw = -1.0
+            if ui_widget.btn_d.isDown():
+                controls.steer = 1.0
+                controls.yaw = 1.0
+            if ui_widget.btn_jump.isDown():
+                controls.jump = True
+            if ui_widget.btn_boost.isDown():
+                controls.boost = True
+        
+        # Keyboard Inputs
+        if Qt.Key_W in self.pressed_keys:
+            controls.throttle = 1.0
+            controls.pitch = -1.0
+        if Qt.Key_S in self.pressed_keys:
+            controls.throttle = -1.0
+            controls.pitch = 1.0
+        if Qt.Key_A in self.pressed_keys:
+            controls.steer = -1.0
+            controls.yaw = -1.0
+        if Qt.Key_D in self.pressed_keys:
+            controls.steer = 1.0
+            controls.yaw = 1.0
+        if Qt.Key_Q in self.pressed_keys:
+            controls.roll = -1.0
+        if Qt.Key_E in self.pressed_keys:
+            controls.roll = 1.0
+        if Qt.Key_Space in self.pressed_keys:
+            controls.jump = True
+        if Qt.Key_Shift in self.pressed_keys:
+            controls.boost = True
+        if Qt.Key_Control in self.pressed_keys:
+            controls.handbrake = True
+            
         # Step physics
-        self.sim_wrapper.step()
+        self.sim_wrapper.step(user_controls=controls)
         
         # Update global state
         with global_state_mutex:

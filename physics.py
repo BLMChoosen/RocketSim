@@ -181,37 +181,91 @@ def compute_wheel_velocities(
 
 def raycast_suspension(
     wheel_world_pos: jnp.ndarray,
+    car_quat: jnp.ndarray,
     wheel_radii: jnp.ndarray = WHEEL_RADII,
     sus_rest: jnp.ndarray = SUSPENSION_REST_LENGTHS,
     max_travel: float = MAX_SUSPENSION_TRAVEL,
     ground_z: float = GROUND_Z,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """
-    Raycast from wheel hardpoints using Arena SDF.
+    Raycast from wheel hardpoints DOWN along car's local -Z axis.
+    
+    The raycast determines how far the wheel can extend before hitting the ground.
+    We simulate this by finding the intersection of a ray from the wheel hardpoint
+    in the direction of the car's down vector (-Z local).
+    
+    For a flat ground plane at z=0, this is simply:
+        hit_dist = (wheel_z - ground_z) / cos(angle)
+    where angle is between ray direction and vertical.
+    
+    Suspension compression = ray_length - hit_dist
+    where ray_length = rest_length + wheel_radius
     
     Args:
-        wheel_world_pos: Wheel positions (N, MAX_CARS, 4, 3)
+        wheel_world_pos: Wheel hardpoint positions (N, MAX_CARS, 4, 3)
+        car_quat: Car rotation quaternions (N, MAX_CARS, 4)
         wheel_radii: Wheel radii (4,)
         sus_rest: Suspension rest lengths (4,)
         max_travel: Maximum suspension travel
-        ground_z: Ground plane Z coordinate (deprecated)
+        ground_z: Ground plane Z coordinate
         
     Returns:
         compression: Suspension compression (N, MAX_CARS, 4)
         is_contact: Boolean contact flags (N, MAX_CARS, 4)
         contact_normal: Normal at contact point (N, MAX_CARS, 4, 3)
     """
-    sdf_dist, sdf_normal = arena_sdf(wheel_world_pos)
+    # Get car's down direction (negative Z in local space)
+    # We need the up direction first, then negate
+    car_up = get_car_up_dir(car_quat)  # (N, MAX_CARS, 3)
+    car_down = -car_up  # Ray direction (pointing down from wheel)
     
-    radii = wheel_radii[None, None, :]
-    rest = sus_rest[None, None, :]
+    # Expand for 4 wheels: (N, MAX_CARS, 4, 3)
+    car_down_expanded = car_down[..., None, :]  # (N, MAX_CARS, 1, 3)
+    car_down_expanded = jnp.broadcast_to(car_down_expanded, wheel_world_pos.shape)
     
+    # Ground plane: z = ground_z, normal = [0, 0, 1]
+    # Ray: P = wheel_pos + t * car_down
+    # Intersection: P.z = ground_z
+    # wheel_pos.z + t * car_down.z = ground_z
+    # t = (ground_z - wheel_pos.z) / car_down.z
+    
+    wheel_z = wheel_world_pos[..., 2]  # (N, MAX_CARS, 4)
+    ray_dir_z = car_down_expanded[..., 2]  # (N, MAX_CARS, 4)
+    
+    # Avoid division by zero when car is upside down
+    ray_dir_z_safe = jnp.where(jnp.abs(ray_dir_z) < 1e-6, -1e-6, ray_dir_z)
+    
+    # t is the distance along the ray to hit ground_z
+    t = (ground_z - wheel_z) / ray_dir_z_safe
+    
+    # t should be positive (ray goes down, hits ground below)
+    # If t < 0, the ray points away from the ground (car is upside down or tilted)
+    t = jnp.maximum(t, 0.0)
+    
+    # The "hit distance" is the ray parameter t
+    # But we need to account for the wheel touching, not the ray origin
+    # When t=0, wheel is at ground level or ray points up
+    # hit_dist represents how far from wheel hardpoint to ground surface along ray
+    hit_dist = t
+    
+    # Ray length is rest length + wheel radius
+    radii = wheel_radii[None, None, :]  # (1, 1, 4)
+    rest = sus_rest[None, None, :]  # (1, 1, 4)
     ray_length = rest + radii
-    compression = ray_length - sdf_dist
+    
+    # Compression: how much the suspension is compressed from rest
+    # If hit_dist < ray_length, wheel is touching and suspension compresses
+    # If hit_dist >= ray_length, wheel is in air, no compression
+    compression = ray_length - hit_dist
     compression = jnp.clip(compression, 0.0, max_travel)
     
+    # Contact when compression > 0
     is_contact = compression > 0.0
-    contact_normal = sdf_normal
+    
+    # Contact normal is the ground normal (assuming flat ground for now)
+    # For walls/curved surfaces, we'd need actual SDF normals
+    contact_normal = jnp.zeros_like(wheel_world_pos)
+    contact_normal = contact_normal.at[..., 2].set(1.0)  # Normal pointing up
     
     return compression, is_contact, contact_normal
 
@@ -309,17 +363,21 @@ def compute_tire_basis_vectors(
         tire_forward: Forward direction for each tire (N, MAX_CARS, 4, 3)
         tire_right: Right direction for each tire (N, MAX_CARS, 4, 3)
     """
+    # Car's local coordinate system:
+    # Forward = +X, Right = -Y, Up = +Z
     forward_local = jnp.array([1.0, 0.0, 0.0])
     right_local = jnp.array([0.0, -1.0, 0.0])
     
     car_forward = quat_rotate_vector(car_quat, forward_local)
     car_right = quat_rotate_vector(car_quat, right_local)
     
+    # Steering rotates around Z axis
     cos_steer = jnp.cos(steer_angle)[..., None]
     sin_steer = jnp.sin(steer_angle)[..., None]
     
-    steered_forward = car_forward * cos_steer + car_right * sin_steer
-    steered_right = -car_forward * sin_steer + car_right * cos_steer
+    # Steered forward: rotated around Z
+    steered_forward = car_forward * cos_steer - car_right * sin_steer
+    steered_right = car_forward * sin_steer + car_right * cos_steer
     
     car_forward_exp = car_forward[..., None, :]
     car_right_exp = car_right[..., None, :]
@@ -339,6 +397,7 @@ def compute_tire_basis_vectors(
         jnp.broadcast_to(car_right_exp, car_right_exp.shape[:-2] + (4, 3))
     )
     
+    # Project to XY plane and normalize (tire forces are in ground plane)
     tire_forward = tire_forward.at[..., 2].set(0.0)
     tire_forward = tire_forward / jnp.maximum(
         jnp.linalg.norm(tire_forward, axis=-1, keepdims=True), 1e-8
@@ -380,20 +439,53 @@ def compute_tire_forces(
     """
     forward_local = jnp.array([1.0, 0.0, 0.0])
     car_forward = quat_rotate_vector(car_quat, forward_local)
-    forward_speed = jnp.sum(car_vel * car_forward, axis=-1)
+    
+    # Use CAR velocity for forward speed, not wheel velocity
+    # This is important because wheel_vel includes omega x r contribution
+    # which shouldn't affect rolling resistance or drive forces
+    forward_speed = jnp.sum(car_vel * car_forward, axis=-1)  # Car's forward speed
     
     steer_angle = compute_steering_angle(steer, forward_speed)
     tire_forward, tire_right = compute_tire_basis_vectors(car_quat, steer_angle)
     
-    vel_forward = jnp.sum(wheel_vel * tire_forward, axis=-1)
+    # For lateral friction, we DO want wheel velocity (to counter side slip from omega x r)
     vel_right = jnp.sum(wheel_vel * tire_right, axis=-1)
     
-    abs_vel_forward = jnp.abs(vel_forward)
+    # For longitudinal forces (drive, brake, rolling resistance), use CAR forward speed
+    # expanded to match wheel dimensions
+    forward_speed_expanded = forward_speed[..., None]  # (N, MAX_CARS, 1)
+    
+    abs_vel_forward = jnp.abs(forward_speed_expanded)
     abs_vel_right = jnp.abs(vel_right)
     slip_ratio = abs_vel_right / (abs_vel_forward + abs_vel_right + 1e-6)
     
     lat_friction_coef = LATERAL_FRICTION_BASE * (1.0 - slip_ratio) + LATERAL_FRICTION_MIN * slip_ratio
-    lat_force_mag = -vel_right * lat_friction_coef * FRICTION_FORCE_SCALE
+    
+    # Coulomb Friction Model for Lateral Force
+    # Max friction force = Normal Force * Friction Coefficient
+    # Normal Force is suspension_force
+    lat_stiffness = FRICTION_FORCE_SCALE * 10.0
+    lat_force_viscous = -vel_right * lat_friction_coef * lat_stiffness
+    
+    # Coulomb limit
+    max_lat_force = suspension_force * 2.0  # Mu ~ 2.0 for sticky tires
+    
+    # Additional: when car is nearly stationary (low car forward speed),
+    # apply friction to FORWARD wheel velocity too (to prevent pitch-induced drift)
+    # This simulates the wheel "sticking" to ground when not moving
+    vel_forward_wheel = jnp.sum(wheel_vel * tire_forward, axis=-1)  # Wheel vel in tire forward dir
+    
+    is_nearly_stopped = jnp.abs(forward_speed_expanded) < 50.0  # Below 50 UU/s
+    stopping_friction = jnp.where(
+        is_nearly_stopped,
+        -vel_forward_wheel * lat_stiffness * 1.5,  # Apply strong friction to wheel forward vel
+        0.0
+    )
+    stopping_friction = jnp.clip(stopping_friction, -max_lat_force, max_lat_force)
+    
+    # The stopping friction acts in tire_forward direction (longitudinal)
+    
+    lat_force_mag = jnp.clip(lat_force_viscous, -max_lat_force, max_lat_force)
     
     handbrake_expanded = handbrake[..., None]
     handbrake_factor = jnp.where(
@@ -405,18 +497,20 @@ def compute_tire_forces(
     
     throttle_expanded = throttle[..., None]
     
+    # Use car forward speed (not wheel velocity) for drive torque curve
     drive_factor = jnp.interp(
-        jnp.abs(vel_forward),
+        abs_vel_forward,  # Use car forward speed
         DRIVE_TORQUE_CURVE_SPEEDS,
         DRIVE_TORQUE_CURVE_FACTORS
     )
     throttle_force = throttle_expanded * TIRE_DRIVE_FORCE * drive_factor / 4.0
     
-    is_braking = (throttle_expanded * vel_forward) < 0
+    is_braking = (throttle_expanded * forward_speed_expanded) < 0
     
     # Smooth braking at low speeds to prevent chatter (match C++ logic)
     # C++ uses ROLLING_FRICTION_SCALE_MAGIC = 113.73963
-    braking_friction = -vel_forward * 113.74
+    # Use car forward speed for braking too
+    braking_friction = -forward_speed_expanded * 113.74
     max_brake = jnp.abs(throttle_expanded) * BRAKE_FORCE / 4.0
     
     brake_force_mag = jnp.clip(braking_friction, -max_brake, max_brake)
@@ -430,14 +524,15 @@ def compute_tire_forces(
     is_coasting = jnp.abs(throttle_expanded) < 0.01
     rolling_resistance_force = jnp.where(
         is_coasting,
-        -vel_forward * ROLLING_RESISTANCE * FRICTION_FORCE_SCALE,
+        -forward_speed_expanded * ROLLING_RESISTANCE * FRICTION_FORCE_SCALE,
         0.0
     )
     
+    # Add stopping friction when nearly stationary (prevents pitch-induced drift)
     long_force_mag = jnp.where(
         is_braking,
         brake_force_mag,
-        throttle_force + rolling_resistance_force
+        throttle_force + rolling_resistance_force + stopping_friction
     )
     
     long_handbrake_factor = jnp.where(
@@ -512,7 +607,7 @@ def solve_suspension_and_tires(
     wheel_world_pos = compute_wheel_world_positions(cars.pos, cars.quat)
     wheel_vel = compute_wheel_velocities(cars.vel, cars.ang_vel, cars.quat)
     
-    compression, is_contact, contact_normal = raycast_suspension(wheel_world_pos)
+    compression, is_contact, contact_normal = raycast_suspension(wheel_world_pos, cars.quat)
     
     # Calculate compression velocity (project wheel velocity onto contact normal)
     # compression_vel = -dot(wheel_vel, normal)

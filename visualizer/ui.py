@@ -140,7 +140,7 @@ class QEditConfigWidget(QWidget):
         super().update()
 
 class QUIBarWidget(QWidget):
-    SIZE = (150, 100)
+    SIZE = (150, 200) # Increased height for controls
 
     def __init__(self, parent_window):
         QWidget.__init__(self)
@@ -152,7 +152,7 @@ class QUIBarWidget(QWidget):
         self.setAttribute(Qt.WA_StyledBackground)
         self.setAutoFillBackground(True)
 
-        vbox = QtWidgets.QFormLayout()
+        vbox = QtWidgets.QVBoxLayout() # Changed to VBox for better control
 
         self.text_label = QtWidgets.QLabel("...")
         vbox.addWidget(self.text_label)
@@ -160,6 +160,40 @@ class QUIBarWidget(QWidget):
         self.edit_config_button = QtWidgets.QPushButton("Edit Settings")
         self.edit_config_button.clicked.connect(self.on_edit_config)
         vbox.addWidget(self.edit_config_button)
+        
+        # Car Selector
+        self.car_selector_group = QtWidgets.QGroupBox("Target Car")
+        car_sel_layout = QtWidgets.QHBoxLayout()
+        self.car_selector_group.setLayout(car_sel_layout)
+        
+        self.car_spinbox = QtWidgets.QSpinBox()
+        self.car_spinbox.setRange(0, 5) # Max 6 cars
+        self.car_spinbox.setValue(0)
+        car_sel_layout.addWidget(QtWidgets.QLabel("ID:"))
+        car_sel_layout.addWidget(self.car_spinbox)
+        
+        vbox.addWidget(self.car_selector_group)
+        
+        # Controls Group
+        self.controls_group = QtWidgets.QGroupBox("Controls")
+        controls_layout = QtWidgets.QGridLayout()
+        self.controls_group.setLayout(controls_layout)
+        
+        self.btn_w = QtWidgets.QPushButton("W")
+        self.btn_a = QtWidgets.QPushButton("A")
+        self.btn_s = QtWidgets.QPushButton("S")
+        self.btn_d = QtWidgets.QPushButton("D")
+        self.btn_jump = QtWidgets.QPushButton("Jump")
+        self.btn_boost = QtWidgets.QPushButton("Boost")
+        
+        controls_layout.addWidget(self.btn_w, 0, 1)
+        controls_layout.addWidget(self.btn_a, 1, 0)
+        controls_layout.addWidget(self.btn_s, 1, 1)
+        controls_layout.addWidget(self.btn_d, 1, 2)
+        controls_layout.addWidget(self.btn_jump, 2, 0, 1, 3)
+        controls_layout.addWidget(self.btn_boost, 3, 0, 1, 3)
+        
+        vbox.addWidget(self.controls_group)
 
         self.setLayout(vbox)
 
@@ -192,21 +226,38 @@ class QRSVWindow(QtWidgets.QMainWindow):
 
         # Set the central widget of the Window.
         self.gl_widget = gl_widget
-        self.setCentralWidget(self.gl_widget)
-
-        self.base_layout = QtWidgets.QVBoxLayout(self)
+        
+        # Create a container widget for the layout
+        self.container = QtWidgets.QWidget()
+        self.setCentralWidget(self.container)
+        
+        self.base_layout = QtWidgets.QVBoxLayout(self.container)
+        self.base_layout.setContentsMargins(0, 0, 0, 0)
+        self.base_layout.setSpacing(0)
 
         self.bar_widget = QUIBarWidget(self)
-        self.layout().addWidget(self.bar_widget)
+        self.base_layout.addWidget(self.bar_widget)
+        
+        # Add GL widget to layout
+        self.base_layout.addWidget(self.gl_widget, 1) # Stretch factor 1 to take available space
 
         self.edit_config_widget = QEditConfigWidget(self.gl_widget.config)
-        self.layout().addWidget(self.edit_config_widget)
+        # We don't add edit_config_widget to layout if it's meant to be an overlay or popup
+        # But original code added it to layout. Let's add it but keep it hidden.
+        # Actually, looking at toggle_edit_config, it uses setGeometry, implying absolute positioning?
+        # "self.edit_config_widget.setGeometry(0, self.bar_widget.height() + 20, ...)"
+        # If it uses setGeometry, it should be a child of the window or container, but NOT in the layout.
+        
+        self.edit_config_widget.setParent(self.container)
         self.edit_config_widget.hide()
 
         self.resize(WINDOW_SIZE_X, WINDOW_SIZE_Y)
 
         self.installEventFilter(self)
-        self.centralWidget().installEventFilter(self)
+        # self.centralWidget().installEventFilter(self) # No longer needed/correct if container is central
+        self.gl_widget.installEventFilter(self) # Install on GL widget specifically
+        
+        self.gl_widget.setFocus()
 
     def eventFilter(self, obj, event):
         if event.type() == QEvent.MouseButtonPress:
@@ -218,7 +269,19 @@ class QRSVWindow(QtWidgets.QMainWindow):
                     if not (press_pos in self.edit_config_widget.geometry()):
                         self.toggle_edit_config()
         elif event.type() == QEvent.KeyPress:
+            # Ignore auto-repeat events
+            if event.isAutoRepeat():
+                return True
+            print(f"[DEBUG] KeyPress caught in eventFilter: {event.key()}")
             self.gl_widget.keyPressEvent(event)
+            return True
+        elif event.type() == QEvent.KeyRelease:
+            # Ignore auto-repeat events
+            if event.isAutoRepeat():
+                return True
+            print(f"[DEBUG] KeyRelease caught in eventFilter: {event.key()}")
+            self.gl_widget.keyReleaseEvent(event)
+            return True
 
         return super().eventFilter(obj, event)
 

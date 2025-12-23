@@ -836,7 +836,8 @@ def resolve_ball_arena_collision(
 def resolve_car_arena_collision(
     pos: jnp.ndarray,
     vel: jnp.ndarray,
-    margin: float = 17.0 # Reduced from 50.0 to match car CoM height
+    margin_vert: float = 17.0, # CoM height from floor
+    margin_horz: float = 30.0, # Approx half-width of car
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     """
     Keep car center-of-mass inside arena bounds using SDF.
@@ -844,13 +845,21 @@ def resolve_car_arena_collision(
     Args:
         pos: Car position. Shape: (N, MAX_CARS, 3)
         vel: Car velocity. Shape: (N, MAX_CARS, 3)
-        margin: Distance from wall to keep car CoM
+        margin_vert: Distance from floor/ceiling
+        margin_horz: Distance from walls
         
     Returns:
         Tuple of (new_pos, new_vel)
     """
     # Use SDF to handle all geometry (walls, corners, ramps)
     dist, normal = arena_sdf(pos)
+    
+    # Adaptive margin based on normal
+    # If normal is mostly vertical (floor/ceiling), use margin_vert
+    # If normal is mostly horizontal (walls), use margin_horz
+    
+    is_vertical = jnp.abs(normal[..., 2]) > 0.7
+    margin = jnp.where(is_vertical, margin_vert, margin_horz)
     
     # Check penetration
     # dist is distance to closest surface.

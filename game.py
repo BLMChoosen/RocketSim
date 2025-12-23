@@ -12,7 +12,7 @@ import jax.numpy as jnp
 from sim_constants import (
     DT, BALL_RADIUS, BALL_REST_Z, BALL_MAX_SPEED, CAR_MAX_SPEED, CAR_MAX_ANG_SPEED,
     CAR_MASS, CAR_INERTIA, CAR_TORQUE_SCALE, CAR_AIR_CONTROL_TORQUE, CAR_AIR_CONTROL_DAMPING,
-    GRAVITY_Z, GOAL_THRESHOLD_Y, DEMO_RESPAWN_TIME,
+    GRAVITY_Z, GOAL_THRESHOLD_Y, DEMO_RESPAWN_TIME, CAR_SPAWN_Z,
     PAD_LOCATIONS, PAD_RADII, PAD_CYL_HEIGHT, PAD_BOOST_AMOUNTS, PAD_COOLDOWNS,
     BOOST_MAX, BOOST_SPAWN_AMOUNT, N_PADS_TOTAL, ARENA_EXTENT_X,
     DOUBLEJUMP_MAX_DELAY, STICKY_FORCE_SCALE_BASE, STOPPING_FORWARD_VEL,
@@ -449,12 +449,12 @@ def create_initial_ball_state(n_envs: int) -> BallState:
 def create_initial_car_state(n_envs: int, max_cars: int = 6) -> CarState:
     """Create initial car state for n_envs environments with max_cars per env."""
     spawn_positions = jnp.array([
-        [-2048.0, -2560.0, 17.0],
-        [0.0, -4608.0, 17.0],
-        [2048.0, -2560.0, 17.0],
-        [-2048.0, 2560.0, 17.0],
-        [0.0, 4608.0, 17.0],
-        [2048.0, 2560.0, 17.0],
+        [-2048.0, -2560.0, CAR_SPAWN_Z],
+        [0.0, -4608.0, CAR_SPAWN_Z],
+        [2048.0, -2560.0, CAR_SPAWN_Z],
+        [-2048.0, 2560.0, CAR_SPAWN_Z],
+        [0.0, 4608.0, CAR_SPAWN_Z],
+        [2048.0, 2560.0, CAR_SPAWN_Z],
     ])[:max_cars]
     
     if max_cars > 6:

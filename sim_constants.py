@@ -161,7 +161,7 @@ BALL_CAR_EXTRA_IMPULSE_FACTOR_VALUES = jnp.array([0.65, 0.65, 0.55, 0.30])
 # Boost Pads (from RLConst.h BoostPads namespace)
 # =============================================================================
 # Pad geometry
-PAD_CYL_HEIGHT = 95.0                   # Cylinder height for pickup detection
+PAD_CYL_HEIGHT = 165.0                  # Cylinder height for pickup detection
 PAD_CYL_RAD_BIG = 208.0                 # Large pad cylinder radius
 PAD_CYL_RAD_SMALL = 144.0               # Small pad cylinder radius
 
@@ -319,8 +319,10 @@ DRIVE_WHEEL_MASK = jnp.array([1.0, 1.0, 1.0, 1.0])
 # Ground plane Z (simplified - flat ground)
 GROUND_Z = 0.0
 
-# Car spawn Z (wheels just touching ground)
-CAR_SPAWN_Z = 17.0
+# Car spawn Z (calculated so suspension is near rest position)
+# car_z = rest_length + wheel_radius - wheel_offset_z
+# Average across wheels gives approximately 30.9
+CAR_SPAWN_Z = 30.9
 
 # Inertia tensor approximation (box inertia for Octane hitbox)
 _hitbox = OCTANE_HITBOX_SIZE
@@ -371,7 +373,7 @@ HANDBRAKE_LAT_FRICTION_FACTOR = 0.1   # Multiply lateral friction by this when d
 HANDBRAKE_LONG_FRICTION_FACTOR = 0.5  # Longitudinal friction factor during handbrake
 
 # Rolling resistance (small braking when coasting)
-ROLLING_RESISTANCE = 0.02  # Small velocity damping when not throttling
+ROLLING_RESISTANCE = 0.2  # Increased from 0.02 to stop sliding
 
 # Brake force
 BRAKE_FORCE = BRAKE_TORQUE_AMOUNT  # ~2565 UU braking force

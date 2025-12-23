@@ -58,14 +58,16 @@ class SimWrapper:
             # user_controls is expected to be a dict or object with attributes
             # We need to update self.controls (CarControls)
             
+            # print(f"Updating controls: T={user_controls.throttle}, S={user_controls.steer}")
+
             # Create a new CarControls object with updated values for the specific car
             # Since JAX arrays are immutable, we need to update the specific indices
             
             # This is a bit tricky with JAX structures. 
             # self.controls is a CarControls object with arrays of shape (N, MAX_CARS)
             
-            # Let's assume user_controls is for car 0
-            car_idx = 0
+            # Use target car index from controls
+            car_idx = getattr(user_controls, 'target_car_index', 0)
             
             # Helper to update a specific index in a JAX array
             def update_array(arr, val):
@@ -91,6 +93,10 @@ class SimWrapper:
                 boost=new_boost,
                 handbrake=new_handbrake
             )
+            
+            # Debug print (throttled)
+            if self.state.tick_count[0] % 60 == 0:
+                print(f"[SimWrapper] Car {car_idx} Controls: T={user_controls.throttle:.2f}, S={user_controls.steer:.2f}, J={user_controls.jump}, B={user_controls.boost}")
             
         # Step physics
         self.state = self.step_fn(self.state, self.controls)
