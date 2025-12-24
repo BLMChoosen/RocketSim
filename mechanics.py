@@ -163,23 +163,28 @@ def handle_flip_or_double_jump(
     forward_2d_norm = forward_2d / (jnp.linalg.norm(forward_2d, axis=-1, keepdims=True) + 1e-8)
     right_2d = jnp.stack([-forward_2d_norm[..., 1], forward_2d_norm[..., 0]], axis=-1)
     
-    # Ground reset
+    # Ground reset - when car is on ground, reset flip/double jump ability
     has_double_jumped = jnp.where(is_on_ground, False, has_double_jumped)
     has_flipped = jnp.where(is_on_ground, False, has_flipped)
     air_time = jnp.where(is_on_ground, 0.0, air_time + dt)
     flip_timer = jnp.where(is_on_ground, 0.0, flip_timer)
     
     # Track air time since jump ended
-    not_jumping_anymore = has_jumped & ~is_jumping
+    # is_jumping comes from handle_jump_start, has_jumped means first jump was initiated
+    not_jumping_anymore = has_jumped & ~cars.is_jumping
     air_time_since_jump = jnp.where(
         is_on_ground, 0.0,
         jnp.where(not_jumping_anymore, air_time_since_jump + dt, 0.0)
     )
     
     # Check if can use double jump / flip
+    # CRITICAL: Must have jumped first (has_jumped) to be able to double jump or flip
+    # Exception: "flip reset" when all 4 wheels touch something while airborne
+    # (flip reset is handled separately via num_contacts)
     is_airborne = ~is_on_ground
     within_time = air_time_since_jump < DOUBLEJUMP_MAX_DELAY
-    can_use = is_airborne & within_time & ~has_flipped & ~has_double_jumped
+    # Must have done first jump AND be within time window AND haven't used flip/double jump yet
+    can_use = is_airborne & has_jumped & within_time & ~has_flipped & ~has_double_jumped
     
     input_magnitude = jnp.abs(controls.yaw) + jnp.abs(controls.pitch) + jnp.abs(controls.roll)
     is_flip_input = input_magnitude >= DODGE_DEADZONE

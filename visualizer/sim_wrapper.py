@@ -1,12 +1,16 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
+import time
 from game import create_initial_state, step_physics, create_zero_controls
 try:
     from visualizer.states import GameState, CarState, PhysState
 except ImportError:
     from states import GameState, CarState, PhysState
 from pyrr import Vector3, Quaternion, Matrix33
+
+# Physics runs at 120 Hz (same as Rocket League)
+PHYSICS_DT = 1.0 / 120.0
 
 class SimWrapper:
     def __init__(self, n_envs=1, max_cars=6):
@@ -27,6 +31,10 @@ class SimWrapper:
         # We only visualize the first environment
         self.env_idx = 0
         
+        # Time accumulator for fixed timestep physics
+        self.physics_accumulator = 0.0
+        self.last_step_time = time.time()
+        
         # Initialize visualizer GameState
         self.game_state = GameState()
         self.init_game_state()
@@ -46,6 +54,8 @@ class SimWrapper:
 
     def reset(self):
         self.state = create_initial_state(self.n_envs, self.max_cars)
+        self.physics_accumulator = 0.0
+        self.last_step_time = time.time()
         self.update_visualizer_state()
 
     def step(self, user_controls=None):
@@ -94,12 +104,30 @@ class SimWrapper:
                 handbrake=new_handbrake
             )
             
-            # Debug print (throttled)
-            if self.state.tick_count[0] % 60 == 0:
-                print(f"[SimWrapper] Car {car_idx} Controls: T={user_controls.throttle:.2f}, S={user_controls.steer:.2f}, J={user_controls.jump}, B={user_controls.boost}")
-            
-        # Step physics
-        self.state = self.step_fn(self.state, self.controls)
+        # Fixed timestep physics - run physics at 120 Hz regardless of render framerate
+        current_time = time.time()
+        delta_time = current_time - self.last_step_time
+        self.last_step_time = current_time
+        
+        # Accumulate time
+        self.physics_accumulator += delta_time
+        
+        # Cap accumulator to prevent spiral of death (if render is too slow)
+        max_steps = 8  # Max physics steps per frame to prevent freezing
+        self.physics_accumulator = min(self.physics_accumulator, PHYSICS_DT * max_steps)
+        
+        # Run physics steps
+        steps_run = 0
+        while self.physics_accumulator >= PHYSICS_DT:
+            self.state = self.step_fn(self.state, self.controls)
+            self.physics_accumulator -= PHYSICS_DT
+            steps_run += 1
+        
+        # Debug print (throttled)
+        if self.state.tick_count[0] % 120 == 0:
+            car_idx = getattr(user_controls, 'target_car_index', 0) if user_controls else 0
+            if user_controls:
+                print(f"[SimWrapper] Car {car_idx} | Steps: {steps_run} | T={user_controls.throttle:.2f}, S={user_controls.steer:.2f}, J={user_controls.jump}")
         
         # Update GameState
         self.update_visualizer_state()
@@ -130,7 +158,17 @@ class SimWrapper:
             self.update_phys_state(cs.phys, car_pos, car_vel, car_ang_vel, quat_xyzw)
             
             cs.team_num = int(self.state.cars.team[self.env_idx, i])
-            cs.boost_amount = float(self.state.cars.boost_amount[self.env_idx, i])
+            
+            # Check if boosting (boost button held AND has fuel AND not demoed)
+            new_boost_amount = float(self.state.cars.boost_amount[self.env_idx, i])
+            is_boosting_now = False
+            if hasattr(self.controls, 'boost'):
+                boost_input = bool(self.controls.boost[self.env_idx, i])
+                has_fuel = new_boost_amount > 0.0
+                is_demoed_now = bool(self.state.cars.is_demoed[self.env_idx, i])
+                is_boosting_now = boost_input and has_fuel and not is_demoed_now
+            cs.is_boosting = is_boosting_now
+            cs.boost_amount = new_boost_amount
             cs.is_demoed = bool(self.state.cars.is_demoed[self.env_idx, i])
             cs.on_ground = bool(self.state.cars.is_on_ground[self.env_idx, i])
             

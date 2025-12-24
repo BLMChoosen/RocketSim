@@ -37,3 +37,4 @@ We are NOT porting the code. We are **transplanting the logic** into a JAX-compa
     * Do not use conditional branching for collisions (e.g., `if dist < radius`).
     * Calculate physics for *all* pairs, then apply `jnp.where(is_colliding, new_vel, old_vel)`.
     * Yes, this wastes FLOPs on non-colliding objects. That is intended. Divergence is worse than wasted math.
+ 

@@ -17,6 +17,7 @@ from sim_constants import (
     BOOST_MAX, BOOST_SPAWN_AMOUNT, N_PADS_TOTAL, ARENA_EXTENT_X,
     DOUBLEJUMP_MAX_DELAY, STICKY_FORCE_SCALE_BASE, STOPPING_FORWARD_VEL,
     KICKOFF_POSITIONS_BLUE, KICKOFF_POSITIONS_ORANGE, KICKOFF_YAW_BLUE, KICKOFF_YAW_ORANGE,
+    BT_TO_UU,
 )
 from sim_types import BallState, CarState, CarControls, PhysicsState
 from math_utils import (
@@ -173,9 +174,21 @@ def step_cars(
         cars, controls, forward_speed, dt
     )
     
-    # Compute suspension and tire forces
-    sus_force, sus_torque, wheel_contacts, num_contacts = solve_suspension_and_tires(
+    # Compute suspension and tire forces (C++ btVehicleRL style)
+    sus_force, sus_torque, tire_impulse, wheel_rel_pos, wheel_contacts, num_contacts = solve_suspension_and_tires(
         cars, controls
+    )
+    
+    # FLIP RESET: When all 4 wheels touch something while airborne, reset flip ability
+    is_airborne = ~cars.is_on_ground
+    all_wheels_contact = num_contacts >= 4
+    flip_reset = is_airborne & all_wheels_contact
+    
+    # Apply flip reset - clear has_flipped and has_double_jumped
+    cars = cars.replace(
+        has_flipped=jnp.where(flip_reset, False, cars.has_flipped),
+        has_double_jumped=jnp.where(flip_reset, False, cars.has_double_jumped),
+        air_time_since_jump=jnp.where(flip_reset, 0.0, cars.air_time_since_jump),
     )
     
     # Apply gravity
@@ -187,7 +200,9 @@ def step_cars(
     sus_force_masked = jnp.where(is_jumping_expanded, 0.0, sus_force)
     sus_torque_masked = jnp.where(is_jumping_expanded, 0.0, sus_torque)
     
-    # Sticky forces
+    # Sticky forces (C++ style)
+    # upwardsDir from wheel contacts, fullStick = throttle!=0 or speed > STOPPING_FORWARD_VEL
+    # stickyForceScale = 0.5 + (1 - |upwardsDir.z|) if fullStick
     has_any_contact = num_contacts >= 1
     up_dir_for_sticky = get_car_up_dir(cars.quat)
     
@@ -206,14 +221,29 @@ def step_cars(
         0.0
     )
     
-    # Total force
-    total_force = sus_force_masked + gravity_force + sticky_force
+    # Total force from suspension + gravity + sticky
+    # NOTE: sus_force is already an impulse (force * dt), so we divide by dt to get force
+    total_force = (sus_force_masked / dt) + gravity_force + sticky_force
     
     # Apply force to velocity
     accel = total_force / CAR_MASS
     vel = cars.vel + jnp.where(
         active_mask[..., None],
         accel * dt,
+        0.0
+    )
+    
+    # Apply tire impulses (C++ style: applyImpulse(wheel.m_impulse * timeStep, wheelRelPos))
+    # wheel.m_impulse is calculated in BT units (totalFrictionForce * frictionScale)
+    # In Bullet: delta_v_bt = impulse_bt / mass_bt = force_bt * dt / 180
+    # Converting to UU: delta_v_uu = delta_v_bt * BT_TO_UU
+    tire_impulse_total = jnp.sum(tire_impulse, axis=-2)  # (N, MAX_CARS, 3)
+    tire_impulse_masked = jnp.where(cars.is_jumping[..., None], 0.0, tire_impulse_total)
+    # force_bt * dt / mass * BT_TO_UU
+    tire_vel_delta = tire_impulse_masked * dt / CAR_MASS * BT_TO_UU
+    vel = vel + jnp.where(
+        active_mask[..., None],
+        tire_vel_delta,
         0.0
     )
     
@@ -232,12 +262,26 @@ def step_cars(
     )
     
     # Apply torque to angular velocity
-    inertia_avg = jnp.mean(CAR_INERTIA)
-    total_torque = sus_torque_masked + flip_torque * CAR_TORQUE_SCALE
-    ang_accel = total_torque / inertia_avg
+    # sus_torque is already an impulse (torque * dt from physics.py) in UU units
+    # Tire force generates torque at wheel_rel_pos: τ = r × F
+    # wheel_rel_pos is in UU, tire_impulse is in BT
+    # To get torque in UU: τ_uu = r_uu × F_bt * BT_TO_UU
+    # Or equivalently: τ_uu = (r_uu * UU_TO_BT) × F_bt * BT_TO_UU^2 = r_uu × F_bt * BT_TO_UU
+    tire_torque_per_wheel = jnp.cross(wheel_rel_pos, tire_impulse)  # (N, MAX_CARS, 4, 3) mixed units
+    tire_torque_total = jnp.sum(tire_torque_per_wheel, axis=-2)  # (N, MAX_CARS, 3)
+    tire_torque_masked = jnp.where(cars.is_jumping[..., None], 0.0, tire_torque_total)
+    
+    # sus_torque is already torque*dt (impulse) in UU, so delta_omega = impulse / I
+    sus_ang_delta = sus_torque_masked / CAR_INERTIA  # (N, MAX_CARS, 3)
+    # tire_torque is in mixed units, apply BT_TO_UU and dt
+    tire_ang_delta = tire_torque_masked * dt * BT_TO_UU / CAR_INERTIA
+    
+    # flip_torque * CAR_TORQUE_SCALE is already angular acceleration
+    flip_ang_accel = flip_torque * CAR_TORQUE_SCALE
+    
     ang_vel = cars.ang_vel + jnp.where(
         active_mask[..., None],
-        ang_accel * dt,
+        sus_ang_delta + tire_ang_delta + flip_ang_accel * dt,
         0.0
     )
     
@@ -263,9 +307,10 @@ def step_cars(
     
     air_control_torque = (air_torque_pitch + air_torque_yaw + air_torque_roll +
                           air_damp_pitch + air_damp_yaw + air_damp_roll)
-    air_control_torque = air_control_torque * CAR_TORQUE_SCALE
+    # CAR_AIR_CONTROL_TORQUE/DAMPING values are already angular accelerations
+    # CAR_TORQUE_SCALE converts to proper UU units
+    air_ang_accel = air_control_torque * CAR_TORQUE_SCALE
     
-    air_ang_accel = air_control_torque / inertia_avg
     ang_vel = ang_vel + jnp.where(
         (is_airborne & active_mask)[..., None],
         air_ang_accel * dt,
@@ -293,8 +338,13 @@ def step_cars(
         cars.quat
     )
     
-    # Resolve arena collisions
-    pos, vel = resolve_car_arena_collision(pos, vel)
+    # Resolve arena collisions (car hitbox vs arena)
+    pos, vel, ang_vel = resolve_car_arena_collision(
+        pos=pos,
+        vel=vel,
+        ang_vel=ang_vel,
+        quat=quat,
+    )
     
     # Update ground contact state
     is_on_ground = num_contacts >= 3

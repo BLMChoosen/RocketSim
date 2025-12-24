@@ -257,9 +257,27 @@ GOAL_ORANGE_Y = GOAL_THRESHOLD_Y        # Orange goal is at positive Y
 # =============================================================================
 # Suspension / Vehicle (BTVehicle)
 # =============================================================================
-# NOTE: Values below are scaled for JAX simulation stability at 120Hz.
-# Original C++ values work with Bullet's internal substeps.
-SUSPENSION_STIFFNESS = 500.0            # C++ BTVehicle: 500.0
+# These are the original Bullet Physics values from RLConst.h
+# IMPORTANT: The C++ code operates in BT (Bullet) units internally:
+#   - 1 BT = 50 UU (Unreal Units)
+#   - Stiffness is force per distance (N/m in BT scale)
+#   - Damping is force per velocity (N/(m/s) in BT scale)
+#
+# Since our JAX sim operates entirely in UU:
+#   - Compression is in UU (not BT)
+#   - Velocity is in UU/s (not BT/s)
+# We need to keep the physics consistent.
+#
+# The suspension force calculation:
+#   C++: force = compression_BT * stiffness * inv_dot
+#   C++: compression_BT = (rest_BT - len_BT)
+#   
+# Our compression_UU = compression_BT * BT_TO_UU = compression_BT * 50
+# To get the same force magnitude, we use stiffness_effective = stiffness / BT_TO_UU
+# But actually, force should also be in UU scale for our mass in UU scale...
+#
+# Final approach: Keep original constants, but scale them in physics.py
+SUSPENSION_STIFFNESS = 500.0            # C++ BTVehicle: 500.0 (N/m in BT)
 WHEELS_DAMPING_COMPRESSION = 25.0       # C++ BTVehicle: 25.0
 WHEELS_DAMPING_RELAXATION = 40.0        # C++ BTVehicle: 40.0
 MAX_SUSPENSION_TRAVEL = 12.0            # In UU (unchanged)

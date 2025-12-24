@@ -17,10 +17,11 @@ from sim_constants import (
     WHEELS_DAMPING_COMPRESSION, WHEELS_DAMPING_RELAXATION,
     LATERAL_FRICTION_BASE, LATERAL_FRICTION_MIN, FRICTION_FORCE_SCALE,
     HANDBRAKE_LAT_FRICTION_FACTOR, HANDBRAKE_LONG_FRICTION_FACTOR,
-    TIRE_DRIVE_FORCE, BRAKE_FORCE, ROLLING_RESISTANCE,
+    TIRE_DRIVE_FORCE, BRAKE_FORCE,
     STEER_ANGLE_CURVE_SPEEDS, STEER_ANGLE_CURVE_ANGLES,
     DRIVE_TORQUE_CURVE_SPEEDS, DRIVE_TORQUE_CURVE_FACTORS,
     FRONT_WHEEL_MASK, STICKY_FORCE_SCALE_BASE, STOPPING_FORWARD_VEL,
+    THROTTLE_TORQUE_AMOUNT, BRAKE_TORQUE_AMOUNT, UU_TO_BT, BT_TO_UU,
 )
 from sim_types import BallState, CarState, CarControls
 from math_utils import (
@@ -189,17 +190,10 @@ def raycast_suspension(
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """
     Raycast from wheel hardpoints DOWN along car's local -Z axis.
+    Uses arena SDF for proper collision detection with walls/ceiling/corners.
     
-    The raycast determines how far the wheel can extend before hitting the ground.
-    We simulate this by finding the intersection of a ray from the wheel hardpoint
-    in the direction of the car's down vector (-Z local).
-    
-    For a flat ground plane at z=0, this is simply:
-        hit_dist = (wheel_z - ground_z) / cos(angle)
-    where angle is between ray direction and vertical.
-    
-    Suspension compression = ray_length - hit_dist
-    where ray_length = rest_length + wheel_radius
+    For wall driving, we sample multiple points along the ray to find the
+    closest intersection point with the arena surface.
     
     Args:
         wheel_world_pos: Wheel hardpoint positions (N, MAX_CARS, 4, 3)
@@ -207,15 +201,16 @@ def raycast_suspension(
         wheel_radii: Wheel radii (4,)
         sus_rest: Suspension rest lengths (4,)
         max_travel: Maximum suspension travel
-        ground_z: Ground plane Z coordinate
+        ground_z: Ground plane Z coordinate (fallback)
         
     Returns:
         compression: Suspension compression (N, MAX_CARS, 4)
         is_contact: Boolean contact flags (N, MAX_CARS, 4)
         contact_normal: Normal at contact point (N, MAX_CARS, 4, 3)
     """
+    from collision import arena_sdf
+    
     # Get car's down direction (negative Z in local space)
-    # We need the up direction first, then negate
     car_up = get_car_up_dir(car_quat)  # (N, MAX_CARS, 3)
     car_down = -car_up  # Ray direction (pointing down from wheel)
     
@@ -223,51 +218,86 @@ def raycast_suspension(
     car_down_expanded = car_down[..., None, :]  # (N, MAX_CARS, 1, 3)
     car_down_expanded = jnp.broadcast_to(car_down_expanded, wheel_world_pos.shape)
     
-    # Ground plane: z = ground_z, normal = [0, 0, 1]
-    # Ray: P = wheel_pos + t * car_down
-    # Intersection: P.z = ground_z
-    # wheel_pos.z + t * car_down.z = ground_z
-    # t = (ground_z - wheel_pos.z) / car_down.z
-    
-    wheel_z = wheel_world_pos[..., 2]  # (N, MAX_CARS, 4)
-    ray_dir_z = car_down_expanded[..., 2]  # (N, MAX_CARS, 4)
-    
-    # Avoid division by zero when car is upside down
-    ray_dir_z_safe = jnp.where(jnp.abs(ray_dir_z) < 1e-6, -1e-6, ray_dir_z)
-    
-    # t is the distance along the ray to hit ground_z
-    t = (ground_z - wheel_z) / ray_dir_z_safe
-    
-    # t should be positive (ray goes down, hits ground below)
-    # If t < 0, the ray points away from the ground (car is upside down or tilted)
-    t = jnp.maximum(t, 0.0)
-    
-    # The "hit distance" is the ray parameter t
-    # But we need to account for the wheel touching, not the ray origin
-    # When t=0, wheel is at ground level or ray points up
-    # hit_dist represents how far from wheel hardpoint to ground surface along ray
-    hit_dist = t
-    
     # Ray length is rest length + wheel radius
     radii = wheel_radii[None, None, :]  # (1, 1, 4)
     rest = sus_rest[None, None, :]  # (1, 1, 4)
     ray_length = rest + radii
     
-    # Compression: how much the suspension is compressed from rest
-    # If hit_dist < ray_length, wheel is touching and suspension compresses
-    # If hit_dist >= ray_length, wheel is in air, no compression
-    compression = ray_length - hit_dist
-    compression = jnp.clip(compression, 0.0, max_travel)
+    # Sample multiple points along the ray to find intersection
+    # This is more expensive but handles wall driving correctly
+    n_samples = 8
+    sample_fractions = jnp.linspace(0.0, 1.0, n_samples)  # (n_samples,)
     
-    # Contact when compression > 0
-    is_contact = compression > 0.0
+    # Calculate sample positions along ray
+    # wheel_world_pos: (N, MAX_CARS, 4, 3)
+    # sample_fractions: (n_samples,)
+    # We want: (N, MAX_CARS, 4, n_samples, 3)
     
-    # Contact normal is the ground normal (assuming flat ground for now)
-    # For walls/curved surfaces, we'd need actual SDF normals
-    contact_normal = jnp.zeros_like(wheel_world_pos)
-    contact_normal = contact_normal.at[..., 2].set(1.0)  # Normal pointing up
+    ray_end = wheel_world_pos + car_down_expanded * ray_length[..., None]
     
-    return compression, is_contact, contact_normal
+    # Expand for samples
+    wheel_pos_exp = wheel_world_pos[..., None, :]  # (N, MAX_CARS, 4, 1, 3)
+    ray_end_exp = ray_end[..., None, :]  # (N, MAX_CARS, 4, 1, 3)
+    fracs = sample_fractions[None, None, None, :, None]  # (1, 1, 1, n_samples, 1)
+    
+    sample_positions = wheel_pos_exp + (ray_end_exp - wheel_pos_exp) * fracs  # (N, MAX_CARS, 4, n_samples, 3)
+    
+    # Query SDF at all sample points
+    orig_shape = sample_positions.shape  # (N, MAX_CARS, 4, n_samples, 3)
+    n_envs = orig_shape[0]
+    max_cars = orig_shape[1]
+    
+    sample_flat = sample_positions.reshape(-1, 3)  # (N*MAX_CARS*4*n_samples, 3)
+    sample_for_sdf = sample_flat[None, :, :]  # (1, N*MAX_CARS*4*n_samples, 3)
+    
+    dist_flat, normal_flat = arena_sdf(sample_for_sdf)
+    dist_flat = dist_flat[0]  # (N*MAX_CARS*4*n_samples,)
+    normal_flat = normal_flat[0]  # (N*MAX_CARS*4*n_samples, 3)
+    
+    sdf_dist = dist_flat.reshape(n_envs, max_cars, 4, n_samples)  # (N, MAX_CARS, 4, n_samples)
+    sdf_normal = normal_flat.reshape(n_envs, max_cars, 4, n_samples, 3)  # (N, MAX_CARS, 4, n_samples, 3)
+    
+    # Find the first sample that penetrates (SDF < wheel_radius)
+    # SDF is POSITIVE inside arena, so penetration is when SDF < wheel_radius
+    # wheel_radii: (4,) -> (1, 1, 4, 1)
+    radii_exp = radii[..., None]  # (1, 1, 4, 1)
+    
+    # Check which samples are "in contact" (surface within wheel radius)
+    is_penetrating = sdf_dist < radii_exp  # (N, MAX_CARS, 4, n_samples)
+    
+    # Find the first penetrating sample (smallest index where penetrating)
+    # Use a mask to find first True
+    # Add a large value to non-penetrating samples so argmin finds first penetrating
+    sample_idx = jnp.arange(n_samples)[None, None, None, :]  # (1, 1, 1, n_samples)
+    masked_idx = jnp.where(is_penetrating, sample_idx, n_samples * 2)  # (N, MAX_CARS, 4, n_samples)
+    first_contact_idx = jnp.argmin(masked_idx, axis=-1)  # (N, MAX_CARS, 4)
+    
+    # Check if ANY sample penetrates
+    any_contact = jnp.any(is_penetrating, axis=-1)  # (N, MAX_CARS, 4)
+    
+    # Get the contact fraction
+    contact_fraction = sample_fractions[first_contact_idx]  # (N, MAX_CARS, 4)
+    contact_fraction = jnp.where(any_contact, contact_fraction, 1.0)
+    
+    # Calculate compression
+    # If contact at fraction f, the ray traveled f * ray_length before hitting
+    # Compression = (1 - f) * ray_length - wheel_radius (distance saved)
+    # Actually: compression = ray_length * (1 - contact_fraction) but capped
+    compression_raw = ray_length[0, 0, :] * (1.0 - contact_fraction)
+    compression = jnp.clip(compression_raw, 0.0, max_travel)
+    
+    # Get contact normal at the first contact point
+    batch_idx = jnp.arange(n_envs)[:, None, None]  # (N, 1, 1)
+    car_idx = jnp.arange(max_cars)[None, :, None]  # (1, MAX_CARS, 1)
+    wheel_idx = jnp.arange(4)[None, None, :]  # (1, 1, 4)
+    contact_normal = sdf_normal[batch_idx, car_idx, wheel_idx, first_contact_idx]  # (N, MAX_CARS, 4, 3)
+    
+    # Use car_up as fallback normal when no contact
+    car_up_exp = car_up[..., None, :]  # (N, MAX_CARS, 1, 3)
+    car_up_exp = jnp.broadcast_to(car_up_exp, contact_normal.shape)
+    contact_normal = jnp.where(any_contact[..., None], contact_normal, car_up_exp)
+    
+    return compression, any_contact, contact_normal
 
 
 def compute_suspension_force(
@@ -414,143 +444,242 @@ def compute_tire_basis_vectors(
 def compute_tire_forces(
     car_quat: jnp.ndarray,
     car_vel: jnp.ndarray,
-    wheel_vel: jnp.ndarray,
+    car_ang_vel: jnp.ndarray,
+    car_pos: jnp.ndarray,
+    wheel_world_pos: jnp.ndarray,
     throttle: jnp.ndarray,
     steer: jnp.ndarray,
     handbrake: jnp.ndarray,
     is_contact: jnp.ndarray,
-    suspension_force: jnp.ndarray,
-) -> jnp.ndarray:
+    contact_normal: jnp.ndarray,
+    forward_speed: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
     """
-    Compute tire forces including steering, lateral friction, and longitudinal forces.
+    Compute tire forces matching C++ btVehicleRL logic.
     
-    Args:
-        car_quat: Car rotation quaternion (N, MAX_CARS, 4)
-        car_vel: Car linear velocity (N, MAX_CARS, 3)
-        wheel_vel: Velocity at each wheel contact (N, MAX_CARS, 4, 3)
-        throttle: Throttle input [-1, 1] (N, MAX_CARS)
-        steer: Steering input [-1, 1] (N, MAX_CARS)
-        handbrake: Handbrake flag (N, MAX_CARS) bool
-        is_contact: Per-wheel ground contact (N, MAX_CARS, 4) bool
-        suspension_force: Normal force at each wheel (N, MAX_CARS, 4)
-        
+    C++ calcFrictionImpulses():
+    1. Lateral: resolveSingleBilateral() - computes impulse to zero lateral slip
+    2. Longitudinal: either engine force or rolling friction (ROLLING_FRICTION_SCALE_MAGIC)
+    3. Both scaled by (mass/3) and friction curves
+    
     Returns:
-        Tire force vectors in world frame (N, MAX_CARS, 4, 3)
+        impulses: Per-wheel impulse vectors (N, MAX_CARS, 4, 3) - applied at contact point
+        wheel_rel_pos: Relative position for torque (N, MAX_CARS, 4, 3)
     """
-    forward_local = jnp.array([1.0, 0.0, 0.0])
-    car_forward = quat_rotate_vector(car_quat, forward_local)
+    from sim_constants import CAR_MASS, DT, BT_TO_UU, UU_TO_BT
     
-    # Use CAR velocity for forward speed, not wheel velocity
-    # This is important because wheel_vel includes omega x r contribution
-    # which shouldn't affect rolling resistance or drive forces
-    forward_speed = jnp.sum(car_vel * car_forward, axis=-1)  # Car's forward speed
+    # Friction scale from C++: frictionScale = mass / 3
+    friction_scale = CAR_MASS / 3.0
     
+    # Steering angle
     steer_angle = compute_steering_angle(steer, forward_speed)
-    tire_forward, tire_right = compute_tire_basis_vectors(car_quat, steer_angle)
     
-    # For lateral friction, we DO want wheel velocity (to counter side slip from omega x r)
-    vel_right = jnp.sum(wheel_vel * tire_right, axis=-1)
+    # Get car basis vectors
+    forward_local = jnp.array([1.0, 0.0, 0.0])
+    right_local = jnp.array([0.0, -1.0, 0.0])  # -Y is right in RL coords
+    up_local = jnp.array([0.0, 0.0, 1.0])
     
-    # For longitudinal forces (drive, brake, rolling resistance), use CAR forward speed
-    # expanded to match wheel dimensions
-    forward_speed_expanded = forward_speed[..., None]  # (N, MAX_CARS, 1)
+    car_forward = quat_rotate_vector(car_quat, forward_local)
+    car_right = quat_rotate_vector(car_quat, right_local)
+    car_up = quat_rotate_vector(car_quat, up_local)
     
-    abs_vel_forward = jnp.abs(forward_speed_expanded)
-    abs_vel_right = jnp.abs(vel_right)
-    slip_ratio = abs_vel_right / (abs_vel_forward + abs_vel_right + 1e-6)
+    # === COMPUTE WHEEL AXLE AND FORWARD DIRECTIONS ===
+    # C++: axleDir = wheel.m_worldTransform.getBasis().getColumn(m_indexRightAxis)
+    # Where m_indexRightAxis = 0, and column 0 stores -right (i.e., LEFT direction)
+    # So axleDir points LEFT, not right!
+    car_left = -car_right  # axleDir in C++ is the LEFT vector
     
-    lat_friction_coef = LATERAL_FRICTION_BASE * (1.0 - slip_ratio) + LATERAL_FRICTION_MIN * slip_ratio
+    # Apply steering to front wheels
+    # Steered left direction = rotate car_left around up axis by steer_angle
+    cos_steer = jnp.cos(steer_angle)[..., None]  # (N, MAX_CARS, 1)
+    sin_steer = jnp.sin(steer_angle)[..., None]
     
-    # Coulomb Friction Model for Lateral Force
-    # Max friction force = Normal Force * Friction Coefficient
-    # Normal Force is suspension_force
-    lat_stiffness = FRICTION_FORCE_SCALE * 10.0
-    lat_force_viscous = -vel_right * lat_friction_coef * lat_stiffness
+    # Steered left direction (axle direction)
+    # When steer > 0 (right turn), the wheel points more forward-left
+    steered_left = -car_forward * sin_steer + car_left * cos_steer
     
-    # Coulomb limit
-    max_lat_force = suspension_force * 2.0  # Mu ~ 2.0 for sticky tires
+    # Expand for 4 wheels
+    car_left_4 = car_left[..., None, :]  # (N, MAX_CARS, 1, 3)
+    steered_left_4 = steered_left[..., None, :]
     
-    # Additional: when car is nearly stationary (low car forward speed),
-    # apply friction to FORWARD wheel velocity too (to prevent pitch-induced drift)
-    # This simulates the wheel "sticking" to ground when not moving
-    vel_forward_wheel = jnp.sum(wheel_vel * tire_forward, axis=-1)  # Wheel vel in tire forward dir
+    front_mask = FRONT_WHEEL_MASK[None, None, :, None]  # (1, 1, 4, 1)
     
-    is_nearly_stopped = jnp.abs(forward_speed_expanded) < 50.0  # Below 50 UU/s
-    stopping_friction = jnp.where(
-        is_nearly_stopped,
-        -vel_forward_wheel * lat_stiffness * 1.5,  # Apply strong friction to wheel forward vel
-        0.0
+    # Axle direction per wheel (LEFT vector, as in C++)
+    axle_dir = jnp.where(
+        front_mask > 0.5,
+        jnp.broadcast_to(steered_left_4, car_left_4.shape[:-2] + (4, 3)),
+        jnp.broadcast_to(car_left_4, car_left_4.shape[:-2] + (4, 3))
     )
-    stopping_friction = jnp.clip(stopping_friction, -max_lat_force, max_lat_force)
     
-    # The stopping friction acts in tire_forward direction (longitudinal)
+    # C++: Project axle onto surface plane
+    # proj = axleDir.dot(surfNormalWS)
+    # axleDir -= surfNormalWS * proj
+    # axleDir = axleDir.safeNormalized()
+    proj = jnp.sum(axle_dir * contact_normal, axis=-1, keepdims=True)
+    axle_dir = axle_dir - contact_normal * proj
+    axle_dir = axle_dir / jnp.maximum(jnp.linalg.norm(axle_dir, axis=-1, keepdims=True), 1e-8)
     
-    lat_force_mag = jnp.clip(lat_force_viscous, -max_lat_force, max_lat_force)
+    # C++: forwardDir = surfNormalWS.cross(axleDir).safeNormalized()
+    forward_dir = jnp.cross(contact_normal, axle_dir)
+    forward_dir = forward_dir / jnp.maximum(jnp.linalg.norm(forward_dir, axis=-1, keepdims=True), 1e-8)
     
-    handbrake_expanded = handbrake[..., None]
-    handbrake_factor = jnp.where(
-        handbrake_expanded > 0.5,
-        HANDBRAKE_LAT_FRICTION_FACTOR,
-        1.0
-    )
-    lat_force_mag = lat_force_mag * handbrake_factor
+    # === COMPUTE WHEEL VELOCITIES AT CONTACT POINT ===
+    # C++: crossVec = (angularVel.cross(wheelDelta) + vel) * BT_TO_UU
+    wheel_delta = wheel_world_pos - car_pos[..., None, :]  # (N, MAX_CARS, 4, 3)
+    car_ang_vel_4 = car_ang_vel[..., None, :]  # (N, MAX_CARS, 1, 3)
+    car_vel_4 = car_vel[..., None, :]
     
-    throttle_expanded = throttle[..., None]
+    cross_vec = jnp.cross(car_ang_vel_4, wheel_delta) + car_vel_4  # Already in UU
     
-    # Use car forward speed (not wheel velocity) for drive torque curve
-    drive_factor = jnp.interp(
-        abs_vel_forward,  # Use car forward speed
+    # === LATERAL FRICTION (C++ resolveSingleBilateral) ===
+    # The bilateral constraint computes impulse to zero velocity along axis
+    # sideImpulse = -vel_lateral (simplified)
+    vel_lateral = jnp.sum(cross_vec * axle_dir, axis=-1)  # (N, MAX_CARS, 4)
+    side_impulse = -vel_lateral
+    
+    # === LONGITUDINAL FRICTION ===
+    vel_forward = jnp.sum(cross_vec * forward_dir, axis=-1)  # (N, MAX_CARS, 4)
+    
+    # C++ logic: 
+    # if engineForce == 0:
+    #   if brake: rollingFriction = clamp(-relVel * 113.73963, -brake, brake)
+    #   else: rollingFriction = 0
+    # else:
+    #   rollingFriction = -engineForce / frictionScale
+    
+    throttle_4 = throttle[..., None]  # (N, MAX_CARS, 1)
+    forward_speed_4 = forward_speed[..., None]
+    abs_forward_speed = jnp.abs(forward_speed_4)
+    
+    # Drive speed scale curve
+    drive_speed_scale = jnp.interp(
+        abs_forward_speed,
         DRIVE_TORQUE_CURVE_SPEEDS,
         DRIVE_TORQUE_CURVE_FACTORS
     )
-    throttle_force = throttle_expanded * TIRE_DRIVE_FORCE * drive_factor / 4.0
     
-    is_braking = (throttle_expanded * forward_speed_expanded) < 0
+    # Check if fewer than 3 wheels in contact (C++ divides by 4)
+    num_contacts = jnp.sum(is_contact.astype(jnp.float32), axis=-1, keepdims=True)  # (N, MAX_CARS, 1)
+    drive_speed_scale = jnp.where(num_contacts < 3, drive_speed_scale / 4.0, drive_speed_scale)
     
-    # Smooth braking at low speeds to prevent chatter (match C++ logic)
-    # C++ uses ROLLING_FRICTION_SCALE_MAGIC = 113.73963
-    # Use car forward speed for braking too
-    braking_friction = -forward_speed_expanded * 113.74
-    max_brake = jnp.abs(throttle_expanded) * BRAKE_FORCE / 4.0
+    # Engine force (per wheel, C++ applies to all wheels)
+    engine_throttle = throttle_4
     
-    brake_force_mag = jnp.clip(braking_friction, -max_brake, max_brake)
+    # C++ throttle/brake logic
+    abs_throttle = jnp.abs(throttle_4)
+    is_reversing = (abs_forward_speed > 25.0) & (jnp.sign(throttle_4) != jnp.sign(forward_speed_4)) & (abs_throttle > 0.001)
+    is_coasting = abs_throttle < 0.001
     
-    brake_force_mag = jnp.where(
-        is_braking,
-        brake_force_mag,
+    # When reversing, we brake (engine_throttle = 0 if speed > threshold)
+    engine_throttle = jnp.where(
+        is_reversing & (abs_forward_speed > 0.01),
+        0.0,
+        engine_throttle
+    )
+    
+    # Coasting: no engine, apply brake factor
+    engine_throttle = jnp.where(is_coasting, 0.0, engine_throttle)
+    
+    # Brake force
+    brake_input = jnp.where(is_reversing, 1.0, 0.0)  # Full brake when reversing
+    brake_input = jnp.where(
+        is_coasting, 
+        jnp.where(abs_forward_speed < 25.0, 1.0, 0.15),  # Coasting brake
+        brake_input
+    )
+    
+    # C++ constants
+    ROLLING_FRICTION_SCALE_MAGIC = 113.73963
+    
+    # Engine force calculation (per wheel)
+    drive_engine_force = engine_throttle * (THROTTLE_TORQUE_AMOUNT * UU_TO_BT) * drive_speed_scale
+    drive_brake_force = brake_input * (BRAKE_TORQUE_AMOUNT * UU_TO_BT)
+    
+    # Rolling friction (C++ version)
+    # When engine == 0 and brake > 0: rollingFriction = clamp(-relVel * MAGIC, -brake, brake)
+    # When engine != 0: rollingFriction = -engineForce / frictionScale
+    
+    has_engine = jnp.abs(drive_engine_force) > 0.001
+    
+    # Brake rolling friction
+    rolling_friction_brake = jnp.clip(
+        -vel_forward * ROLLING_FRICTION_SCALE_MAGIC,
+        -drive_brake_force,
+        drive_brake_force
+    )
+    rolling_friction_brake = jnp.where(drive_brake_force > 0, rolling_friction_brake, 0.0)
+    
+    # Engine rolling friction (opposite of engine direction)
+    rolling_friction_engine = -drive_engine_force / friction_scale
+    
+    rolling_friction = jnp.where(has_engine, rolling_friction_engine, rolling_friction_brake)
+    
+    # === FRICTION CURVES (from C++ RLConst.h) ===
+    # frictionCurveInput = |vel_lat| / (|vel_fwd| + |vel_lat|) if |vel_lat| > 5 else 0
+    base_friction = jnp.abs(vel_lateral)
+    friction_curve_input = jnp.where(
+        base_friction > 5,
+        base_friction / (jnp.abs(vel_forward) + base_friction),
         0.0
     )
     
-    is_coasting = jnp.abs(throttle_expanded) < 0.01
-    rolling_resistance_force = jnp.where(
-        is_coasting,
-        -forward_speed_expanded * ROLLING_RESISTANCE * FRICTION_FORCE_SCALE,
-        0.0
+    # Lateral friction curve: {0: 1.0, 1: 0.2}
+    lat_friction = 1.0 - 0.8 * friction_curve_input
+    
+    # Longitudinal friction: default 1.0 (curve is empty in C++)
+    long_friction = jnp.ones_like(friction_curve_input)
+    
+    # Handbrake adjustments
+    handbrake_4 = handbrake[..., None].astype(jnp.float32)  # (N, MAX_CARS, 1)
+    
+    # Handbrake lateral friction factor: 0.1
+    lat_friction = lat_friction * (1.0 - handbrake_4 * 0.9)
+    
+    # Handbrake longitudinal friction factor curve: {0: 0.5, 1: 0.9}
+    handbrake_long_factor = 0.5 + 0.4 * friction_curve_input
+    long_friction = jnp.where(handbrake_4 > 0.5, long_friction * handbrake_long_factor, 1.0)
+    
+    # === STICKY FRICTION (non-sticky when no throttle) ===
+    # C++ scales friction by NON_STICKY_FRICTION_FACTOR_CURVE based on contact_normal.z
+    # when throttle == 0
+    is_sticky = jnp.abs(throttle_4) > 0
+    normal_z = contact_normal[..., 2]  # (N, MAX_CARS, 4)
+    
+    # Non-sticky curve: {0: 0.1, 0.7075: 0.5, 1: 1.0}
+    non_sticky_scale = jnp.interp(
+        normal_z,
+        jnp.array([0.0, 0.7075, 1.0]),
+        jnp.array([0.1, 0.5, 1.0])
     )
     
-    # Add stopping friction when nearly stationary (prevents pitch-induced drift)
-    long_force_mag = jnp.where(
-        is_braking,
-        brake_force_mag,
-        throttle_force + rolling_resistance_force + stopping_friction
+    lat_friction = jnp.where(is_sticky, lat_friction, lat_friction * non_sticky_scale)
+    long_friction = jnp.where(is_sticky, long_friction, long_friction * non_sticky_scale)
+    
+    # === COMPUTE FINAL IMPULSE ===
+    # C++: totalFrictionForce = (forwardDir * rollingFriction * longFriction) + (axleDir * sideImpulse * latFriction)
+    # wheel.m_impulse = totalFrictionForce * frictionScale
+    
+    total_friction_force = (
+        forward_dir * (rolling_friction * long_friction)[..., None] + 
+        axle_dir * (side_impulse * lat_friction)[..., None]
     )
     
-    long_handbrake_factor = jnp.where(
-        handbrake_expanded > 0.5,
-        HANDBRAKE_LONG_FRICTION_FACTOR,
-        1.0
-    )
-    long_force_mag = long_force_mag * long_handbrake_factor
+    wheel_impulse = total_friction_force * friction_scale
     
-    lateral_force = tire_right * lat_force_mag[..., None]
-    longitudinal_force = tire_forward * long_force_mag[..., None]
+    # Zero out impulse for wheels not in contact
+    is_contact_4 = is_contact[..., None]
+    wheel_impulse = jnp.where(is_contact_4, wheel_impulse, 0.0)
     
-    total_tire_force = lateral_force + longitudinal_force
+    # === WHEEL RELATIVE POSITION FOR TORQUE ===
+    # C++: wheelContactOffset = contactPointWS - chassisOrigin
+    # float contactUpDot = upDir.dot(wheelContactOffset)
+    # wheelRelPos = wheelContactOffset - upDir * contactUpDot
     
-    is_contact_expanded = is_contact[..., None]
-    total_tire_force = jnp.where(is_contact_expanded, total_tire_force, 0.0)
+    car_up_4 = car_up[..., None, :]  # (N, MAX_CARS, 1, 3)
+    contact_up_dot = jnp.sum(car_up_4 * wheel_delta, axis=-1, keepdims=True)
+    wheel_rel_pos = wheel_delta - car_up_4 * contact_up_dot
     
-    return total_tire_force
+    return wheel_impulse, wheel_rel_pos
 
 
 def aggregate_wheel_forces(
@@ -590,68 +719,116 @@ def aggregate_wheel_forces(
 def solve_suspension_and_tires(
     cars: CarState,
     controls: CarControls,
-) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """
     Main function to compute all wheel-related forces.
+    
+    Matches C++ btVehicleRL flow:
+    1. updateVehicleFirst: raycast, calcFrictionImpulses
+    2. updateVehicleSecond: updateSuspension, applyFrictionImpulses
     
     Args:
         cars: Current car state
         controls: Car control inputs
         
     Returns:
-        total_force: Net force on chassis (N, MAX_CARS, 3)
-        total_torque: Net torque on chassis (N, MAX_CARS, 3)
+        sus_force: Suspension force vectors (N, MAX_CARS, 3)
+        sus_torque: Suspension torque vectors (N, MAX_CARS, 3)
+        tire_impulse: Tire impulse vectors to apply (N, MAX_CARS, 4, 3)
+        wheel_rel_pos: Relative position for tire torque (N, MAX_CARS, 4, 3)
         is_contact: Per-wheel contact flags (N, MAX_CARS, 4)
         num_contacts: Number of wheels in contact (N, MAX_CARS)
     """
+    from sim_constants import DT
+    from collision import arena_sdf
+    
     wheel_world_pos = compute_wheel_world_positions(cars.pos, cars.quat)
     wheel_vel = compute_wheel_velocities(cars.vel, cars.ang_vel, cars.quat)
     
     compression, is_contact, contact_normal = raycast_suspension(wheel_world_pos, cars.quat)
     
+    # Check if car body is penetrating arena (SDF < 0 at car center)
+    # If so, disable suspension to avoid weird forces during collision resolution
+    car_sdf, _ = arena_sdf(cars.pos)  # (N, MAX_CARS)
+    car_is_inside_arena = car_sdf > -10.0  # Allow small penetration (10 UU)
+    
     # Calculate compression velocity (project wheel velocity onto contact normal)
-    # compression_vel = -dot(wheel_vel, normal)
-    # If wheel moves INTO wall (vel opposes normal), compression increases.
-    compression_vel = -jnp.sum(wheel_vel * contact_normal, axis=-1)
+    proj_vel = -jnp.sum(wheel_vel * contact_normal, axis=-1)
     
     # Calculate inv_contact_dot for suspension scaling
-    car_up = get_car_up_dir(cars.quat)  # (N, MAX_CARS, 3)
-    car_up_expanded = car_up[..., None, :]  # (N, MAX_CARS, 1, 3)
+    car_up = get_car_up_dir(cars.quat)
+    car_up_expanded = car_up[..., None, :]
     
     denominator = jnp.sum(contact_normal * car_up_expanded, axis=-1)
     
     # C++ logic: if denominator > 0.1, inv = 1/denom, else inv = 10
+    # Additionally, filter out contacts where normal points away from car's up
+    # This prevents issues when car is penetrating walls
+    denom_valid = denominator > 0.1
+    
+    # Only count as valid contact if:
+    # 1. Normal roughly aligns with car's up (denom_valid)
+    # 2. Car body is not deeply penetrating arena (car_is_inside_arena)
+    is_contact_valid = is_contact & denom_valid & car_is_inside_arena[..., None]
+    
     inv_contact_dot = jnp.where(
-        denominator > 0.1,
-        1.0 / denominator,
+        denom_valid,
+        1.0 / jnp.maximum(denominator, 0.1),
         10.0
     )
+    compression_vel = jnp.where(denom_valid, proj_vel, 0.0)
     
+    # Use filtered contact for suspension
     suspension_force = compute_suspension_force(
         compression, 
         compression_vel, 
-        is_contact,
+        is_contact_valid,  # Use filtered contact
         inv_contact_dot
     )
     
-    tire_force = compute_tire_forces(
-        cars.quat, 
-        cars.vel, 
-        wheel_vel,
-        controls.throttle, 
-        controls.steer, 
-        controls.handbrake,
-        is_contact,
-        suspension_force
+    # Forward speed for tire forces
+    forward_local = jnp.array([1.0, 0.0, 0.0])
+    car_forward = quat_rotate_vector(cars.quat, forward_local)
+    forward_speed = jnp.sum(cars.vel * car_forward, axis=-1)
+    
+    # Compute tire impulses (C++ style)
+    # Use filtered contact to avoid applying tire forces on invalid contacts
+    tire_impulse, wheel_rel_pos = compute_tire_forces(
+        car_quat=cars.quat,
+        car_vel=cars.vel,
+        car_ang_vel=cars.ang_vel,
+        car_pos=cars.pos,
+        wheel_world_pos=wheel_world_pos,
+        throttle=controls.throttle,
+        steer=controls.steer,
+        handbrake=controls.handbrake,
+        is_contact=is_contact_valid,  # Use filtered contact
+        contact_normal=contact_normal,
+        forward_speed=forward_speed,
     )
     
-    total_force, total_torque = aggregate_wheel_forces(
-        suspension_force, tire_force, wheel_world_pos, cars.pos, contact_normal
-    )
+    # === SUSPENSION FORCE APPLICATION ===
+    # C++ applies suspension as impulse at contact point:
+    # force = contactNormalWS * (suspensionForce * dt + extraPushback)
+    # applyImpulse(force, contactPointOffset)
     
-    num_contacts = jnp.sum(is_contact.astype(jnp.float32), axis=-1)
+    sus_force_expanded = suspension_force[..., None]
+    sus_force_vec = contact_normal * sus_force_expanded * DT  # Impulse = force * dt
     
-    return total_force, total_torque, is_contact, num_contacts
+    # Contact point offset from CoM
+    contact_offset = wheel_world_pos - cars.pos[..., None, :]
+    
+    # Sum suspension forces
+    total_sus_force = jnp.sum(sus_force_vec, axis=-2)
+    
+    # Suspension torque
+    sus_torque_per_wheel = jnp.cross(contact_offset, sus_force_vec)
+    total_sus_torque = jnp.sum(sus_torque_per_wheel, axis=-2)
+    
+    # Use filtered contacts for ground detection
+    num_contacts = jnp.sum(is_contact_valid.astype(jnp.float32), axis=-1)
+    
+    return total_sus_force, total_sus_torque, tire_impulse, wheel_rel_pos, is_contact_valid, num_contacts
 
 
 # =============================================================================

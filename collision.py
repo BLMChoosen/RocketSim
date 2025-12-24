@@ -22,6 +22,7 @@ from sim_constants import (
     BUMP_VEL_AMOUNT_GROUND_SPEEDS, BUMP_VEL_AMOUNT_GROUND_VALUES,
     BUMP_VEL_AMOUNT_AIR_SPEEDS, BUMP_VEL_AMOUNT_AIR_VALUES,
     BUMP_UPWARD_VEL_AMOUNT_SPEEDS, BUMP_UPWARD_VEL_AMOUNT_VALUES,
+    GRAVITY_Z, DT,
 )
 from math_utils import quat_rotate_vector
 
@@ -784,51 +785,114 @@ def resolve_ball_arena_collision(
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """
     Resolve ball collisions with arena boundaries, including rounded corners.
+    Applies friction torque to make the ball roll properly.
     """
-    # 1. Resolve AABB (Floor, Ceiling, Straight Walls)
-    # We can reuse the AABB logic but we must be careful not to double-resolve
-    # or resolve incorrectly near corners.
-    # However, the simplest way is to check collision with the SDF!
-    # If dist < radius, we collide.
-    # Normal is provided by SDF.
-    # New velocity = reflect(vel, normal) * restitution
-    # This handles ALL geometry (corners, ramps, walls) uniformly.
-    
     dist, normal = arena_sdf(pos)
     
-    # Check penetration
+    # Check penetration and contact
     penetration = radius - dist
-    is_colliding = penetration > 0
+    is_penetrating = penetration > 0
     
-    # Resolve position (push out)
+    # Use a contact tolerance for friction - ball is "in contact" if very close
+    # This allows friction to work even when ball is resting on surface
+    contact_tolerance = 2.0  # UU - about 2 units tolerance
+    is_in_contact = penetration > -contact_tolerance  # True if ball within tolerance of surface
+    
+    # Resolve position (push out only if penetrating)
     new_pos = jnp.where(
-        is_colliding[..., None],
+        is_penetrating[..., None],
         pos + normal * penetration[..., None],
         pos
     )
     
-    # Resolve velocity
-    # v_normal = dot(vel, normal) * normal
-    # v_tangent = vel - v_normal
-    # new_v_normal = -v_normal * restitution
-    # new_v_tangent = v_tangent * (1.0 - friction)
-    # new_vel = new_v_normal + new_v_tangent
+    # Calculate velocity at contact point (ball surface)
+    # Contact point is at: pos - normal * radius
+    contact_offset = -normal * radius  # Vector from ball center to contact
     
-    v_dot_n = jnp.sum(vel * normal, axis=-1, keepdims=True)
+    # Surface velocity = linear vel + angular vel × contact_offset
+    surface_vel = vel + jnp.cross(ang_vel, contact_offset)
+    
+    # Decompose into normal and tangential components
+    v_dot_n = jnp.sum(surface_vel * normal, axis=-1, keepdims=True)
     v_normal = v_dot_n * normal
-    v_tangent = vel - v_normal
+    v_tangent = surface_vel - v_normal
     
-    # Only bounce if moving INTO the wall (v_dot_n < 0)
-    should_bounce = is_colliding & (v_dot_n[..., 0] < 0)
+    # Check if moving INTO the surface (v_dot_n < 0) for bounce
+    should_bounce = is_penetrating & (v_dot_n[..., 0] < 0)
     
-    new_vel = jnp.where(
+    # Ball moment of inertia: I = (2/5) * m * r^2
+    ball_inertia = (2.0 / 5.0) * BALL_MASS * (radius ** 2)
+    
+    # Tangential slip velocity magnitude
+    v_t_mag = jnp.linalg.norm(v_tangent, axis=-1, keepdims=True)
+    v_t_dir = v_tangent / (v_t_mag + 1e-8)
+    
+    # === BOUNCE (Normal direction) ===
+    # Apply normal velocity change (bounce) only if approaching surface
+    new_v_normal = jnp.where(
         should_bounce[..., None],
-        -v_normal * restitution + v_tangent * (1.0 - friction),
+        -v_normal * restitution,
+        v_normal
+    )
+    
+    # === FRICTION (Tangential direction) ===
+    # Apply friction whenever in contact, not just when bouncing
+    # This makes the ball roll properly on the ground
+    
+    # Coulomb friction limit based on normal force
+    # When bouncing: impulse = (1+e) * m * |v_n|
+    # When rolling: use gravity-based normal force
+    v_n_mag = jnp.abs(v_dot_n)
+    bounce_impulse = v_n_mag * (1 + restitution) * BALL_MASS
+    
+    # For rolling contact without bouncing, use weight as normal force
+    # F_n = m * g * cos(angle), but simplified to m * g * |normal_z|
+    gravity_normal_force = BALL_MASS * jnp.abs(GRAVITY_Z) * jnp.abs(normal[..., 2:3])
+    
+    # Use bounce impulse when bouncing, gravity-based when just rolling
+    effective_normal_impulse = jnp.where(
+        should_bounce[..., None],
+        bounce_impulse,
+        gravity_normal_force * DT  # Force * dt = impulse
+    )
+    
+    max_friction_impulse = friction * effective_normal_impulse
+    
+    # Impulse needed to stop tangential slip
+    # For sphere: J_t = m * v_t / (1 + m*r^2/I) = m * v_t * (2/7)
+    slip_stop_impulse = v_t_mag * BALL_MASS * (2.0 / 7.0)
+    
+    # Actual friction impulse is the smaller of the two
+    friction_impulse_mag = jnp.minimum(max_friction_impulse, slip_stop_impulse)
+    friction_impulse = -v_t_dir * friction_impulse_mag
+    
+    # Apply friction impulse to linear velocity
+    friction_vel_change = friction_impulse / BALL_MASS
+    
+    # Apply friction torque to angular velocity
+    friction_torque = jnp.cross(contact_offset, friction_impulse)
+    ang_vel_change = friction_torque / ball_inertia
+    
+    # New velocities - apply friction whenever in contact (using tolerance)
+    new_vel = jnp.where(
+        is_in_contact[..., None],
+        new_v_normal + (vel - v_normal) + friction_vel_change,
         vel
     )
     
-    # Angular velocity (friction induces spin? kept simple for now)
-    new_ang_vel = ang_vel
+    new_ang_vel = jnp.where(
+        is_in_contact[..., None],
+        ang_vel + ang_vel_change,
+        ang_vel
+    )
+    
+    # Clamp angular velocity
+    ang_speed = jnp.linalg.norm(new_ang_vel, axis=-1, keepdims=True)
+    new_ang_vel = jnp.where(
+        ang_speed > BALL_MAX_ANG_SPEED,
+        new_ang_vel * (BALL_MAX_ANG_SPEED / (ang_speed + 1e-8)),
+        new_ang_vel
+    )
     
     return new_pos, new_vel, new_ang_vel
 
@@ -836,58 +900,165 @@ def resolve_ball_arena_collision(
 def resolve_car_arena_collision(
     pos: jnp.ndarray,
     vel: jnp.ndarray,
-    margin_vert: float = 17.0, # CoM height from floor
-    margin_horz: float = 30.0, # Approx half-width of car
-) -> tuple[jnp.ndarray, jnp.ndarray]:
+    ang_vel: jnp.ndarray,
+    quat: jnp.ndarray,
+    hitbox_half_size: jnp.ndarray = OCTANE_HITBOX_SIZE / 2,
+    hitbox_offset: jnp.ndarray = OCTANE_HITBOX_OFFSET,
+    restitution: float = 0.3,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """
-    Keep car center-of-mass inside arena bounds using SDF.
+    Resolve car-arena collisions by checking hitbox corners against arena SDF.
+    
+    This function checks the 8 corners of the car's hitbox (OBB) against the
+    arena geometry. If any corner penetrates, we apply a position correction
+    and velocity impulse based on physics.
     
     Args:
-        pos: Car position. Shape: (N, MAX_CARS, 3)
-        vel: Car velocity. Shape: (N, MAX_CARS, 3)
-        margin_vert: Distance from floor/ceiling
-        margin_horz: Distance from walls
+        pos: Car CoM position. Shape: (N, MAX_CARS, 3)
+        vel: Car linear velocity. Shape: (N, MAX_CARS, 3)
+        ang_vel: Car angular velocity. Shape: (N, MAX_CARS, 3)
+        quat: Car rotation quaternion. Shape: (N, MAX_CARS, 4)
+        hitbox_half_size: Half-extents of hitbox (3,)
+        hitbox_offset: Offset from CoM to hitbox center (3,)
+        restitution: Coefficient of restitution (0 = inelastic, 1 = elastic)
         
     Returns:
-        Tuple of (new_pos, new_vel)
+        Tuple of (new_pos, new_vel, new_ang_vel)
     """
-    # Use SDF to handle all geometry (walls, corners, ramps)
-    dist, normal = arena_sdf(pos)
+    # Generate 8 corners of the hitbox in local space
+    # Corners are combinations of +/- half_size
+    signs = jnp.array([
+        [-1, -1, -1],
+        [-1, -1,  1],
+        [-1,  1, -1],
+        [-1,  1,  1],
+        [ 1, -1, -1],
+        [ 1, -1,  1],
+        [ 1,  1, -1],
+        [ 1,  1,  1],
+    ], dtype=jnp.float32)  # (8, 3)
     
-    # Adaptive margin based on normal
-    # If normal is mostly vertical (floor/ceiling), use margin_vert
-    # If normal is mostly horizontal (walls), use margin_horz
+    # Local corners relative to hitbox center
+    corners_local = signs * hitbox_half_size  # (8, 3)
+    # Offset to CoM
+    corners_local = corners_local + hitbox_offset  # (8, 3)
     
-    is_vertical = jnp.abs(normal[..., 2]) > 0.7
-    margin = jnp.where(is_vertical, margin_vert, margin_horz)
+    # Transform corners to world space
+    # quat: (N, MAX_CARS, 4), corners_local: (8, 3)
+    # Need to rotate each corner by each car's quaternion
+    # Result: (N, MAX_CARS, 8, 3)
     
-    # Check penetration
-    # dist is distance to closest surface.
-    # If dist < margin, we are too close.
-    penetration = margin - dist
-    is_colliding = penetration > 0
+    # Expand dimensions for broadcasting
+    # quat_expanded: (N, MAX_CARS, 1, 4)
+    quat_expanded = quat[..., None, :]
+    # corners_local_expanded: (1, 1, 8, 3)
+    corners_local_expanded = corners_local[None, None, :, :]
     
-    # Resolve position (push out)
+    # Rotate corners - quat_rotate_vector expects (N, MAX_CARS, 4) and (N, MAX_CARS, 3)
+    # We need to do this per-corner
+    def rotate_corner(corner):
+        """Rotate a single corner by all car quaternions."""
+        # corner: (3,)
+        # quat: (N, MAX_CARS, 4)
+        return quat_rotate_vector(quat, corner)
+    
+    # Vectorize over corners
+    corners_world_offset = jax.vmap(rotate_corner)(corners_local)  # (8, N, MAX_CARS, 3)
+    corners_world_offset = jnp.moveaxis(corners_world_offset, 0, -2)  # (N, MAX_CARS, 8, 3)
+    
+    # Add car position
+    corners_world = corners_world_offset + pos[..., None, :]  # (N, MAX_CARS, 8, 3)
+    
+    # Check each corner against arena SDF
+    # arena_sdf expects (N, MAX_CARS, 3), so we need to reshape
+    orig_shape = corners_world.shape  # (N, MAX_CARS, 8, 3)
+    corners_flat = corners_world.reshape(-1, 3)  # (N*MAX_CARS*8, 3)
+    # Add batch dimension for arena_sdf
+    corners_for_sdf = corners_flat[None, :, :]  # (1, N*MAX_CARS*8, 3)
+    
+    dist_flat, normal_flat = arena_sdf(corners_for_sdf)  # (1, N*MAX_CARS*8), (1, N*MAX_CARS*8, 3)
+    dist_flat = dist_flat[0]  # (N*MAX_CARS*8,)
+    normal_flat = normal_flat[0]  # (N*MAX_CARS*8, 3)
+    
+    # Reshape back
+    n_envs = orig_shape[0]
+    max_cars = orig_shape[1]
+    corner_dist = dist_flat.reshape(n_envs, max_cars, 8)  # (N, MAX_CARS, 8)
+    corner_normal = normal_flat.reshape(n_envs, max_cars, 8, 3)  # (N, MAX_CARS, 8, 3)
+    
+    # Find penetration (negative distance = penetration)
+    penetration = -corner_dist  # Positive when penetrating
+    is_penetrating = penetration > 0  # (N, MAX_CARS, 8)
+    
+    # Find the deepest penetrating corner for each car
+    # Use max to find worst penetration
+    max_penetration = jnp.max(penetration, axis=-1)  # (N, MAX_CARS)
+    deepest_idx = jnp.argmax(penetration, axis=-1)  # (N, MAX_CARS)
+    
+    # Get normal at deepest penetration point
+    # Use gather to select the correct normal
+    batch_idx = jnp.arange(n_envs)[:, None]  # (N, 1)
+    car_idx = jnp.arange(max_cars)[None, :]  # (1, MAX_CARS)
+    deepest_normal = corner_normal[batch_idx, car_idx, deepest_idx]  # (N, MAX_CARS, 3)
+    deepest_corner_offset = corners_world_offset[batch_idx, car_idx, deepest_idx]  # (N, MAX_CARS, 3)
+    
+    # Check if any corner is penetrating
+    any_penetrating = max_penetration > 0  # (N, MAX_CARS)
+    
+    # Position correction: push CoM out by penetration amount along normal
+    pos_correction = deepest_normal * max_penetration[..., None]
     new_pos = jnp.where(
-        is_colliding[..., None],
-        pos + normal * penetration[..., None],
+        any_penetrating[..., None],
+        pos + pos_correction,
         pos
     )
     
-    # Resolve velocity (kill normal component if moving into wall)
-    v_dot_n = jnp.sum(vel * normal, axis=-1, keepdims=True)
-    should_stop = is_colliding & (v_dot_n[..., 0] < 0)
+    # Velocity at contact point: v_contact = v_com + omega x r
+    r = deepest_corner_offset  # Vector from CoM to contact point
+    vel_at_contact = vel + jnp.cross(ang_vel, r)
     
-    v_normal = v_dot_n * normal
-    v_tangent = vel - v_normal
+    # Relative velocity along normal (negative = approaching)
+    v_rel_n = jnp.sum(vel_at_contact * deepest_normal, axis=-1)  # (N, MAX_CARS)
+    
+    # Only apply impulse if approaching the wall
+    should_respond = any_penetrating & (v_rel_n < 0)
+    
+    # Simple impulse-based response
+    # For a point contact: J = -(1 + e) * v_rel_n / (1/m + (r x n)·(I^-1 · (r x n)))
+    # Simplified: assume infinite mass for arena, just reverse normal velocity component
+    
+    # Normal impulse magnitude (per unit mass for simplicity)
+    # j = -(1 + e) * v_rel_n
+    j = -(1.0 + restitution) * v_rel_n
+    
+    # Apply impulse to linear velocity
+    # delta_v = j * n / m, but we compute j as v_rel_n which already includes m implicitly
+    # So: delta_v = j * n (treating j as velocity change)
+    vel_impulse = j[..., None] * deepest_normal
     
     new_vel = jnp.where(
-        should_stop[..., None],
-        v_tangent, # Kill normal velocity (inelastic collision)
+        should_respond[..., None],
+        vel + vel_impulse,
         vel
     )
     
-    return new_pos, new_vel
+    # Apply impulse to angular velocity
+    # delta_omega = I^-1 · (r x J)
+    # Simplified: use scalar inertia approximation
+    from sim_constants import CAR_INERTIA
+    inertia_avg = jnp.mean(jnp.array(CAR_INERTIA))
+    
+    # r x (j * n) = j * (r x n)
+    torque_arm = jnp.cross(r, deepest_normal)  # (N, MAX_CARS, 3)
+    ang_impulse = j[..., None] * torque_arm / inertia_avg
+    
+    new_ang_vel = jnp.where(
+        should_respond[..., None],
+        ang_vel + ang_impulse,
+        ang_vel
+    )
+    
+    return new_pos, new_vel, new_ang_vel
 
 
 def resolve_car_ball_collision(
@@ -962,63 +1133,83 @@ def resolve_car_ball_collision(
     local_normal = dist_vec_local / (dist[..., None] + 1e-8)
     world_normal = quat_rotate_vector(car_quat, local_normal)
     
+    # Contact point on car surface (in world space)
+    car_contact_local = closest_local + hitbox_offset  # In car local space
+    car_contact_world = quat_rotate_vector(car_quat, car_contact_local) + car_pos  # World space
+    
+    # Contact point offset from car center (for torque calculation)
+    car_contact_offset = car_contact_world - car_pos  # (N, MAX_CARS, 3)
+    
     # Calculate relative velocity at contact point
-    contact_offset = -world_normal * (ball_radius - penetration[..., None] / 2)
-    car_vel_at_contact = car_vel + jnp.cross(car_ang_vel, contact_offset)
+    car_vel_at_contact = car_vel + jnp.cross(car_ang_vel, car_contact_offset)
     rel_vel = ball_vel_exp - car_vel_at_contact
     rel_vel_normal = jnp.sum(rel_vel * world_normal, axis=-1)
     
     # Only process if objects are approaching
     approaching = rel_vel_normal < 0
     
-    # Calculate collision impulse
+    # Calculate collision impulse using conservation of momentum
+    # For ball-car collision with restitution e:
+    # J = -(1+e) * v_rel_n / (1/m1 + 1/m2)
+    # But C++ uses restitution = 0 for car-ball, making it inelastic
     inv_mass_sum = 1.0 / BALL_MASS + 1.0 / CAR_MASS
-    restitution = 0.6
+    restitution = 0.0  # C++: CARBALL_COLLISION_RESTITUTION = 0.0
     impulse_mag = -(1 + restitution) * rel_vel_normal / inv_mass_sum
     
     impulse_mask = is_colliding & approaching
     impulse_mag = jnp.where(impulse_mask, impulse_mag, 0.0)
-    impulse = impulse_mag[..., None] * world_normal
+    impulse = impulse_mag[..., None] * world_normal  # Impulse applied TO the ball
     
     # RL's "Extra Impulse" (power hit mechanic)
+    # This is the main source of ball velocity after a hit
     rel_speed = jnp.linalg.norm(rel_vel, axis=-1)
     rel_speed_clamped = jnp.minimum(rel_speed, BALL_CAR_EXTRA_IMPULSE_MAX_DELTA_VEL)
     
     # Get car forward direction
     car_forward = quat_rotate_vector(car_quat, jnp.array([1.0, 0.0, 0.0]))
     
-    # Hit direction
+    # Hit direction: from car center to ball, with Z component scaled down
     hit_dir_raw = rel_pos_world * jnp.array([1.0, 1.0, BALL_CAR_EXTRA_IMPULSE_Z_SCALE])
     hit_dir = hit_dir_raw / (jnp.linalg.norm(hit_dir_raw, axis=-1, keepdims=True) + 1e-8)
     
-    # Reduce forward component
+    # Reduce forward component (makes hits go more "up" and less "forward")
     forward_component = jnp.sum(hit_dir * car_forward, axis=-1, keepdims=True)
     forward_adjustment = car_forward * forward_component * (1 - BALL_CAR_EXTRA_IMPULSE_FORWARD_SCALE)
     hit_dir = hit_dir - forward_adjustment
     hit_dir = hit_dir / (jnp.linalg.norm(hit_dir, axis=-1, keepdims=True) + 1e-8)
     
-    # Interpolate extra impulse factor
+    # Interpolate extra impulse factor based on relative speed
     extra_factor = jnp.interp(
         rel_speed_clamped,
         BALL_CAR_EXTRA_IMPULSE_FACTOR_SPEEDS,
         BALL_CAR_EXTRA_IMPULSE_FACTOR_VALUES
     )
     
+    # Extra velocity added to ball
     extra_vel = hit_dir * rel_speed_clamped[..., None] * extra_factor[..., None]
     extra_vel = jnp.where(impulse_mask[..., None], extra_vel, 0.0)
     
     # Apply impulses to velocities
+    # Ball receives: +impulse/m_ball + extra_vel
+    # Car receives: -impulse/m_car (Newton's 3rd law)
     ball_vel_delta_physics = jnp.sum(impulse / BALL_MASS, axis=1)
     ball_vel_delta_extra = jnp.sum(extra_vel, axis=1)
     new_ball_vel = ball_vel + ball_vel_delta_physics + ball_vel_delta_extra
     
-    car_vel_delta = -impulse / CAR_MASS
+    # Car receives opposite impulse (but NOT the extra_vel - that's game magic for ball only)
+    car_vel_delta = -impulse / CAR_MASS  # Correct: ball pushes car back
     new_car_vel = car_vel + car_vel_delta
     
-    # Car angular velocity change
-    torque = jnp.cross(contact_offset, -impulse)
-    inertia_approx = 1000.0
-    ang_vel_delta = torque / inertia_approx
+    # Car angular velocity change from impulse at contact point
+    # torque = r x F, ang_accel = torque / I
+    # For impulse: delta_ang_vel = (r x J) / I
+    car_impulse = -impulse  # Impulse ON the car
+    torque_on_car = jnp.cross(car_contact_offset, car_impulse)
+    
+    # Use proper inertia tensor (diagonal approximation)
+    from sim_constants import CAR_INERTIA
+    inertia_avg = jnp.mean(CAR_INERTIA)
+    ang_vel_delta = torque_on_car / inertia_avg
     new_car_ang_vel = car_ang_vel + ang_vel_delta
     
     # Ball spin from friction
