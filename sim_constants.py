@@ -57,6 +57,7 @@ CAR_MAX_ANG_SPEED = 5.5                 # Maximum angular velocity (rad/s)
 # Boost constants
 BOOST_MAX = 100.0                       # Maximum boost amount
 BOOST_USED_PER_SECOND = BOOST_MAX / 3   # 33.33 boost/s consumption
+BOOST_MIN_TIME = 0.1                    # Minimum time boosting once started
 BOOST_ACCEL_GROUND = 2975.0 / 3.0       # ~991.67 UU/s^2 on ground
 BOOST_ACCEL_AIR = 3175.0 / 3.0          # ~1058.33 UU/s^2 in air
 BOOST_SPAWN_AMOUNT = BOOST_MAX / 3      # Initial boost on spawn
@@ -379,6 +380,14 @@ STEER_SPEED_THRESHOLD = 1500.0  # Speed at which steering becomes restricted
 
 # Front wheel indices (which wheels steer)
 FRONT_WHEEL_MASK = jnp.array([1.0, 1.0, 0.0, 0.0])  # FL, FR steer; BL, BR don't
+
+# Powerslide steering extension curve (from C++ POWERSLIDE_STEER_ANGLE_FROM_SPEED_CURVE)
+POWERSLIDE_STEER_CURVE_SPEEDS = jnp.array([0.0, 2500.0])
+POWERSLIDE_STEER_CURVE_ANGLES = jnp.array([0.39235, 0.12610])
+
+# Powerslide rise/fall rates (analog handbrake value per second)
+POWERSLIDE_RISE_RATE = 5.0
+POWERSLIDE_FALL_RATE = 2.0
 
 
 # =============================================================================

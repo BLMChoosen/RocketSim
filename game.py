@@ -162,6 +162,18 @@ def step_cars(
     """
     active_mask = ~cars.is_demoed
     
+    # C++ handbrake analog value: rises at POWERSLIDE_RISE_RATE, falls at POWERSLIDE_FALL_RATE
+    from sim_constants import POWERSLIDE_RISE_RATE, POWERSLIDE_FALL_RATE
+    handbrake_val = cars.handbrake_val
+    handbrake_val = jnp.where(
+        controls.handbrake,
+        handbrake_val + POWERSLIDE_RISE_RATE * dt,
+        handbrake_val - POWERSLIDE_FALL_RATE * dt,
+    )
+    handbrake_val = jnp.clip(handbrake_val, 0.0, 1.0)
+    # Update the car state with new handbrake val for suspension/tire computation
+    cars = cars.replace(handbrake_val=handbrake_val)
+    
     # Calculate forward speed
     forward_dir = get_car_forward_dir(cars.quat)
     forward_speed = jnp.sum(cars.vel * forward_dir, axis=-1)
@@ -206,8 +218,12 @@ def step_cars(
     # stickyForceScale = 0.5 + (1 - |upwardsDir.z|) if fullStick, else 0.5
     has_any_contact = num_contacts >= 1
     
+    # C++: realThrottle includes boost override (realThrottle = 1 when boosting)
+    is_boosting_now = controls.boost & (cars.boost_amount > 0)
+    real_throttle = jnp.where(is_boosting_now, 1.0, controls.throttle)
+    
     abs_forward_speed = jnp.abs(forward_speed)
-    throttle_active = jnp.abs(controls.throttle) > 0.01
+    throttle_active = jnp.abs(real_throttle) > 0.01
     full_stick = throttle_active | (abs_forward_speed > STOPPING_FORWARD_VEL)
     
     upward_z = upwards_dir[..., 2]
@@ -262,13 +278,15 @@ def step_cars(
     vel = vel + jnp.where(active_mask[..., None], flip_vel_impulse, 0.0)
     
     # Apply boost
-    vel, boost_amount = apply_boost(
+    vel, boost_amount, is_boosting_new, boosting_time_new = apply_boost(
         vel=vel,
         boost_amount=cars.boost_amount,
         quat=cars.quat,
         is_on_ground=cars.is_on_ground,
         boost_input=controls.boost,
         active_mask=active_mask,
+        is_boosting_prev=cars.is_boosting,
+        boosting_time_prev=cars.boosting_time,
         dt=dt
     )
     
@@ -289,12 +307,15 @@ def step_cars(
     # tire_torque is in mixed units: UU × BT. Convert to BT: multiply by UU_TO_BT
     tire_ang_delta = tire_torque_masked * dt * UU_TO_BT / CAR_INERTIA
     
-    # flip_torque * CAR_TORQUE_SCALE is already angular acceleration
-    flip_ang_accel = flip_torque * CAR_TORQUE_SCALE
+    # C++ flip torque: applyTorque(I_inv.inverse() * basis * dodgeTorque)
+    # Bullet integrates: delta_omega = I_inv * torque * dt = basis * dodgeTorque * dt
+    # The inertia tensor cancels out, and NO CAR_TORQUE_SCALE is used for flip torque.
+    # flip_torque is already rotated to world space in mechanics.py.
+    flip_ang_delta = flip_torque * dt
     
     ang_vel = cars.ang_vel + jnp.where(
         active_mask[..., None],
-        sus_ang_delta + tire_ang_delta + flip_ang_accel * dt,
+        sus_ang_delta + tire_ang_delta + flip_ang_delta,
         0.0
     )
     
@@ -405,6 +426,8 @@ def step_cars(
         wheel_contacts=wheel_contacts,
         is_supersonic=is_supersonic,
         supersonic_timer=supersonic_timer,
+        is_boosting=is_boosting_new,
+        boosting_time=boosting_time_new,
     )
 
 
@@ -561,6 +584,7 @@ def create_initial_car_state(n_envs: int, max_cars: int = 6) -> CarState:
         boost_amount=jnp.full((n_envs, max_cars), BOOST_SPAWN_AMOUNT),
         is_on_ground=jnp.ones((n_envs, max_cars), dtype=jnp.bool_),
         wheel_contacts=jnp.ones((n_envs, max_cars, 4), dtype=jnp.bool_),
+        handbrake_val=jnp.zeros((n_envs, max_cars)),
         is_jumping=jnp.zeros((n_envs, max_cars), dtype=jnp.bool_),
         has_jumped=jnp.zeros((n_envs, max_cars), dtype=jnp.bool_),
         jump_timer=jnp.zeros((n_envs, max_cars)),
@@ -576,6 +600,8 @@ def create_initial_car_state(n_envs: int, max_cars: int = 6) -> CarState:
         demo_respawn_timer=jnp.zeros((n_envs, max_cars)),
         is_supersonic=jnp.zeros((n_envs, max_cars), dtype=jnp.bool_),
         supersonic_timer=jnp.zeros((n_envs, max_cars)),
+        is_boosting=jnp.zeros((n_envs, max_cars), dtype=jnp.bool_),
+        boosting_time=jnp.zeros((n_envs, max_cars)),
         team=jnp.tile(teams[None, :], (n_envs, 1)),
     )
 
@@ -792,6 +818,7 @@ def reset_round(
         boost_amount=jnp.full((n_envs, max_cars), BOOST_SPAWN_AMOUNT),
         is_on_ground=jnp.ones((n_envs, max_cars), dtype=jnp.bool_),
         wheel_contacts=jnp.ones((n_envs, max_cars, 4), dtype=jnp.bool_),
+        handbrake_val=jnp.zeros((n_envs, max_cars)),
         is_jumping=jnp.zeros((n_envs, max_cars), dtype=jnp.bool_),
         has_jumped=jnp.zeros((n_envs, max_cars), dtype=jnp.bool_),
         jump_timer=jnp.zeros((n_envs, max_cars)),
@@ -807,6 +834,8 @@ def reset_round(
         demo_respawn_timer=jnp.zeros((n_envs, max_cars)),
         is_supersonic=jnp.zeros((n_envs, max_cars), dtype=jnp.bool_),
         supersonic_timer=jnp.zeros((n_envs, max_cars)),
+        is_boosting=jnp.zeros((n_envs, max_cars), dtype=jnp.bool_),
+        boosting_time=jnp.zeros((n_envs, max_cars)),
         team=state.cars.team,
     )
     

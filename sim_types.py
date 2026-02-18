@@ -62,6 +62,7 @@ class CarState:
     boost_amount: jnp.ndarray    # (N, MAX_CARS) - Boost 0-100
     is_on_ground: jnp.ndarray    # (N, MAX_CARS) - bool
     wheel_contacts: jnp.ndarray  # (N, MAX_CARS, 4) - per-wheel contact bool
+    handbrake_val: jnp.ndarray   # (N, MAX_CARS) - Analog handbrake 0-1 (C++ rise/fall rates)
     
     # Jump/flip state
     is_jumping: jnp.ndarray        # (N, MAX_CARS) - Currently holding jump
@@ -81,6 +82,8 @@ class CarState:
     demo_respawn_timer: jnp.ndarray # (N, MAX_CARS) - float
     is_supersonic: jnp.ndarray   # (N, MAX_CARS) - bool
     supersonic_timer: jnp.ndarray  # (N, MAX_CARS) - float
+    is_boosting: jnp.ndarray     # (N, MAX_CARS) - bool (C++ isBoosting state)
+    boosting_time: jnp.ndarray   # (N, MAX_CARS) - float (C++ boostingTime timer)
     
     # Team (immutable per episode)
     team: jnp.ndarray            # (N, MAX_CARS) - int (0=Blue, 1=Orange)
