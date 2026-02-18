@@ -13,7 +13,7 @@ from sim_constants import (
     CAR_MASS, CAR_MAX_SPEED, CAR_MAX_ANG_SPEED, CAR_INERTIA, CAR_TORQUE_SCALE,
     CAR_AIR_CONTROL_TORQUE, CAR_AIR_CONTROL_DAMPING,
     WHEEL_LOCAL_OFFSETS, WHEEL_RADII, SUSPENSION_REST_LENGTHS,
-    SUSPENSION_STIFFNESS, SUSPENSION_FORCE_SCALES, MAX_SUSPENSION_TRAVEL, GROUND_Z,
+    SUSPENSION_STIFFNESS, SUSPENSION_FORCE_SCALES, MAX_SUSPENSION_TRAVEL, MAX_SUSPENSION_FORCE, GROUND_Z,
     WHEELS_DAMPING_COMPRESSION, WHEELS_DAMPING_RELAXATION,
     LATERAL_FRICTION_BASE, LATERAL_FRICTION_MIN, FRICTION_FORCE_SCALE,
     HANDBRAKE_LAT_FRICTION_FACTOR, HANDBRAKE_LONG_FRICTION_FACTOR,
@@ -346,6 +346,9 @@ def compute_suspension_force(
     # RL never uses downwards suspension forces
     total_force = jnp.maximum(total_force, 0.0)
     
+    # Clamp to MAX_SUSPENSION_FORCE to prevent extreme forces
+    total_force = jnp.minimum(total_force, MAX_SUSPENSION_FORCE)
+    
     total_force = jnp.where(is_contact, total_force, 0.0)
     
     return total_force
@@ -629,31 +632,26 @@ def compute_tire_forces(
     # Longitudinal friction: default 1.0 (curve is empty in C++)
     long_friction = jnp.ones_like(friction_curve_input)
     
-    # Handbrake adjustments
+    # Handbrake adjustments (C++ btVehicleRL)
     handbrake_4 = handbrake[..., None].astype(jnp.float32)  # (N, MAX_CARS, 1)
+    is_handbrake = handbrake_4 > 0.5
     
-    # Handbrake lateral friction factor: 0.1
-    lat_friction = lat_friction * (1.0 - handbrake_4 * 0.9)
+    # C++: When handbrake active, lateral friction = HANDBRAKE_LAT_FRICTION_FACTOR (0.1)
+    lat_friction = jnp.where(is_handbrake, HANDBRAKE_LAT_FRICTION_FACTOR, lat_friction)
     
-    # Handbrake longitudinal friction factor curve: {0: 0.5, 1: 0.9}
+    # C++: When handbrake active, longitudinal friction uses HANDBRAKE_LONG_FRICTION_FACTOR_CURVE
+    # Curve: {0: 0.5, 1: 0.9} interpolated by friction_curve_input
     handbrake_long_factor = 0.5 + 0.4 * friction_curve_input
-    long_friction = jnp.where(handbrake_4 > 0.5, long_friction * handbrake_long_factor, 1.0)
+    long_friction = jnp.where(is_handbrake, handbrake_long_factor, long_friction)
     
     # === STICKY FRICTION (non-sticky when no throttle) ===
-    # C++ scales friction by NON_STICKY_FRICTION_FACTOR_CURVE based on contact_normal.z
-    # when throttle == 0
-    is_sticky = jnp.abs(throttle_4) > 0
-    normal_z = contact_normal[..., 2]  # (N, MAX_CARS, 4)
+    # C++ logic: When not "fullStick" (no throttle AND speed < STOPPING_FORWARD_VEL),
+    # the friction values are overridden to a fixed 0.5.
+    # When fullStick (throttle active OR speed > STOPPING_FORWARD_VEL), friction is unchanged.
+    is_sticky = (jnp.abs(throttle_4) > 0.001) | (jnp.abs(forward_speed_4) > STOPPING_FORWARD_VEL)
     
-    # Non-sticky curve: {0: 0.1, 0.7075: 0.5, 1: 1.0}
-    non_sticky_scale = jnp.interp(
-        normal_z,
-        jnp.array([0.0, 0.7075, 1.0]),
-        jnp.array([0.1, 0.5, 1.0])
-    )
-    
-    lat_friction = jnp.where(is_sticky, lat_friction, lat_friction * non_sticky_scale)
-    long_friction = jnp.where(is_sticky, long_friction, long_friction * non_sticky_scale)
+    lat_friction = jnp.where(is_sticky, lat_friction, 0.5)
+    long_friction = jnp.where(is_sticky, long_friction, 0.5)
     
     # === COMPUTE FINAL IMPULSE ===
     # C++: totalFrictionForce = (forwardDir * rollingFriction * longFriction) + (axleDir * sideImpulse * latFriction)

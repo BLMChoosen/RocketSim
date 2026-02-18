@@ -121,6 +121,8 @@ CARBALL_COLLISION_RESTITUTION = 0.0
 BUMP_COOLDOWN_TIME = 0.25               # Minimum time between bumps
 BUMP_MIN_FORWARD_DIST = 64.5            # Minimum forward distance for bump
 DEMO_RESPAWN_TIME = 3.0                 # Respawn time after demo
+DEMO_MIN_SPEED = 2200.0                 # Minimum speed for demolition (must be supersonic)
+DEMO_FORWARD_ANGLE_COS = 0.707          # cos(45°) - min forward alignment for demo
 
 # Bump velocity curves (from RLConst.h)
 # Input: Forward speed of bumping car
@@ -281,6 +283,7 @@ SUSPENSION_STIFFNESS = 500.0            # C++ BTVehicle: 500.0 (N/m in BT)
 WHEELS_DAMPING_COMPRESSION = 25.0       # C++ BTVehicle: 25.0
 WHEELS_DAMPING_RELAXATION = 40.0        # C++ BTVehicle: 40.0
 MAX_SUSPENSION_TRAVEL = 12.0            # In UU (unchanged)
+MAX_SUSPENSION_FORCE = 6000.0           # Maximum per-wheel suspension force (prevents extreme forces)
 SUSPENSION_SUBTRACTION = 0.05
 
 SUSPENSION_FORCE_SCALE_FRONT = 36.0 - 0.25

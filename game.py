@@ -167,7 +167,7 @@ def step_cars(
     forward_speed = jnp.sum(cars.vel * forward_dir, axis=-1)
     
     # Handle jump mechanics
-    cars, jump_vel_delta = handle_jump(cars, controls, dt)
+    cars, jump_vel_delta, jump_start_mask = handle_jump(cars, controls, dt)
     
     # Handle flip/double-jump mechanics
     cars, flip_vel_impulse, flip_torque = handle_flip_or_double_jump(
@@ -201,7 +201,8 @@ def step_cars(
     sus_torque_masked = jnp.where(is_jumping_expanded, 0.0, sus_torque)
     
     # Sticky forces (C++ style)
-    # upwardsDir from wheel contacts, fullStick = throttle!=0 or speed > STOPPING_FORWARD_VEL
+    # The sticky force pushes the car toward the contact surface to keep it grounded.
+    # upwardsDir from car orientation, fullStick = throttle!=0 or speed > STOPPING_FORWARD_VEL
     # stickyForceScale = 0.5 + (1 - |upwardsDir.z|) if fullStick
     has_any_contact = num_contacts >= 1
     up_dir_for_sticky = get_car_up_dir(cars.quat)
@@ -214,7 +215,9 @@ def step_cars(
     extra_stick = jnp.where(full_stick, 1.0 - jnp.abs(upward_z), 0.0)
     sticky_force_scale = STICKY_FORCE_SCALE_BASE + extra_stick
     
-    sticky_force = up_dir_for_sticky * sticky_force_scale[..., None] * GRAVITY_Z * CAR_MASS
+    # Sticky force pushes car toward surface (opposite of car's up direction)
+    # Force magnitude = scale * |gravity| * mass, direction = -up_dir
+    sticky_force = -up_dir_for_sticky * sticky_force_scale[..., None] * jnp.abs(GRAVITY_Z) * CAR_MASS
     sticky_force = jnp.where(
         (has_any_contact & ~cars.is_jumping)[..., None],
         sticky_force,
@@ -246,6 +249,15 @@ def step_cars(
         tire_vel_delta,
         0.0
     )
+    
+    # Reset Z velocity before applying jump impulse (C++ sets Z to specific value)
+    # This ensures consistent jump height regardless of current downward velocity
+    vel_z = jnp.where(
+        jump_start_mask & active_mask,
+        jnp.maximum(vel[..., 2], 0.0),
+        vel[..., 2]
+    )
+    vel = vel.at[..., 2].set(vel_z)
     
     vel = vel + jnp.where(active_mask[..., None], jump_vel_delta, 0.0)
     vel = vel + jnp.where(active_mask[..., None], flip_vel_impulse, 0.0)
@@ -473,11 +485,10 @@ def step_physics(
     )
     new_cars = new_cars.replace(boost_amount=new_car_boost)
     
-    # Check for goals
-    projected_ball_y = state.ball.pos[:, 1] + state.ball.vel[:, 1] * dt
+    # Check for goals - use new ball position (entire ball must cross goal line)
     goal_threshold = GOAL_THRESHOLD_Y + BALL_RADIUS
-    blue_scored = projected_ball_y > goal_threshold
-    orange_scored = projected_ball_y < -goal_threshold
+    blue_scored = new_ball.pos[:, 1] > goal_threshold
+    orange_scored = new_ball.pos[:, 1] < -goal_threshold
     
     new_tick_count = state.tick_count + 1
     
