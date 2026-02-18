@@ -16,9 +16,9 @@ GRAVITY_Z = -650.0                      # Gravity in UU/s^2 (negative = down)
 DT = 1.0 / 120.0                        # Physics tick rate: 120 Hz
 
 # Unit conversion (Bullet Physics uses meters, RL uses Unreal Units)
-# 1 Bullet Unit = 50 Unreal Units
-BT_TO_UU = 50.0
-UU_TO_BT = 1.0 / 50.0
+# 1 Bullet Unit = 1 meter = 100 centimeters = 100 Unreal Units
+BT_TO_UU = 100.0
+UU_TO_BT = 1.0 / 100.0
 
 
 # =============================================================================
@@ -261,7 +261,7 @@ GOAL_ORANGE_Y = GOAL_THRESHOLD_Y        # Orange goal is at positive Y
 # =============================================================================
 # These are the original Bullet Physics values from RLConst.h
 # IMPORTANT: The C++ code operates in BT (Bullet) units internally:
-#   - 1 BT = 50 UU (Unreal Units)
+#   - 1 BT = 100 UU (Unreal Units), i.e. 1 meter = 100 centimeters
 #   - Stiffness is force per distance (N/m in BT scale)
 #   - Damping is force per velocity (N/(m/s) in BT scale)
 #
@@ -274,7 +274,7 @@ GOAL_ORANGE_Y = GOAL_THRESHOLD_Y        # Orange goal is at positive Y
 #   C++: force = compression_BT * stiffness * inv_dot
 #   C++: compression_BT = (rest_BT - len_BT)
 #   
-# Our compression_UU = compression_BT * BT_TO_UU = compression_BT * 50
+# Our compression_UU = compression_BT * BT_TO_UU = compression_BT * 100
 # To get the same force magnitude, we use stiffness_effective = stiffness / BT_TO_UU
 # But actually, force should also be in UU scale for our mass in UU scale...
 #

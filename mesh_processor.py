@@ -4,7 +4,7 @@ import cmf_loader
 import pickle
 
 # Constants
-BT_TO_UU = 50.0
+BT_TO_UU = 100.0
 CELL_SIZE = 512.0
 MAX_TRIS_PER_CELL = 256  # Adjust if needed
 
