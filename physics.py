@@ -696,9 +696,10 @@ def compute_tire_forces(
     is_contact_sticky = jnp.abs(throttle_4) > 0.001
     
     # Get contact normal Z for each wheel
+    # C++ uses contactNormalWS.z() directly (no abs) — curve maps z ∈ [0, 1] to scale
     contact_normal_z = contact_normal[..., 2]  # (N, MAX_CARS, 4)
     non_sticky_scale = jnp.interp(
-        jnp.abs(contact_normal_z),
+        contact_normal_z,
         NON_STICKY_FRICTION_CURVE_X,
         NON_STICKY_FRICTION_CURVE_Y
     )
