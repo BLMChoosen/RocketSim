@@ -17,7 +17,7 @@ from sim_constants import (
     BOOST_MAX, BOOST_SPAWN_AMOUNT, N_PADS_TOTAL, ARENA_EXTENT_X,
     DOUBLEJUMP_MAX_DELAY, STICKY_FORCE_SCALE_BASE, STOPPING_FORWARD_VEL,
     KICKOFF_POSITIONS_BLUE, KICKOFF_POSITIONS_ORANGE, KICKOFF_YAW_BLUE, KICKOFF_YAW_ORANGE,
-    BT_TO_UU,
+    BT_TO_UU, UU_TO_BT, THROTTLE_AIR_ACCEL,
 )
 from sim_types import BallState, CarState, CarControls, PhysicsState
 from math_utils import (
@@ -290,9 +290,9 @@ def step_cars(
     up_dir = get_car_up_dir(cars.quat)
     right_dir = get_car_right_dir(cars.quat)
     
-    air_torque_pitch = right_dir * (controls.pitch[..., None] * CAR_AIR_CONTROL_TORQUE[0])
+    air_torque_pitch = -right_dir * (controls.pitch[..., None] * CAR_AIR_CONTROL_TORQUE[0])
     air_torque_yaw = up_dir * (controls.yaw[..., None] * CAR_AIR_CONTROL_TORQUE[1])
-    air_torque_roll = forward_dir * (controls.roll[..., None] * CAR_AIR_CONTROL_TORQUE[2])
+    air_torque_roll = -forward_dir * (controls.roll[..., None] * CAR_AIR_CONTROL_TORQUE[2])
     
     ang_vel_pitch = jnp.sum(ang_vel * right_dir, axis=-1, keepdims=True)
     ang_vel_yaw = jnp.sum(ang_vel * up_dir, axis=-1, keepdims=True)
@@ -314,6 +314,16 @@ def step_cars(
     ang_vel = ang_vel + jnp.where(
         (is_airborne & active_mask)[..., None],
         air_ang_accel * dt,
+        0.0
+    )
+    
+    # C++ _UpdateAirTorque: throttle air acceleration when airborne (numWheelsInContact < 3)
+    # _rigidBody.applyCentralForce(GetForwardDir() * controls.throttle * THROTTLE_AIR_ACCEL * UU_TO_BT * CAR_MASS_BT)
+    has_throttle = jnp.abs(controls.throttle) > 0.001
+    throttle_air_vel_delta = forward_dir * (controls.throttle[..., None] * THROTTLE_AIR_ACCEL * dt)
+    vel = vel + jnp.where(
+        (is_airborne & has_throttle & active_mask)[..., None],
+        throttle_air_vel_delta,
         0.0
     )
     
