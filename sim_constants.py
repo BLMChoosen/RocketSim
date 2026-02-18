@@ -324,7 +324,9 @@ WHEEL_LOCAL_OFFSETS = jnp.array([
 WHEEL_RADII = jnp.array([12.50, 12.50, 15.00, 15.00])  # FL, FR, BL, BR
 
 # Suspension rest lengths for each wheel
-SUSPENSION_REST_LENGTHS = jnp.array([38.755, 38.755, 37.055, 37.055])  # FL, FR, BL, BR
+# C++ subtracts MAX_SUSPENSION_TRAVEL from rest length before passing to Bullet
+SUSPENSION_REST_LENGTHS = jnp.array([38.755, 38.755, 37.055, 37.055])  # FL, FR, BL, BR (original UU values)
+EFFECTIVE_REST_LENGTHS = SUSPENSION_REST_LENGTHS - MAX_SUSPENSION_TRAVEL  # What C++ actually uses
 
 # Suspension force scale (front/back differ)
 SUSPENSION_FORCE_SCALES = jnp.array([
@@ -340,10 +342,8 @@ DRIVE_WHEEL_MASK = jnp.array([1.0, 1.0, 1.0, 1.0])
 # Ground plane Z (simplified - flat ground)
 GROUND_Z = 0.0
 
-# Car spawn Z (calculated so suspension is near rest position)
-# car_z = rest_length + wheel_radius - wheel_offset_z
-# Average across wheels gives approximately 30.9
-CAR_SPAWN_Z = 30.9
+# Car spawn Z (from C++ RLConst.h CAR_SPAWN_REST_Z)
+CAR_SPAWN_Z = 17.0
 
 # Inertia tensor approximation (box inertia for Octane hitbox)
 _hitbox = OCTANE_HITBOX_SIZE

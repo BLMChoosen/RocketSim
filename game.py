@@ -276,16 +276,18 @@ def step_cars(
     # sus_torque is already an impulse (torque * dt from physics.py) in UU units
     # Tire force generates torque at wheel_rel_pos: τ = r × F
     # wheel_rel_pos is in UU, tire_impulse is in BT
-    # To get torque in UU: τ_uu = r_uu × F_bt * BT_TO_UU
-    # Or equivalently: τ_uu = (r_uu * UU_TO_BT) × F_bt * BT_TO_UU^2 = r_uu × F_bt * BT_TO_UU
+    # C++: delta_omega = I_inv * (relPos_BT × impulse_BT * dt)
+    # relPos_BT = relPos_UU * UU_TO_BT
+    # torque_BT = relPos_BT × impulse_BT = UU_TO_BT * (relPos_UU × impulse_BT)
+    # delta_omega = UU_TO_BT * cross(relPos_UU, impulse_BT) * dt / I
     tire_torque_per_wheel = jnp.cross(wheel_rel_pos, tire_impulse)  # (N, MAX_CARS, 4, 3) mixed units
     tire_torque_total = jnp.sum(tire_torque_per_wheel, axis=-2)  # (N, MAX_CARS, 3)
     tire_torque_masked = jnp.where(cars.is_jumping[..., None], 0.0, tire_torque_total)
     
     # sus_torque is already torque*dt (impulse) in UU, so delta_omega = impulse / I
     sus_ang_delta = sus_torque_masked / CAR_INERTIA  # (N, MAX_CARS, 3)
-    # tire_torque is in mixed units, apply BT_TO_UU and dt
-    tire_ang_delta = tire_torque_masked * dt * BT_TO_UU / CAR_INERTIA
+    # tire_torque is in mixed units: UU × BT. Convert to BT: multiply by UU_TO_BT
+    tire_ang_delta = tire_torque_masked * dt * UU_TO_BT / CAR_INERTIA
     
     # flip_torque * CAR_TORQUE_SCALE is already angular acceleration
     flip_ang_accel = flip_torque * CAR_TORQUE_SCALE
