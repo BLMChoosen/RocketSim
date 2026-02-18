@@ -373,23 +373,33 @@ def compute_suspension_force(
 def compute_steering_angle(
     steer_input: jnp.ndarray,
     forward_speed: jnp.ndarray,
+    handbrake_val: jnp.ndarray = None,
 ) -> jnp.ndarray:
     """
-    Compute steering angle based on input and speed.
+    Compute steering angle based on input, speed, and powerslide.
+    
+    C++: steerAngle = STEER_ANGLE_FROM_SPEED_CURVE.GetOutput(absForwardSpeed)
+         if (handbrakeVal) steerAngle += (POWERSLIDE_STEER.GetOutput(absForwardSpeed) - steerAngle) * handbrakeVal
+         steerAngle *= controls.steer
     
     Args:
         steer_input: Steering input [-1, 1] (N, MAX_CARS)
         forward_speed: Forward speed of car (N, MAX_CARS)
+        handbrake_val: Analog handbrake value 0-1 (N, MAX_CARS) or None
         
     Returns:
         Steering angle in radians (N, MAX_CARS)
     """
-    max_angle = jnp.interp(
-        jnp.abs(forward_speed),
-        STEER_ANGLE_CURVE_SPEEDS,
-        STEER_ANGLE_CURVE_ANGLES
-    )
-    return steer_input * max_angle
+    abs_speed = jnp.abs(forward_speed)
+    base_angle = jnp.interp(abs_speed, STEER_ANGLE_CURVE_SPEEDS, STEER_ANGLE_CURVE_ANGLES)
+    
+    if handbrake_val is not None:
+        from sim_constants import POWERSLIDE_STEER_CURVE_SPEEDS, POWERSLIDE_STEER_CURVE_ANGLES
+        powerslide_angle = jnp.interp(abs_speed, POWERSLIDE_STEER_CURVE_SPEEDS, POWERSLIDE_STEER_CURVE_ANGLES)
+        # Blend between base and powerslide steering based on handbrake amount
+        base_angle = base_angle + (powerslide_angle - base_angle) * handbrake_val
+    
+    return steer_input * base_angle
 
 
 def compute_tire_basis_vectors(
@@ -463,7 +473,8 @@ def compute_tire_forces(
     wheel_world_pos: jnp.ndarray,
     throttle: jnp.ndarray,
     steer: jnp.ndarray,
-    handbrake: jnp.ndarray,
+    handbrake_val: jnp.ndarray,
+    handbrake_button: jnp.ndarray,
     is_contact: jnp.ndarray,
     contact_normal: jnp.ndarray,
     forward_speed: jnp.ndarray,
@@ -485,8 +496,8 @@ def compute_tire_forces(
     # Friction scale from C++: frictionScale = mass / 3
     friction_scale = CAR_MASS / 3.0
     
-    # Steering angle
-    steer_angle = compute_steering_angle(steer, forward_speed)
+    # Steering angle (includes powerslide steering extension)
+    steer_angle = compute_steering_angle(steer, forward_speed, handbrake_val)
     
     # Get car basis vectors
     forward_local = jnp.array([1.0, 0.0, 0.0])
@@ -580,9 +591,10 @@ def compute_tire_forces(
     engine_throttle = throttle_4
     
     # C++ throttle/brake logic
-    # When handbraking, skip the reverse/coast brake logic (throttle unchanged)
-    handbrake_4 = handbrake[..., None].astype(jnp.float32)  # (N, MAX_CARS, 1)
-    is_handbraking = handbrake_4 > 0.5
+    # C++ uses controls.handbrake (binary button) for throttle/brake decisions
+    # but handbrakeVal (analog 0-1) for friction curve scaling
+    handbrake_button_4 = handbrake_button[..., None].astype(jnp.float32)  # binary button
+    is_handbraking = handbrake_button_4 > 0.5
     
     abs_throttle = jnp.abs(throttle_4)
     is_reversing = (abs_forward_speed > 25.0) & (jnp.sign(throttle_4) != jnp.sign(forward_speed_4)) & (abs_throttle > 0.001) & ~is_handbraking
@@ -659,11 +671,10 @@ def compute_tire_forces(
     
     # Handbrake adjustments (C++ btVehicleRL)
     # C++ uses analog handbrakeVal (0-1) with rise/fall rates
-    # JAX simplifies to binary but applies interpolation as C++ does:
     # latFriction *= (HANDBRAKE_LAT_FACTOR - 1) * handbrakeAmount + 1
     # longFriction *= (HANDBRAKE_LONG_FACTOR - 1) * handbrakeAmount + 1
     # When not powersliding, longFriction = 1 (C++ only scales it down during powerslide)
-    handbrake_4 = handbrake[..., None].astype(jnp.float32)  # (N, MAX_CARS, 1)
+    handbrake_4 = handbrake_val[..., None]  # Analog value 0-1 for friction curves
     
     # C++ HANDBRAKE_LAT_FRICTION_FACTOR_CURVE: {0: 0.1} (constant 0.1)
     handbrake_lat_factor = HANDBRAKE_LAT_FRICTION_FACTOR  # 0.1
@@ -845,7 +856,8 @@ def solve_suspension_and_tires(
         wheel_world_pos=wheel_world_pos,
         throttle=real_throttle,
         steer=controls.steer,
-        handbrake=controls.handbrake,
+        handbrake_val=cars.handbrake_val,
+        handbrake_button=controls.handbrake,
         is_contact=is_contact_valid,
         contact_normal=contact_normal,
         forward_speed=forward_speed,

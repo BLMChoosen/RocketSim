@@ -162,6 +162,18 @@ def step_cars(
     """
     active_mask = ~cars.is_demoed
     
+    # C++ handbrake analog value: rises at POWERSLIDE_RISE_RATE, falls at POWERSLIDE_FALL_RATE
+    from sim_constants import POWERSLIDE_RISE_RATE, POWERSLIDE_FALL_RATE
+    handbrake_val = cars.handbrake_val
+    handbrake_val = jnp.where(
+        controls.handbrake,
+        handbrake_val + POWERSLIDE_RISE_RATE * dt,
+        handbrake_val - POWERSLIDE_FALL_RATE * dt,
+    )
+    handbrake_val = jnp.clip(handbrake_val, 0.0, 1.0)
+    # Update the car state with new handbrake val for suspension/tire computation
+    cars = cars.replace(handbrake_val=handbrake_val)
+    
     # Calculate forward speed
     forward_dir = get_car_forward_dir(cars.quat)
     forward_speed = jnp.sum(cars.vel * forward_dir, axis=-1)
@@ -572,6 +584,7 @@ def create_initial_car_state(n_envs: int, max_cars: int = 6) -> CarState:
         boost_amount=jnp.full((n_envs, max_cars), BOOST_SPAWN_AMOUNT),
         is_on_ground=jnp.ones((n_envs, max_cars), dtype=jnp.bool_),
         wheel_contacts=jnp.ones((n_envs, max_cars, 4), dtype=jnp.bool_),
+        handbrake_val=jnp.zeros((n_envs, max_cars)),
         is_jumping=jnp.zeros((n_envs, max_cars), dtype=jnp.bool_),
         has_jumped=jnp.zeros((n_envs, max_cars), dtype=jnp.bool_),
         jump_timer=jnp.zeros((n_envs, max_cars)),
@@ -805,6 +818,7 @@ def reset_round(
         boost_amount=jnp.full((n_envs, max_cars), BOOST_SPAWN_AMOUNT),
         is_on_ground=jnp.ones((n_envs, max_cars), dtype=jnp.bool_),
         wheel_contacts=jnp.ones((n_envs, max_cars, 4), dtype=jnp.bool_),
+        handbrake_val=jnp.zeros((n_envs, max_cars)),
         is_jumping=jnp.zeros((n_envs, max_cars), dtype=jnp.bool_),
         has_jumped=jnp.zeros((n_envs, max_cars), dtype=jnp.bool_),
         jump_timer=jnp.zeros((n_envs, max_cars)),

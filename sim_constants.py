@@ -381,6 +381,14 @@ STEER_SPEED_THRESHOLD = 1500.0  # Speed at which steering becomes restricted
 # Front wheel indices (which wheels steer)
 FRONT_WHEEL_MASK = jnp.array([1.0, 1.0, 0.0, 0.0])  # FL, FR steer; BL, BR don't
 
+# Powerslide steering extension curve (from C++ POWERSLIDE_STEER_ANGLE_FROM_SPEED_CURVE)
+POWERSLIDE_STEER_CURVE_SPEEDS = jnp.array([0.0, 2500.0])
+POWERSLIDE_STEER_CURVE_ANGLES = jnp.array([0.39235, 0.12610])
+
+# Powerslide rise/fall rates (analog handbrake value per second)
+POWERSLIDE_RISE_RATE = 5.0
+POWERSLIDE_FALL_RATE = 2.0
+
 
 # =============================================================================
 # Tire Friction Constants
