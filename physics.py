@@ -12,8 +12,9 @@ from sim_constants import (
     DT, GRAVITY_Z, BALL_DRAG, BALL_MAX_SPEED, BALL_MAX_ANG_SPEED,
     CAR_MASS, CAR_MAX_SPEED, CAR_MAX_ANG_SPEED, CAR_INERTIA, CAR_TORQUE_SCALE,
     CAR_AIR_CONTROL_TORQUE, CAR_AIR_CONTROL_DAMPING,
-    WHEEL_LOCAL_OFFSETS, WHEEL_RADII, SUSPENSION_REST_LENGTHS,
-    SUSPENSION_STIFFNESS, SUSPENSION_FORCE_SCALES, MAX_SUSPENSION_TRAVEL, MAX_SUSPENSION_FORCE, GROUND_Z,
+    WHEEL_LOCAL_OFFSETS, WHEEL_RADII, EFFECTIVE_REST_LENGTHS,
+    SUSPENSION_STIFFNESS, SUSPENSION_FORCE_SCALES, MAX_SUSPENSION_TRAVEL, GROUND_Z,
+    SUSPENSION_SUBTRACTION,
     WHEELS_DAMPING_COMPRESSION, WHEELS_DAMPING_RELAXATION,
     LATERAL_FRICTION_BASE, LATERAL_FRICTION_MIN, FRICTION_FORCE_SCALE,
     HANDBRAKE_LAT_FRICTION_FACTOR, HANDBRAKE_LONG_FRICTION_FACTOR,
@@ -184,7 +185,7 @@ def raycast_suspension(
     wheel_world_pos: jnp.ndarray,
     car_quat: jnp.ndarray,
     wheel_radii: jnp.ndarray = WHEEL_RADII,
-    sus_rest: jnp.ndarray = SUSPENSION_REST_LENGTHS,
+    sus_rest: jnp.ndarray = EFFECTIVE_REST_LENGTHS,
     max_travel: float = MAX_SUSPENSION_TRAVEL,
     ground_z: float = GROUND_Z,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
@@ -192,14 +193,16 @@ def raycast_suspension(
     Raycast from wheel hardpoints DOWN along car's local -Z axis.
     Uses arena SDF for proper collision detection with walls/ceiling/corners.
     
-    For wall driving, we sample multiple points along the ray to find the
-    closest intersection point with the arena surface.
+    Matches C++ btVehicleRL::rayCast():
+    - realRayLength = restLen + travel + radius - SUSPENSION_SUBTRACTION
+    - susLength = wheelTraceLen - radius (clamped to [restLen-travel, restLen+travel])
+    - compression = restLen - susLength
     
     Args:
         wheel_world_pos: Wheel hardpoint positions (N, MAX_CARS, 4, 3)
         car_quat: Car rotation quaternions (N, MAX_CARS, 4)
         wheel_radii: Wheel radii (4,)
-        sus_rest: Suspension rest lengths (4,)
+        sus_rest: Effective suspension rest lengths (4,) - already reduced by MAX_TRAVEL
         max_travel: Maximum suspension travel
         ground_z: Ground plane Z coordinate (fallback)
         
@@ -218,20 +221,15 @@ def raycast_suspension(
     car_down_expanded = car_down[..., None, :]  # (N, MAX_CARS, 1, 3)
     car_down_expanded = jnp.broadcast_to(car_down_expanded, wheel_world_pos.shape)
     
-    # Ray length is rest length + wheel radius
+    # C++: realRayLength = restLen + suspensionTravel + wheelRadius - SUSPENSION_SUBTRACTION
+    # restLen here is the effective rest length (already reduced by MAX_TRAVEL)
     radii = wheel_radii[None, None, :]  # (1, 1, 4)
     rest = sus_rest[None, None, :]  # (1, 1, 4)
-    ray_length = rest + radii
+    ray_length = rest + max_travel + radii - SUSPENSION_SUBTRACTION
     
     # Sample multiple points along the ray to find intersection
-    # This is more expensive but handles wall driving correctly
     n_samples = 8
     sample_fractions = jnp.linspace(0.0, 1.0, n_samples)  # (n_samples,)
-    
-    # Calculate sample positions along ray
-    # wheel_world_pos: (N, MAX_CARS, 4, 3)
-    # sample_fractions: (n_samples,)
-    # We want: (N, MAX_CARS, 4, n_samples, 3)
     
     ray_end = wheel_world_pos + car_down_expanded * ray_length[..., None]
     
@@ -258,46 +256,62 @@ def raycast_suspension(
     sdf_normal = normal_flat.reshape(n_envs, max_cars, 4, n_samples, 3)  # (N, MAX_CARS, 4, n_samples, 3)
     
     # Find the first sample that penetrates (SDF < wheel_radius)
-    # SDF is POSITIVE inside arena, so penetration is when SDF < wheel_radius
-    # wheel_radii: (4,) -> (1, 1, 4, 1)
     radii_exp = radii[..., None]  # (1, 1, 4, 1)
-    
-    # Check which samples are "in contact" (surface within wheel radius)
     is_penetrating = sdf_dist < radii_exp  # (N, MAX_CARS, 4, n_samples)
     
-    # Find the first penetrating sample (smallest index where penetrating)
-    # Use a mask to find first True
-    # Add a large value to non-penetrating samples so argmin finds first penetrating
-    sample_idx = jnp.arange(n_samples)[None, None, None, :]  # (1, 1, 1, n_samples)
-    masked_idx = jnp.where(is_penetrating, sample_idx, n_samples * 2)  # (N, MAX_CARS, 4, n_samples)
+    # Find the first penetrating sample
+    sample_idx = jnp.arange(n_samples)[None, None, None, :]
+    masked_idx = jnp.where(is_penetrating, sample_idx, n_samples * 2)
     first_contact_idx = jnp.argmin(masked_idx, axis=-1)  # (N, MAX_CARS, 4)
     
-    # Check if ANY sample penetrates
     any_contact = jnp.any(is_penetrating, axis=-1)  # (N, MAX_CARS, 4)
     
-    # Get the contact fraction
-    contact_fraction = sample_fractions[first_contact_idx]  # (N, MAX_CARS, 4)
+    # Get SDF distance and contact normal at first contact sample
+    batch_idx = jnp.arange(n_envs)[:, None, None]
+    car_idx_arr = jnp.arange(max_cars)[None, :, None]
+    wheel_idx_arr = jnp.arange(4)[None, None, :]
+    contact_sdf = sdf_dist[batch_idx, car_idx_arr, wheel_idx_arr, first_contact_idx]  # (N, MAX_CARS, 4)
+    contact_normal = sdf_normal[batch_idx, car_idx_arr, wheel_idx_arr, first_contact_idx]  # (N, MAX_CARS, 4, 3)
+    
+    # Get distance along ray to contact sample
+    contact_fraction = sample_fractions[first_contact_idx]
     contact_fraction = jnp.where(any_contact, contact_fraction, 1.0)
     
-    # Calculate compression
-    # If contact at fraction f, the ray traveled f * ray_length before hitting
-    # Compression = (1 - f) * ray_length - wheel_radius (distance saved)
-    # Actually: compression = ray_length * (1 - contact_fraction) but capped
-    compression_raw = ray_length[0, 0, :] * (1.0 - contact_fraction)
-    compression = jnp.clip(compression_raw, 0.0, max_travel)
+    # C++: wheelTraceLen = (hardPointWS - contactPointWS).dot(upVector)
+    # The SDF-based sample is at fraction f, which is f*ray_length from the hardpoint.
+    # But the actual surface is SDF distance further along (SDF = distance to nearest surface).
+    # For non-flat surfaces, project: surface_dist_along_ray = SDF / dot(normal, car_up)
+    car_up_expanded_4 = car_up[..., None, :]  # (N, MAX_CARS, 1, 3)
+    car_up_expanded_4 = jnp.broadcast_to(car_up_expanded_4, contact_normal.shape)
+    normal_dot_up = jnp.sum(contact_normal * car_up_expanded_4, axis=-1)  # (N, MAX_CARS, 4)
+    normal_dot_up_safe = jnp.maximum(normal_dot_up, 0.1)
     
-    # Get contact normal at the first contact point
-    batch_idx = jnp.arange(n_envs)[:, None, None]  # (N, 1, 1)
-    car_idx = jnp.arange(max_cars)[None, :, None]  # (1, MAX_CARS, 1)
-    wheel_idx = jnp.arange(4)[None, None, :]  # (1, 1, 4)
-    contact_normal = sdf_normal[batch_idx, car_idx, wheel_idx, first_contact_idx]  # (N, MAX_CARS, 4, 3)
+    wheel_trace_len = contact_fraction * ray_length[0, 0, :] + contact_sdf / normal_dot_up_safe
+    
+    # C++: susLength = wheelTraceLen - wheelRadius
+    sus_length = wheel_trace_len - radii[0, 0, :]
+    
+    # C++: susLength = clamp(susLength, restLen - travel, restLen + travel)
+    min_sus = rest[0, 0, :] - max_travel
+    max_sus = rest[0, 0, :] + max_travel
+    sus_length = jnp.clip(sus_length, min_sus, max_sus)
+    
+    # C++: compression = restLen - susLength
+    compression = rest[0, 0, :] - sus_length
+    compression = jnp.where(any_contact, compression, 0.0)
+    
+    # Compute contact point on surface (C++: hitPointInWorld)
+    # contact_point = hardpoint + car_down * wheelTraceLen
+    car_down_4 = car_down[..., None, :]  # (N, MAX_CARS, 1, 3)
+    car_down_4 = jnp.broadcast_to(car_down_4, wheel_world_pos.shape)
+    contact_surface_pos = wheel_world_pos + car_down_4 * wheel_trace_len[..., None]
     
     # Use car_up as fallback normal when no contact
-    car_up_exp = car_up[..., None, :]  # (N, MAX_CARS, 1, 3)
-    car_up_exp = jnp.broadcast_to(car_up_exp, contact_normal.shape)
-    contact_normal = jnp.where(any_contact[..., None], contact_normal, car_up_exp)
+    car_up_fallback = car_up[..., None, :]
+    car_up_fallback = jnp.broadcast_to(car_up_fallback, contact_normal.shape)
+    contact_normal = jnp.where(any_contact[..., None], contact_normal, car_up_fallback)
     
-    return compression, any_contact, contact_normal
+    return compression, any_contact, contact_normal, contact_surface_pos
 
 
 def compute_suspension_force(
@@ -345,9 +359,6 @@ def compute_suspension_force(
     
     # RL never uses downwards suspension forces
     total_force = jnp.maximum(total_force, 0.0)
-    
-    # Clamp to MAX_SUSPENSION_FORCE to prevent extreme forces
-    total_force = jnp.minimum(total_force, MAX_SUSPENSION_FORCE)
     
     total_force = jnp.where(is_contact, total_force, 0.0)
     
@@ -609,10 +620,20 @@ def compute_tire_forces(
     has_engine = jnp.abs(drive_engine_force) > 0.001
     
     # Brake rolling friction
+    # C++: rollingFriction = clamp(-relVel * MAGIC, -brake, brake)
+    # To prevent oscillation in our explicit integrator, we limit the friction
+    # so that the resulting impulse cannot reverse the wheel contact velocity.
+    # The velocity change per wheel from rolling friction is:
+    #   delta_v = friction * friction_scale * dt / mass * BT_TO_UU  (along forward_dir)
+    # We want |delta_v| <= |vel_forward|, so:
+    #   |friction| <= |vel_forward| * mass / (friction_scale * dt * BT_TO_UU)
+    vel_to_friction = CAR_MASS / jnp.maximum(friction_scale * DT * BT_TO_UU, 1e-8)
+    max_stop_friction = jnp.abs(vel_forward) * vel_to_friction / 4.0  # divide by 4 wheels
+    effective_brake = jnp.minimum(drive_brake_force, max_stop_friction)
     rolling_friction_brake = jnp.clip(
         -vel_forward * ROLLING_FRICTION_SCALE_MAGIC,
-        -drive_brake_force,
-        drive_brake_force
+        -effective_brake,
+        effective_brake
     )
     rolling_friction_brake = jnp.where(drive_brake_force > 0, rolling_friction_brake, 0.0)
     
@@ -765,7 +786,7 @@ def solve_suspension_and_tires(
     wheel_world_pos = compute_wheel_world_positions(cars.pos, cars.quat)
     wheel_vel = compute_wheel_velocities(cars.vel, cars.ang_vel, cars.quat)
     
-    compression, is_contact, contact_normal = raycast_suspension(wheel_world_pos, cars.quat)
+    compression, is_contact, contact_normal, contact_surface_pos = raycast_suspension(wheel_world_pos, cars.quat)
     
     # Check if car body is penetrating arena (SDF < 0 at car center)
     # If so, disable suspension to avoid weird forces during collision resolution
@@ -838,8 +859,9 @@ def solve_suspension_and_tires(
     sus_force_expanded = suspension_force[..., None]
     sus_force_vec = contact_normal * sus_force_expanded * DT  # Impulse = force * dt
     
-    # Contact point offset from CoM
-    contact_offset = wheel_world_pos - cars.pos[..., None, :]
+    # Contact point offset from CoM (C++ uses surface contact point, NOT wheel hardpoint)
+    # C++: contactPointOffset = hitPointInWorld - getCenterOfMassPosition()
+    contact_offset = contact_surface_pos - cars.pos[..., None, :]
     
     # Sum suspension forces
     total_sus_force = jnp.sum(sus_force_vec, axis=-2)

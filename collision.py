@@ -636,7 +636,7 @@ def analytical_arena_sdf_legacy(pos: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndar
 
 # Extracted from Rocket League collision meshes
 # Format: [nx, ny, nz, d]
-# Units: Unreal Units (d is scaled by 50.0 from Bullet units)
+# Units: Unreal Units (d values are arena geometry in UU)
 # Normals point INWARD (towards the center of the field)
 # Condition for inside: dot(n, p) > d  =>  d - dot(n, p) < 0
 # SDF = max(d - dot(n, p))
@@ -662,43 +662,38 @@ ARENA_PLANES = jnp.array([
     [0.7071, 0.7071, 0.0, -5700.0],
     
     # Ramps (Floor/Wall connections)
-    # N=[0, -0.879, 0.477], D=-4440 (88.8 * 50)
     [0.0, -0.879, 0.477, -4440.0],
     [0.0, 0.879, 0.477, -4440.0],
-    [-0.879, 0.0, 0.477, -3505.0], # D=-70.1 * 50 = 3505
+    [-0.879, 0.0, 0.477, -3505.0],
     [0.879, 0.0, 0.477, -3505.0],
     
-    # N=[0, -0.955, 0.297], D=-4850 (97.0 * 50)
     [0.0, -0.955, 0.297, -4850.0],
     [0.0, 0.955, 0.297, -4850.0],
     
-    # N=[0, -0.637, 0.771], D=-3195 (63.9 * 50)
     [0.0, -0.637, 0.771, -3195.0],
     [0.0, 0.637, 0.771, -3195.0],
     
-    # N=[0, -0.771, 0.637], D=-3885 (77.7 * 50)
     [0.0, -0.771, 0.637, -3885.0],
     [0.0, 0.771, 0.637, -3885.0],
     
-    # N=[0, -0.477, 0.879], D=-2385 (47.7 * 50)
     [0.0, -0.477, 0.879, -2385.0],
     [0.0, 0.477, 0.879, -2385.0],
 ])
 
 GOAL_PLANES_POS = jnp.array([
-    # Back (y=6000 approx)
-    [0.0, -1.0, 0.0, -5995.0], # D=-119.9 * 50 = 5995
+    # Back (y=5995)
+    [0.0, -1.0, 0.0, -5995.0],
     # Sides (x=+-895)
-    [-1.0, 0.0, 0.0, -895.0], # D=-17.9 * 50 = 895
+    [-1.0, 0.0, 0.0, -895.0],
     [1.0, 0.0, 0.0, -895.0],
     # Top (z=640)
-    [0.0, 0.0, -1.0, -640.0], # D=-12.8 * 50 = 640
+    [0.0, 0.0, -1.0, -640.0],
     # Bottom (z=0)
     [0.0, 0.0, 1.0, 0.0],
 ])
 
 GOAL_PLANES_NEG = jnp.array([
-    # Back (y=-6000)
+    # Back (y=-5995)
     [0.0, 1.0, 0.0, -5995.0],
     # Sides
     [-1.0, 0.0, 0.0, -895.0],
