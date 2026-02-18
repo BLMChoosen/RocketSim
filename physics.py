@@ -300,12 +300,18 @@ def raycast_suspension(
     compression = rest[0, 0, :] - sus_length
     compression = jnp.where(any_contact, compression, 0.0)
     
+    # Compute contact point on surface (C++: hitPointInWorld)
+    # contact_point = hardpoint + car_down * wheelTraceLen
+    car_down_4 = car_down[..., None, :]  # (N, MAX_CARS, 1, 3)
+    car_down_4 = jnp.broadcast_to(car_down_4, wheel_world_pos.shape)
+    contact_surface_pos = wheel_world_pos + car_down_4 * wheel_trace_len[..., None]
+    
     # Use car_up as fallback normal when no contact
     car_up_fallback = car_up[..., None, :]
     car_up_fallback = jnp.broadcast_to(car_up_fallback, contact_normal.shape)
     contact_normal = jnp.where(any_contact[..., None], contact_normal, car_up_fallback)
     
-    return compression, any_contact, contact_normal
+    return compression, any_contact, contact_normal, contact_surface_pos
 
 
 def compute_suspension_force(
@@ -780,7 +786,7 @@ def solve_suspension_and_tires(
     wheel_world_pos = compute_wheel_world_positions(cars.pos, cars.quat)
     wheel_vel = compute_wheel_velocities(cars.vel, cars.ang_vel, cars.quat)
     
-    compression, is_contact, contact_normal = raycast_suspension(wheel_world_pos, cars.quat)
+    compression, is_contact, contact_normal, contact_surface_pos = raycast_suspension(wheel_world_pos, cars.quat)
     
     # Check if car body is penetrating arena (SDF < 0 at car center)
     # If so, disable suspension to avoid weird forces during collision resolution
@@ -853,8 +859,9 @@ def solve_suspension_and_tires(
     sus_force_expanded = suspension_force[..., None]
     sus_force_vec = contact_normal * sus_force_expanded * DT  # Impulse = force * dt
     
-    # Contact point offset from CoM
-    contact_offset = wheel_world_pos - cars.pos[..., None, :]
+    # Contact point offset from CoM (C++ uses surface contact point, NOT wheel hardpoint)
+    # C++: contactPointOffset = hitPointInWorld - getCenterOfMassPosition()
+    contact_offset = contact_surface_pos - cars.pos[..., None, :]
     
     # Sum suspension forces
     total_sus_force = jnp.sum(sus_force_vec, axis=-2)
