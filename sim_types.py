@@ -81,6 +81,8 @@ class CarState:
     demo_respawn_timer: jnp.ndarray # (N, MAX_CARS) - float
     is_supersonic: jnp.ndarray   # (N, MAX_CARS) - bool
     supersonic_timer: jnp.ndarray  # (N, MAX_CARS) - float
+    is_boosting: jnp.ndarray     # (N, MAX_CARS) - bool (C++ isBoosting state)
+    boosting_time: jnp.ndarray   # (N, MAX_CARS) - float (C++ boostingTime timer)
     
     # Team (immutable per episode)
     team: jnp.ndarray            # (N, MAX_CARS) - int (0=Blue, 1=Orange)

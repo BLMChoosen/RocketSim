@@ -19,7 +19,7 @@ from sim_constants import (
     FLIP_TORQUE_TIME, FLIP_TORQUE_X, FLIP_TORQUE_Y,
     FLIP_Z_DAMP_START, FLIP_Z_DAMP_END, FLIP_Z_DAMP_120,
     FLIP_PITCHLOCK_TIME,
-    BOOST_ACCEL_GROUND, BOOST_ACCEL_AIR, BOOST_USED_PER_SECOND, BOOST_MAX,
+    BOOST_ACCEL_GROUND, BOOST_ACCEL_AIR, BOOST_USED_PER_SECOND, BOOST_MAX, BOOST_MIN_TIME,
     SUPERSONIC_START_SPEED, SUPERSONIC_MAINTAIN_MIN_SPEED,
     SUPERSONIC_MAINTAIN_MAX_TIME,
 )
@@ -180,13 +180,13 @@ def handle_flip_or_double_jump(
     )
     
     # Check if can use double jump / flip
-    # CRITICAL: Must have jumped first (has_jumped) to be able to double jump or flip
-    # Exception: "flip reset" when all 4 wheels touch something while airborne
-    # (flip reset is handled separately via num_contacts)
+    # C++ logic: jumpPressed && airTimeSinceJump < DOUBLEJUMP_MAX_DELAY && !hasFlipped && !hasDoubleJumped
+    # Note: C++ does NOT require has_jumped. If the car is bumped airborne without jumping,
+    # airTimeSinceJump stays at 0 (< DOUBLEJUMP_MAX_DELAY), so the car CAN flip/double-jump.
+    # This is how flip resets after bumps work in RL.
     is_airborne = ~is_on_ground
     within_time = air_time_since_jump < DOUBLEJUMP_MAX_DELAY
-    # Must have done first jump AND be within time window AND haven't used flip/double jump yet
-    can_use = is_airborne & has_jumped & within_time & ~has_flipped & ~has_double_jumped
+    can_use = is_airborne & within_time & ~has_flipped & ~has_double_jumped
     
     input_magnitude = jnp.abs(controls.yaw) + jnp.abs(controls.pitch) + jnp.abs(controls.roll)
     is_flip_input = input_magnitude >= DODGE_DEADZONE
@@ -204,24 +204,29 @@ def handle_flip_or_double_jump(
     has_double_jumped = jnp.where(do_double_jump, True, has_double_jumped)
     
     # Flip direction
+    # C++ order: normalize first, compute flip torque, THEN zero small components
     dodge_dir_x = -controls.pitch
     dodge_dir_y = controls.yaw + controls.roll
     
-    dodge_dir_x = jnp.where(jnp.abs(dodge_dir_x) < 0.1, 0.0, dodge_dir_x)
-    dodge_dir_y = jnp.where(jnp.abs(dodge_dir_y) < 0.1, 0.0, dodge_dir_y)
-    
+    # C++: if both inputs < 0.1, zero out; otherwise normalize
+    both_small = (jnp.abs(dodge_dir_y) < 0.1) & (jnp.abs(dodge_dir_x) < 0.1)
     dodge_mag = jnp.sqrt(dodge_dir_x**2 + dodge_dir_y**2 + 1e-8)
-    dodge_dir_x_norm = dodge_dir_x / dodge_mag
-    dodge_dir_y_norm = dodge_dir_y / dodge_mag
+    dodge_dir_x_norm = jnp.where(both_small, 0.0, dodge_dir_x / dodge_mag)
+    dodge_dir_y_norm = jnp.where(both_small, 0.0, dodge_dir_y / dodge_mag)
     
-    has_dodge_input = (jnp.abs(dodge_dir_x) > 0.01) | (jnp.abs(dodge_dir_y) > 0.01)
-    
-    # Flip torque
+    # C++: flipRelTorque is set from the NORMALIZED direction BEFORE small-component zeroing
     new_flip_rel_torque = jnp.stack([
         -dodge_dir_y_norm,
         dodge_dir_x_norm,
         jnp.zeros_like(dodge_dir_x)
     ], axis=-1)
+    
+    # C++: THEN zero small components of dodge direction for velocity impulse
+    dodge_dir_x_norm = jnp.where(jnp.abs(dodge_dir_x_norm) < 0.1, 0.0, dodge_dir_x_norm)
+    dodge_dir_y_norm = jnp.where(jnp.abs(dodge_dir_y_norm) < 0.1, 0.0, dodge_dir_y_norm)
+    
+    # C++: !dodgeDir.fuzzyZero() — true if EITHER component is non-negligible
+    has_dodge_input = (jnp.abs(dodge_dir_x_norm) > 0.01) | (jnp.abs(dodge_dir_y_norm) > 0.01)
     flip_rel_torque = jnp.where(do_flip[..., None], new_flip_rel_torque, flip_rel_torque)
     
     # Velocity impulse
@@ -357,10 +362,17 @@ def apply_boost(
     is_on_ground: jnp.ndarray,
     boost_input: jnp.ndarray,
     active_mask: jnp.ndarray,
+    is_boosting_prev: jnp.ndarray,
+    boosting_time_prev: jnp.ndarray,
     dt: float = DT
-) -> tuple[jnp.ndarray, jnp.ndarray]:
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """
     Apply boost acceleration and consume boost.
+    
+    C++ logic:
+    - If currently boosting: keep boosting if (button held OR boostingTime < BOOST_MIN_TIME)
+    - If not boosting: start if button pressed and has fuel
+    - If boosting: boostingTime += dt, else boostingTime = 0
     
     Args:
         vel: Car velocities. Shape: (N, MAX_CARS, 3)
@@ -369,13 +381,29 @@ def apply_boost(
         is_on_ground: Ground contact flags. Shape: (N, MAX_CARS)
         boost_input: Boost button held. Shape: (N, MAX_CARS)
         active_mask: Non-demoed cars. Shape: (N, MAX_CARS)
+        is_boosting_prev: Was boosting last tick. Shape: (N, MAX_CARS)
+        boosting_time_prev: Time spent boosting. Shape: (N, MAX_CARS)
         dt: Time step
         
     Returns:
-        Tuple of (new_vel, new_boost_amount)
+        Tuple of (new_vel, new_boost_amount, new_is_boosting, new_boosting_time)
     """
     has_fuel = boost_amount > 0.0
-    is_boosting = boost_input & has_fuel & active_mask
+    
+    # C++ boost state machine
+    # If was boosting: keep if (button held OR within min time), stop otherwise
+    keep_boosting = is_boosting_prev & has_fuel & (boost_input | (boosting_time_prev < BOOST_MIN_TIME))
+    # If was not boosting: start if button pressed and has fuel
+    start_boosting = ~is_boosting_prev & boost_input & has_fuel
+    
+    is_boosting = (keep_boosting | start_boosting) & active_mask
+    
+    # Update boosting time
+    new_boosting_time = jnp.where(
+        is_boosting,
+        boosting_time_prev + dt,
+        0.0
+    )
     
     boost_accel = jnp.where(
         is_on_ground,
@@ -401,7 +429,7 @@ def apply_boost(
     
     new_boost_amount = jnp.clip(new_boost_amount, 0.0, BOOST_MAX)
     
-    return new_vel, new_boost_amount
+    return new_vel, new_boost_amount, is_boosting, new_boosting_time
 
 
 def update_supersonic_status(

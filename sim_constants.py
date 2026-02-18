@@ -57,6 +57,7 @@ CAR_MAX_ANG_SPEED = 5.5                 # Maximum angular velocity (rad/s)
 # Boost constants
 BOOST_MAX = 100.0                       # Maximum boost amount
 BOOST_USED_PER_SECOND = BOOST_MAX / 3   # 33.33 boost/s consumption
+BOOST_MIN_TIME = 0.1                    # Minimum time boosting once started
 BOOST_ACCEL_GROUND = 2975.0 / 3.0       # ~991.67 UU/s^2 on ground
 BOOST_ACCEL_AIR = 3175.0 / 3.0          # ~1058.33 UU/s^2 in air
 BOOST_SPAWN_AMOUNT = BOOST_MAX / 3      # Initial boost on spawn
