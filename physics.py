@@ -569,9 +569,13 @@ def compute_tire_forces(
     engine_throttle = throttle_4
     
     # C++ throttle/brake logic
+    # When handbraking, skip the reverse/coast brake logic (throttle unchanged)
+    handbrake_4 = handbrake[..., None].astype(jnp.float32)  # (N, MAX_CARS, 1)
+    is_handbraking = handbrake_4 > 0.5
+    
     abs_throttle = jnp.abs(throttle_4)
-    is_reversing = (abs_forward_speed > 25.0) & (jnp.sign(throttle_4) != jnp.sign(forward_speed_4)) & (abs_throttle > 0.001)
-    is_coasting = abs_throttle < 0.001
+    is_reversing = (abs_forward_speed > 25.0) & (jnp.sign(throttle_4) != jnp.sign(forward_speed_4)) & (abs_throttle > 0.001) & ~is_handbraking
+    is_coasting = (abs_throttle < 0.001) & ~is_handbraking
     
     # When reversing, we brake (engine_throttle = 0 if speed > threshold)
     engine_throttle = jnp.where(
@@ -633,25 +637,42 @@ def compute_tire_forces(
     long_friction = jnp.ones_like(friction_curve_input)
     
     # Handbrake adjustments (C++ btVehicleRL)
+    # C++ uses analog handbrakeVal (0-1) with rise/fall rates
+    # JAX simplifies to binary but applies interpolation as C++ does:
+    # latFriction *= (HANDBRAKE_LAT_FACTOR - 1) * handbrakeAmount + 1
+    # longFriction *= (HANDBRAKE_LONG_FACTOR - 1) * handbrakeAmount + 1
+    # When not powersliding, longFriction = 1 (C++ only scales it down during powerslide)
     handbrake_4 = handbrake[..., None].astype(jnp.float32)  # (N, MAX_CARS, 1)
-    is_handbrake = handbrake_4 > 0.5
     
-    # C++: When handbrake active, lateral friction = HANDBRAKE_LAT_FRICTION_FACTOR (0.1)
-    lat_friction = jnp.where(is_handbrake, HANDBRAKE_LAT_FRICTION_FACTOR, lat_friction)
+    # C++ HANDBRAKE_LAT_FRICTION_FACTOR_CURVE: {0: 0.1} (constant 0.1)
+    handbrake_lat_factor = HANDBRAKE_LAT_FRICTION_FACTOR  # 0.1
+    lat_friction = lat_friction * ((handbrake_lat_factor - 1.0) * handbrake_4 + 1.0)
     
-    # C++: When handbrake active, longitudinal friction uses HANDBRAKE_LONG_FRICTION_FACTOR_CURVE
-    # Curve: {0: 0.5, 1: 0.9} interpolated by friction_curve_input
+    # C++ HANDBRAKE_LONG_FRICTION_FACTOR_CURVE: {0: 0.5, 1: 0.9}
     handbrake_long_factor = 0.5 + 0.4 * friction_curve_input
-    long_friction = jnp.where(is_handbrake, handbrake_long_factor, long_friction)
+    long_friction = long_friction * ((handbrake_long_factor - 1.0) * handbrake_4 + 1.0)
     
-    # === STICKY FRICTION (non-sticky when no throttle) ===
-    # C++ logic: When not "fullStick" (no throttle AND speed < STOPPING_FORWARD_VEL),
-    # the friction values are overridden to a fixed 0.5.
-    # When fullStick (throttle active OR speed > STOPPING_FORWARD_VEL), friction is unchanged.
-    is_sticky = (jnp.abs(throttle_4) > 0.001) | (jnp.abs(forward_speed_4) > STOPPING_FORWARD_VEL)
+    # C++: If we aren't powersliding, longFriction is not scaled down (= 1.0)
+    long_friction = jnp.where(handbrake_4 > 0.001, long_friction, jnp.ones_like(long_friction))
     
-    lat_friction = jnp.where(is_sticky, lat_friction, 0.5)
-    long_friction = jnp.where(is_sticky, long_friction, 0.5)
+    # === NON-STICKY FRICTION ===
+    # C++ logic: isContactSticky = realThrottle != 0
+    # When not sticky (no throttle), friction is scaled by NON_STICKY_FRICTION_FACTOR_CURVE
+    # The curve maps contact normal Z component to a friction scale factor:
+    # {0: 0.1, 0.7075: 0.5, 1.0: 1.0}
+    from sim_constants import NON_STICKY_FRICTION_CURVE_X, NON_STICKY_FRICTION_CURVE_Y
+    is_contact_sticky = jnp.abs(throttle_4) > 0.001
+    
+    # Get contact normal Z for each wheel
+    contact_normal_z = contact_normal[..., 2]  # (N, MAX_CARS, 4)
+    non_sticky_scale = jnp.interp(
+        jnp.abs(contact_normal_z),
+        NON_STICKY_FRICTION_CURVE_X,
+        NON_STICKY_FRICTION_CURVE_Y
+    )
+    
+    lat_friction = jnp.where(is_contact_sticky, lat_friction, lat_friction * non_sticky_scale)
+    long_friction = jnp.where(is_contact_sticky, long_friction, long_friction * non_sticky_scale)
     
     # === COMPUTE FINAL IMPULSE ===
     # C++: totalFrictionForce = (forwardDir * rollingFriction * longFriction) + (axleDir * sideImpulse * latFriction)
@@ -717,7 +738,7 @@ def aggregate_wheel_forces(
 def solve_suspension_and_tires(
     cars: CarState,
     controls: CarControls,
-) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """
     Main function to compute all wheel-related forces.
     
@@ -736,6 +757,7 @@ def solve_suspension_and_tires(
         wheel_rel_pos: Relative position for tire torque (N, MAX_CARS, 4, 3)
         is_contact: Per-wheel contact flags (N, MAX_CARS, 4)
         num_contacts: Number of wheels in contact (N, MAX_CARS)
+        upwards_dir: Average contact normal direction (N, MAX_CARS, 3)
     """
     from sim_constants import DT
     from collision import arena_sdf
@@ -789,13 +811,18 @@ def solve_suspension_and_tires(
     forward_speed = jnp.sum(cars.vel * car_forward, axis=-1)
     
     # Compute tire impulses (C++ style)
+    # C++: realThrottle = controls.throttle; if (boost && boost > 0) realThrottle = 1;
+    # When handbraking, the brake-when-reversing logic is skipped
+    is_boosting = controls.boost & (cars.boost_amount > 0)
+    real_throttle = jnp.where(is_boosting, 1.0, controls.throttle)
+    
     tire_impulse, wheel_rel_pos = compute_tire_forces(
         car_quat=cars.quat,
         car_vel=cars.vel,
         car_ang_vel=cars.ang_vel,
         car_pos=cars.pos,
         wheel_world_pos=wheel_world_pos,
-        throttle=controls.throttle,
+        throttle=real_throttle,
         steer=controls.steer,
         handbrake=controls.handbrake,
         is_contact=is_contact_valid,
@@ -824,7 +851,20 @@ def solve_suspension_and_tires(
     # Use filtered contacts for ground detection
     num_contacts = jnp.sum(is_contact_valid.astype(jnp.float32), axis=-1)
     
-    return total_sus_force, total_sus_torque, tire_impulse, wheel_rel_pos, is_contact_valid, num_contacts
+    # C++ getUpwardsDirFromWheelContacts(): average of contact normals from wheels in contact
+    # Used for sticky forces direction
+    sum_contact_normals = jnp.sum(
+        jnp.where(is_contact_valid[..., None], contact_normal, 0.0),
+        axis=-2
+    )  # (N, MAX_CARS, 3)
+    upwards_dir_norm = jnp.linalg.norm(sum_contact_normals, axis=-1, keepdims=True)
+    upwards_dir = jnp.where(
+        upwards_dir_norm > 1e-8,
+        sum_contact_normals / upwards_dir_norm,
+        car_up  # Fallback to car up when no contacts
+    )
+    
+    return total_sus_force, total_sus_torque, tire_impulse, wheel_rel_pos, is_contact_valid, num_contacts, upwards_dir
 
 
 # =============================================================================

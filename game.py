@@ -175,7 +175,7 @@ def step_cars(
     )
     
     # Compute suspension and tire forces (C++ btVehicleRL style)
-    sus_force, sus_torque, tire_impulse, wheel_rel_pos, wheel_contacts, num_contacts = solve_suspension_and_tires(
+    sus_force, sus_torque, tire_impulse, wheel_rel_pos, wheel_contacts, num_contacts, upwards_dir = solve_suspension_and_tires(
         cars, controls
     )
     
@@ -201,23 +201,22 @@ def step_cars(
     sus_torque_masked = jnp.where(is_jumping_expanded, 0.0, sus_torque)
     
     # Sticky forces (C++ style)
-    # The sticky force pushes the car toward the contact surface to keep it grounded.
-    # upwardsDir from car orientation, fullStick = throttle!=0 or speed > STOPPING_FORWARD_VEL
-    # stickyForceScale = 0.5 + (1 - |upwardsDir.z|) if fullStick
+    # C++ uses getUpwardsDirFromWheelContacts() which averages wheel contact normals
+    # fullStick = throttle!=0 or speed > STOPPING_FORWARD_VEL
+    # stickyForceScale = 0.5 + (1 - |upwardsDir.z|) if fullStick, else 0.5
     has_any_contact = num_contacts >= 1
-    up_dir_for_sticky = get_car_up_dir(cars.quat)
     
     abs_forward_speed = jnp.abs(forward_speed)
     throttle_active = jnp.abs(controls.throttle) > 0.01
     full_stick = throttle_active | (abs_forward_speed > STOPPING_FORWARD_VEL)
     
-    upward_z = up_dir_for_sticky[..., 2]
+    upward_z = upwards_dir[..., 2]
     extra_stick = jnp.where(full_stick, 1.0 - jnp.abs(upward_z), 0.0)
     sticky_force_scale = STICKY_FORCE_SCALE_BASE + extra_stick
     
-    # Sticky force pushes car toward surface (opposite of car's up direction)
-    # Force magnitude = scale * |gravity| * mass, direction = -up_dir
-    sticky_force = -up_dir_for_sticky * sticky_force_scale[..., None] * jnp.abs(GRAVITY_Z) * CAR_MASS
+    # C++: _rigidBody.applyCentralForce(upwardsDir * stickyForceScale * (GRAVITY_Z * UU_TO_BT) * CAR_MASS_BT)
+    # GRAVITY_Z is -650, so this force goes along upwardsDir * negative = pushes toward surface
+    sticky_force = upwards_dir * sticky_force_scale[..., None] * GRAVITY_Z * CAR_MASS
     sticky_force = jnp.where(
         (has_any_contact & ~cars.is_jumping)[..., None],
         sticky_force,
@@ -298,11 +297,22 @@ def step_cars(
     )
     
     # Air control
-    is_airborne = ~cars.is_on_ground
+    # C++: Air torque is applied when numWheelsInContact < 3,
+    # but air CONTROL (PYR inputs) only when numWheelsInContact == 0
+    is_airborne = ~cars.is_on_ground  # num_contacts < 3
+    no_wheel_contact = num_contacts < 1  # C++: updateAirControl = (numWheelsInContact == 0)
     up_dir = get_car_up_dir(cars.quat)
     right_dir = get_car_right_dir(cars.quat)
     
-    air_torque_pitch = -right_dir * (controls.pitch[..., None] * CAR_AIR_CONTROL_TORQUE[0])
+    # C++ pitch lock: After flip ends, pitch control is locked for FLIP_PITCHLOCK_EXTRA_TIME
+    # if (hasFlipped && flipTime < FLIP_TORQUE_TIME + FLIP_PITCHLOCK_EXTRA_TIME) pitchTorqueScale = 0
+    # Also during flip: pitchTorqueScale = 0
+    from sim_constants import FLIP_TORQUE_TIME, FLIP_PITCHLOCK_EXTRA_TIME
+    pitch_locked = cars.has_flipped & (cars.flip_timer < (FLIP_TORQUE_TIME + FLIP_PITCHLOCK_EXTRA_TIME))
+    pitch_locked_during_flip = cars.is_flipping
+    pitch_scale = jnp.where(pitch_locked | pitch_locked_during_flip, 0.0, 1.0)
+    
+    air_torque_pitch = -right_dir * (controls.pitch[..., None] * pitch_scale[..., None] * CAR_AIR_CONTROL_TORQUE[0])
     air_torque_yaw = up_dir * (controls.yaw[..., None] * CAR_AIR_CONTROL_TORQUE[1])
     air_torque_roll = -forward_dir * (controls.roll[..., None] * CAR_AIR_CONTROL_TORQUE[2])
     
@@ -310,7 +320,7 @@ def step_cars(
     ang_vel_yaw = jnp.sum(ang_vel * up_dir, axis=-1, keepdims=True)
     ang_vel_roll = jnp.sum(ang_vel * forward_dir, axis=-1, keepdims=True)
     
-    pitch_damp_factor = 1.0 - jnp.abs(controls.pitch[..., None])
+    pitch_damp_factor = 1.0 - jnp.abs(controls.pitch[..., None] * pitch_scale[..., None])
     yaw_damp_factor = 1.0 - jnp.abs(controls.yaw[..., None])
     
     air_damp_pitch = -right_dir * ang_vel_pitch * CAR_AIR_CONTROL_DAMPING[0] * pitch_damp_factor
@@ -324,7 +334,7 @@ def step_cars(
     air_ang_accel = air_control_torque * CAR_TORQUE_SCALE
     
     ang_vel = ang_vel + jnp.where(
-        (is_airborne & active_mask)[..., None],
+        (is_airborne & no_wheel_contact & active_mask)[..., None],
         air_ang_accel * dt,
         0.0
     )
@@ -371,6 +381,9 @@ def step_cars(
     # Update ground contact state
     is_on_ground = num_contacts >= 3
     
+    # C++: When grounded (numWheelsInContact >= 3), isFlipping is forced to false
+    is_flipping_updated = jnp.where(is_on_ground, False, cars.is_flipping)
+    
     # Update supersonic status
     is_supersonic, supersonic_timer = update_supersonic_status(
         vel=vel,
@@ -386,6 +399,7 @@ def step_cars(
         quat=quat,
         boost_amount=boost_amount,
         is_on_ground=is_on_ground,
+        is_flipping=is_flipping_updated,
         wheel_contacts=wheel_contacts,
         is_supersonic=is_supersonic,
         supersonic_timer=supersonic_timer,
