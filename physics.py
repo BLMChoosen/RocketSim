@@ -761,16 +761,11 @@ def solve_suspension_and_tires(
     
     denominator = jnp.sum(contact_normal * car_up_expanded, axis=-1)
     
-    # C++ logic: if denominator > 0.1, inv = 1/denom, else inv = 10
-    # Additionally, filter out contacts where normal points away from car's up
-    # This prevents issues when car is penetrating walls
+    # C++ btVehicleRL::rayCast() logic:
+    # if (denominator > 0.1) { inv = 1/denom; susRelVel = projVel * inv; }
+    # else { susRelVel = 0; clippedInv = 10; }
+    # The contact is NEVER discarded — only the values change.
     denom_valid = denominator > 0.1
-    
-    # Only count as valid contact if:
-    # 1. Normal roughly aligns with car's up (denom_valid)
-    # 2. Car body is not deeply penetrating arena (car_is_inside_arena)
-    is_contact_valid = is_contact & denom_valid & car_is_inside_arena[..., None]
-    
     inv_contact_dot = jnp.where(
         denom_valid,
         1.0 / jnp.maximum(denominator, 0.1),
@@ -778,11 +773,15 @@ def solve_suspension_and_tires(
     )
     compression_vel = jnp.where(denom_valid, proj_vel, 0.0)
     
-    # Use filtered contact for suspension
+    # Keep all raycast contacts valid (C++ does not filter by denom)
+    # Only require car body is inside arena to avoid weird forces during deep penetration
+    is_contact_valid = is_contact & car_is_inside_arena[..., None]
+    
+    # Compute suspension force for all valid contacts
     suspension_force = compute_suspension_force(
         compression, 
         compression_vel, 
-        is_contact_valid,  # Use filtered contact
+        is_contact_valid,
         inv_contact_dot
     )
     
@@ -792,7 +791,6 @@ def solve_suspension_and_tires(
     forward_speed = jnp.sum(cars.vel * car_forward, axis=-1)
     
     # Compute tire impulses (C++ style)
-    # Use filtered contact to avoid applying tire forces on invalid contacts
     tire_impulse, wheel_rel_pos = compute_tire_forces(
         car_quat=cars.quat,
         car_vel=cars.vel,
@@ -802,7 +800,7 @@ def solve_suspension_and_tires(
         throttle=controls.throttle,
         steer=controls.steer,
         handbrake=controls.handbrake,
-        is_contact=is_contact_valid,  # Use filtered contact
+        is_contact=is_contact_valid,
         contact_normal=contact_normal,
         forward_speed=forward_speed,
     )
