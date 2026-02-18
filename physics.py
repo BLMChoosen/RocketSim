@@ -283,7 +283,8 @@ def raycast_suspension(
     # If contact at fraction f, the ray traveled f * ray_length before hitting
     # Compression = (1 - f) * ray_length - wheel_radius (distance saved)
     # Actually: compression = ray_length * (1 - contact_fraction) but capped
-    compression_raw = ray_length[0, 0, :] * (1.0 - contact_fraction)
+    # ray_length shape: (1, 1, 4), contact_fraction shape: (N, MAX_CARS, 4)
+    compression_raw = ray_length * (1.0 - contact_fraction)
     compression = jnp.clip(compression_raw, 0.0, max_travel)
     
     # Get contact normal at the first contact point
@@ -430,12 +431,12 @@ def compute_tire_basis_vectors(
     # Project to XY plane and normalize (tire forces are in ground plane)
     tire_forward = tire_forward.at[..., 2].set(0.0)
     tire_forward = tire_forward / jnp.maximum(
-        jnp.linalg.norm(tire_forward, axis=-1, keepdims=True), 1e-8
+        jnp.linalg.norm(tire_forward, axis=-1, keepdims=True), 1e-6
     )
     
     tire_right = tire_right.at[..., 2].set(0.0)
     tire_right = tire_right / jnp.maximum(
-        jnp.linalg.norm(tire_right, axis=-1, keepdims=True), 1e-8
+        jnp.linalg.norm(tire_right, axis=-1, keepdims=True), 1e-6
     )
     
     return tire_forward, tire_right
@@ -448,7 +449,7 @@ def compute_tire_forces(
     car_pos: jnp.ndarray,
     wheel_world_pos: jnp.ndarray,
     throttle: jnp.ndarray,
-    steer: jnp.ndarray, # The steering system is being constantly bugging, further debugging needed
+    steer: jnp.ndarray,
     handbrake: jnp.ndarray,
     is_contact: jnp.ndarray,
     contact_normal: jnp.ndarray,
@@ -517,11 +518,11 @@ def compute_tire_forces(
     # axleDir = axleDir.safeNormalized()
     proj = jnp.sum(axle_dir * contact_normal, axis=-1, keepdims=True)
     axle_dir = axle_dir - contact_normal * proj
-    axle_dir = axle_dir / jnp.maximum(jnp.linalg.norm(axle_dir, axis=-1, keepdims=True), 1e-8)
+    axle_dir = axle_dir / jnp.maximum(jnp.linalg.norm(axle_dir, axis=-1, keepdims=True), 1e-6)
     
     # C++: forwardDir = surfNormalWS.cross(axleDir).safeNormalized()
     forward_dir = jnp.cross(contact_normal, axle_dir)
-    forward_dir = forward_dir / jnp.maximum(jnp.linalg.norm(forward_dir, axis=-1, keepdims=True), 1e-8)
+    forward_dir = forward_dir / jnp.maximum(jnp.linalg.norm(forward_dir, axis=-1, keepdims=True), 1e-6)
     
     # === COMPUTE WHEEL VELOCITIES AT CONTACT POINT ===
     # C++: crossVec = (angularVel.cross(wheelDelta) + vel) * BT_TO_UU
@@ -558,7 +559,9 @@ def compute_tire_forces(
         DRIVE_TORQUE_CURVE_FACTORS
     )
     
-    # Check if fewer than 3 wheels in contact (C++ divides by 4)
+    # Check if fewer than 3 wheels in contact
+    # C++ divides drive torque by 4 when less than 3 wheels are grounded
+    # This prevents excessive wheelspin during flips/jumps
     num_contacts = jnp.sum(is_contact.astype(jnp.float32), axis=-1, keepdims=True)  # (N, MAX_CARS, 1)
     drive_speed_scale = jnp.where(num_contacts < 3, drive_speed_scale / 4.0, drive_speed_scale)
     
@@ -637,7 +640,7 @@ def compute_tire_forces(
     
     # Handbrake longitudinal friction factor curve: {0: 0.5, 1: 0.9}
     handbrake_long_factor = 0.5 + 0.4 * friction_curve_input
-    long_friction = jnp.where(handbrake_4 > 0.5, long_friction * handbrake_long_factor, 1.0)
+    long_friction = jnp.where(handbrake_4 > 0.5, long_friction * handbrake_long_factor, long_friction)
     
     # === STICKY FRICTION (non-sticky when no throttle) ===
     # C++ scales friction by NON_STICKY_FRICTION_FACTOR_CURVE based on contact_normal.z
@@ -753,6 +756,8 @@ def solve_suspension_and_tires(
     car_is_inside_arena = car_sdf > -10.0  # Allow small penetration (10 UU)
     
     # Calculate compression velocity (project wheel velocity onto contact normal)
+    # Negative sign: positive proj_vel means wheel moving away from surface (expanding)
+    # We want positive compression_vel when suspension is compressing (wheel moving into surface)
     proj_vel = -jnp.sum(wheel_vel * contact_normal, axis=-1)
     
     # Calculate inv_contact_dot for suspension scaling
