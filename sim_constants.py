@@ -163,7 +163,7 @@ BALL_CAR_EXTRA_IMPULSE_FACTOR_VALUES = jnp.array([0.65, 0.65, 0.55, 0.30])
 # Boost Pads (from RLConst.h BoostPads namespace)
 # =============================================================================
 # Pad geometry
-PAD_CYL_HEIGHT = 165.0                  # Cylinder height for pickup detection
+PAD_CYL_HEIGHT = 95.0                   # Cylinder height for pickup detection
 PAD_CYL_RAD_BIG = 208.0                 # Large pad cylinder radius
 PAD_CYL_RAD_SMALL = 144.0               # Small pad cylinder radius
 

@@ -268,12 +268,12 @@ def handle_flip_or_double_jump(
     flip_pitch_dir = flip_rel_torque[..., 1]  # Y component = pitch direction
     pitch_input = controls.pitch
     
-    # Cancel occurs when pitch input sign opposes the flip pitch direction
-    # flip_rel_torque Y positive = backward flip, pitch input -1 = pull back
-    # If they have opposite signs, the player is cancelling
-    is_opposing = (flip_pitch_dir * pitch_input) < 0
+    # Cancel occurs when pitch input sign MATCHES the flip pitch direction
+    # C++: if (RS_SGN(relDodgeTorque.y()) == RS_SGN(controls.pitch))
+    # When they have the SAME sign, the player is cancelling the flip
+    is_cancelling = (flip_pitch_dir * pitch_input) > 0
     cancel_scale = jnp.where(
-        is_flipping & in_pitchlock & is_opposing,
+        is_flipping & in_pitchlock & is_cancelling,
         1.0 - jnp.abs(pitch_input),
         1.0
     )
@@ -315,6 +315,11 @@ def apply_flip_z_damping(vel: jnp.ndarray, is_flipping: jnp.ndarray, flip_timer:
     """
     Apply Z velocity damping during flip.
     
+    C++ logic:
+    if (flipTime <= FLIP_TORQUE_TIME):
+        if (flipTime >= FLIP_Z_DAMP_START AND (vel.z < 0 OR flipTime < FLIP_Z_DAMP_END)):
+            vel.z *= pow(1 - FLIP_Z_DAMP_120, dt / (1/120))
+    
     Args:
         vel: Velocity (N, MAX_CARS, 3)
         is_flipping: Flip state (N, MAX_CARS)
@@ -324,11 +329,13 @@ def apply_flip_z_damping(vel: jnp.ndarray, is_flipping: jnp.ndarray, flip_timer:
     Returns:
         Velocity with Z damping applied
     """
-    in_damp_window = (flip_timer >= FLIP_Z_DAMP_START) & (flip_timer < FLIP_Z_DAMP_END)
-    should_damp = is_flipping & in_damp_window
-    
+    # C++: flipTime <= FLIP_TORQUE_TIME AND flipTime >= FLIP_Z_DAMP_START AND (vel.z < 0 OR flipTime < FLIP_Z_DAMP_END)
+    in_torque_time = flip_timer <= FLIP_TORQUE_TIME
+    past_damp_start = flip_timer >= FLIP_Z_DAMP_START
     z_negative = vel[..., 2] < 0
-    should_damp = should_damp | (is_flipping & (flip_timer <= FLIP_TORQUE_TIME) & z_negative)
+    before_damp_end = flip_timer < FLIP_Z_DAMP_END
+    
+    should_damp = is_flipping & in_torque_time & past_damp_start & (z_negative | before_damp_end)
     
     damp_factor = jnp.power(1 - FLIP_Z_DAMP_120, dt / (1/120))
     
@@ -406,50 +413,40 @@ def update_supersonic_status(
     """
     Update supersonic status based on current speed.
     
+    C++ logic:
+    - If supersonic AND timer < MAINTAIN_MAX_TIME: use lower threshold (MAINTAIN_MIN_SPEED)
+    - Else: use higher threshold (START_SPEED)
+    - If supersonic: timer += dt
+    - If not supersonic: timer = 0
+    
     Args:
         vel: Car velocities. Shape: (N, MAX_CARS, 3)
         is_supersonic: Current supersonic state. Shape: (N, MAX_CARS)
-        supersonic_timer: Time remaining in grace period. Shape: (N, MAX_CARS)
+        supersonic_timer: Time spent supersonic (counts up). Shape: (N, MAX_CARS)
         dt: Time step
         
     Returns:
         Tuple of (new_is_supersonic, new_supersonic_timer)
     """
-    speed = jnp.linalg.norm(vel, axis=-1)
+    speed_sq = jnp.sum(vel * vel, axis=-1)
     
-    above_start = speed >= SUPERSONIC_START_SPEED
-    above_maintain = speed >= SUPERSONIC_MAINTAIN_MIN_SPEED
+    start_speed_sq = SUPERSONIC_START_SPEED * SUPERSONIC_START_SPEED
+    maintain_speed_sq = SUPERSONIC_MAINTAIN_MIN_SPEED * SUPERSONIC_MAINTAIN_MIN_SPEED
     
+    # C++: if (isSupersonic && supersonicTime < MAINTAIN_MAX_TIME) -> use maintain threshold
+    #      else -> use start threshold
+    in_grace = is_supersonic & (supersonic_timer < SUPERSONIC_MAINTAIN_MAX_TIME)
     new_is_supersonic = jnp.where(
-        above_start,
-        True,
-        is_supersonic
+        in_grace,
+        speed_sq >= maintain_speed_sq,
+        speed_sq >= start_speed_sq
     )
     
+    # C++: if (isSupersonic) timer += dt; else timer = 0;
     new_supersonic_timer = jnp.where(
-        above_start,
-        SUPERSONIC_MAINTAIN_MAX_TIME,
-        supersonic_timer
-    )
-    
-    in_grace_period = is_supersonic & ~above_start & above_maintain
-    new_supersonic_timer = jnp.where(
-        in_grace_period,
-        supersonic_timer - dt,
-        new_supersonic_timer
-    )
-    
-    lose_supersonic = ~above_maintain | (new_supersonic_timer <= 0.0)
-    new_is_supersonic = jnp.where(
-        lose_supersonic,
-        False,
-        new_is_supersonic
-    )
-    
-    new_supersonic_timer = jnp.where(
-        ~new_is_supersonic,
-        0.0,
-        new_supersonic_timer
+        new_is_supersonic,
+        supersonic_timer + dt,
+        0.0
     )
     
     return new_is_supersonic, new_supersonic_timer
