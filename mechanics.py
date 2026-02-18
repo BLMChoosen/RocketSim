@@ -22,7 +22,6 @@ from sim_constants import (
     BOOST_ACCEL_GROUND, BOOST_ACCEL_AIR, BOOST_USED_PER_SECOND, BOOST_MAX,
     SUPERSONIC_START_SPEED, SUPERSONIC_MAINTAIN_MIN_SPEED,
     SUPERSONIC_MAINTAIN_MAX_TIME,
-    STOPPING_FORWARD_VEL,
 )
 from sim_types import CarState, CarControls
 from math_utils import quat_rotate_vector, get_car_forward_dir, get_car_up_dir, get_car_right_dir
