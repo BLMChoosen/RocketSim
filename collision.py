@@ -13,7 +13,7 @@ import os
 
 from sim_constants import (
     ARENA_EXTENT_X, ARENA_EXTENT_Y, ARENA_HEIGHT,
-    BALL_RADIUS, BALL_WALL_RESTITUTION, BALL_SURFACE_FRICTION, BALL_MASS,
+    BALL_RADIUS, BALL_WALL_RESTITUTION, BALL_GROUND_RESTITUTION, BALL_SURFACE_FRICTION, BALL_MASS,
     BALL_MAX_ANG_SPEED, BALL_CAR_EXTRA_IMPULSE_Z_SCALE,
     BALL_CAR_EXTRA_IMPULSE_FORWARD_SCALE, BALL_CAR_EXTRA_IMPULSE_MAX_DELTA_VEL,
     BALL_CAR_EXTRA_IMPULSE_FACTOR_SPEEDS, BALL_CAR_EXTRA_IMPULSE_FACTOR_VALUES,
@@ -22,7 +22,7 @@ from sim_constants import (
     BUMP_VEL_AMOUNT_GROUND_SPEEDS, BUMP_VEL_AMOUNT_GROUND_VALUES,
     BUMP_VEL_AMOUNT_AIR_SPEEDS, BUMP_VEL_AMOUNT_AIR_VALUES,
     BUMP_UPWARD_VEL_AMOUNT_SPEEDS, BUMP_UPWARD_VEL_AMOUNT_VALUES,
-    GRAVITY_Z, DT,
+    GRAVITY_Z, DT, DEMO_MIN_SPEED, DEMO_FORWARD_ANGLE_COS,
 )
 from math_utils import quat_rotate_vector
 
@@ -786,8 +786,15 @@ def resolve_ball_arena_collision(
     """
     Resolve ball collisions with arena boundaries, including rounded corners.
     Applies friction torque to make the ball roll properly.
+    Uses separate restitution for ground (floor) vs walls/ceiling.
     """
     dist, normal = arena_sdf(pos)
+    
+    # Use separate restitution for ground vs wall/ceiling
+    # Ground is identified by normal pointing mostly upward (normal_z > 0.9)
+    normal_z = normal[..., 2]
+    is_ground = normal_z > 0.9
+    effective_restitution = jnp.where(is_ground, BALL_GROUND_RESTITUTION, BALL_WALL_RESTITUTION)
     
     # Check penetration and contact
     penetration = radius - dist
@@ -829,9 +836,10 @@ def resolve_ball_arena_collision(
     
     # === BOUNCE (Normal direction) ===
     # Apply normal velocity change (bounce) only if approaching surface
+    # Use surface-specific restitution (ground vs wall)
     new_v_normal = jnp.where(
         should_bounce[..., None],
-        -v_normal * restitution,
+        -v_normal * effective_restitution[..., None],
         v_normal
     )
     
@@ -843,7 +851,7 @@ def resolve_ball_arena_collision(
     # When bouncing: impulse = (1+e) * m * |v_n|
     # When rolling: use gravity-based normal force
     v_n_mag = jnp.abs(v_dot_n)
-    bounce_impulse = v_n_mag * (1 + restitution) * BALL_MASS
+    bounce_impulse = v_n_mag * (1 + effective_restitution[..., None]) * BALL_MASS
     
     # For rolling contact without bouncing, use weight as normal force
     # F_n = m * g * cos(angle), but simplified to m * g * |normal_z|
@@ -1325,9 +1333,19 @@ def resolve_car_car_collision(
     i_is_bumper = forward_speed_i > forward_speed_j
     
     # Demo detection
+    # C++ requirements for demolition:
+    # 1. Bumper must be supersonic
+    # 2. Bumper must be traveling at >= DEMO_MIN_SPEED
+    # 3. Impact must be from bumper's front (forward angle > DEMO_FORWARD_ANGLE_COS)
     is_supersonic_i = car_is_supersonic[:, :, None]
     is_supersonic_j = car_is_supersonic[:, None, :]
     bumper_is_supersonic = jnp.where(i_is_bumper, is_supersonic_i, is_supersonic_j)
+    
+    # Check bumper speed meets minimum threshold
+    speed_i = jnp.linalg.norm(car_vel, axis=-1)[:, :, None]
+    speed_j = jnp.linalg.norm(car_vel, axis=-1)[:, None, :]
+    bumper_total_speed = jnp.where(i_is_bumper, speed_i, speed_j)
+    bumper_fast_enough = bumper_total_speed >= DEMO_MIN_SPEED
     
     hit_dir = jnp.where(i_is_bumper[..., None], -collision_normal, collision_normal)
     car_forward_i = car_forward[:, :, None, :]
@@ -1335,9 +1353,9 @@ def resolve_car_car_collision(
     bumper_forward = jnp.where(i_is_bumper[..., None], car_forward_i, car_forward_j)
     
     impact_angle = jnp.sum(bumper_forward * hit_dir, axis=-1)
-    is_front_hit = impact_angle > 0.707
+    is_front_hit = impact_angle > DEMO_FORWARD_ANGLE_COS
     
-    is_demo = is_colliding & bumper_is_supersonic & is_front_hit
+    is_demo = is_colliding & bumper_is_supersonic & bumper_fast_enough & is_front_hit
     
     i_is_victim = ~i_is_bumper
     is_demoed_i_by_j = is_demo & i_is_victim

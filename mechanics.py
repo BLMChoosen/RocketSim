@@ -18,9 +18,11 @@ from sim_constants import (
     FLIP_SIDE_IMPULSE_MAX_SPEED_SCALE,
     FLIP_TORQUE_TIME, FLIP_TORQUE_X, FLIP_TORQUE_Y,
     FLIP_Z_DAMP_START, FLIP_Z_DAMP_END, FLIP_Z_DAMP_120,
+    FLIP_PITCHLOCK_TIME,
     BOOST_ACCEL_GROUND, BOOST_ACCEL_AIR, BOOST_USED_PER_SECOND, BOOST_MAX,
     SUPERSONIC_START_SPEED, SUPERSONIC_MAINTAIN_MIN_SPEED,
     SUPERSONIC_MAINTAIN_MAX_TIME,
+    STOPPING_FORWARD_VEL,
 )
 from sim_types import CarState, CarControls
 from math_utils import quat_rotate_vector, get_car_forward_dir, get_car_up_dir, get_car_right_dir
@@ -51,7 +53,8 @@ def handle_jump(
         dt: Time step
         
     Returns:
-        Updated car state, jump impulse to apply (N, MAX_CARS, 3)
+        Updated car state, jump impulse to apply (N, MAX_CARS, 3),
+        z_vel_reset_mask (N, MAX_CARS) - True when Z velocity should be zeroed before applying impulse
     """
     jump_pressed = controls.jump
     is_on_ground = cars.is_on_ground
@@ -111,7 +114,7 @@ def handle_jump(
         jump_timer=jump_timer,
     )
     
-    return updated_cars, total_jump_vel_delta
+    return updated_cars, total_jump_vel_delta, start_jump
 
 
 # =============================================================================
@@ -257,6 +260,30 @@ def handle_flip_or_double_jump(
     is_flipping = has_flipped & (flip_timer < FLIP_TORQUE_TIME)
     
     flip_torque_local = flip_rel_torque * jnp.array([FLIP_TORQUE_X, FLIP_TORQUE_Y, 0.0])
+    
+    # === FLIP CANCEL (C++ pitch lock logic) ===
+    # When flipping within FLIP_PITCHLOCK_TIME, pitch input can cancel the pitch
+    # component of the flip torque. If the player's pitch input opposes the flip's
+    # pitch direction, the pitch torque is reduced by |pitch_input|.
+    in_pitchlock = flip_timer < FLIP_PITCHLOCK_TIME
+    flip_pitch_dir = flip_rel_torque[..., 1]  # Y component = pitch direction
+    pitch_input = controls.pitch
+    
+    # Cancel occurs when pitch input sign opposes the flip pitch direction
+    # flip_rel_torque Y positive = backward flip, pitch input -1 = pull back
+    # If they have opposite signs, the player is cancelling
+    is_opposing = (flip_pitch_dir * pitch_input) < 0
+    cancel_scale = jnp.where(
+        is_flipping & in_pitchlock & is_opposing,
+        1.0 - jnp.abs(pitch_input),
+        1.0
+    )
+    
+    # Apply cancel only to pitch (Y) component, leave roll (X) untouched
+    flip_torque_local = flip_torque_local.at[..., 1].set(
+        flip_torque_local[..., 1] * cancel_scale
+    )
+    
     flip_torque_world = quat_rotate_vector(cars.quat, flip_torque_local)
     
     flip_torque = jnp.where(
