@@ -448,7 +448,7 @@ def compute_tire_forces(
     car_pos: jnp.ndarray,
     wheel_world_pos: jnp.ndarray,
     throttle: jnp.ndarray,
-    steer: jnp.ndarray,
+    steer: jnp.ndarray, # The steering system is being constantly bugging, further debugging needed
     handbrake: jnp.ndarray,
     is_contact: jnp.ndarray,
     contact_normal: jnp.ndarray,
