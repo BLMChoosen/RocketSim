@@ -13,14 +13,14 @@ Architecture:
 
 Quick Start:
     >>> import jax
-    >>> from rocket_sim import create_initial_state, create_zero_controls, step_physics
+    >>> from src import create_initial_state, create_zero_controls, step_physics
     >>> 
     >>> state = create_initial_state(n_envs=1024)
     >>> controls = create_zero_controls(n_envs=1024)
     >>> new_state = step_physics(state, controls)
 
 For RL training:
-    >>> from rocket_sim import step_env, get_observations, reset_round
+    >>> from src import step_env, get_observations, reset_round
     >>> 
     >>> rng_key = jax.random.PRNGKey(0)
     >>> next_state, obs, rewards, dones = step_env(state, controls, rng_key)
@@ -29,7 +29,7 @@ For RL training:
 from __future__ import annotations
 
 # Type definitions
-from .types import (
+from .sim_types import (
     BallState,
     CarState,
     CarControls,
@@ -37,7 +37,7 @@ from .types import (
 )
 
 # Constants (for advanced users)
-from .constants import (
+from .sim_constants import (
     DT,
     GRAVITY_Z,
     BALL_RADIUS,

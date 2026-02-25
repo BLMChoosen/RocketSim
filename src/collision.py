@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 import os
 
-from sim_constants import (
+from .sim_constants import (
     ARENA_EXTENT_X, ARENA_EXTENT_Y, ARENA_HEIGHT,
     BALL_RADIUS, BALL_WALL_RESTITUTION, BALL_GROUND_RESTITUTION, BALL_SURFACE_FRICTION, BALL_MASS,
     BALL_MAX_ANG_SPEED, BALL_CAR_EXTRA_IMPULSE_Z_SCALE,
@@ -24,7 +24,7 @@ from sim_constants import (
     BUMP_UPWARD_VEL_AMOUNT_SPEEDS, BUMP_UPWARD_VEL_AMOUNT_VALUES,
     GRAVITY_Z, DT, DEMO_MIN_SPEED, DEMO_FORWARD_ANGLE_COS,
 )
-from math_utils import quat_rotate_vector
+from .math_utils import quat_rotate_vector
 
 # Load Mesh Data if available
 MESH_DATA_PATH = "mesh_data.npz"

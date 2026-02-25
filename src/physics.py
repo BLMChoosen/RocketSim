@@ -8,7 +8,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
-from sim_constants import (
+from .sim_constants import (
     DT, GRAVITY_Z, BALL_DRAG, BALL_MAX_SPEED, BALL_MAX_ANG_SPEED,
     CAR_MASS, CAR_MAX_SPEED, CAR_MAX_ANG_SPEED, CAR_INERTIA, CAR_TORQUE_SCALE,
     CAR_AIR_CONTROL_TORQUE, CAR_AIR_CONTROL_DAMPING,
@@ -24,13 +24,13 @@ from sim_constants import (
     FRONT_WHEEL_MASK, STICKY_FORCE_SCALE_BASE, STOPPING_FORWARD_VEL,
     THROTTLE_TORQUE_AMOUNT, BRAKE_TORQUE_AMOUNT, UU_TO_BT, BT_TO_UU,
 )
-from sim_types import BallState, CarState, CarControls
-from math_utils import (
+from .sim_types import BallState, CarState, CarControls
+from .math_utils import (
     quat_rotate_vector, quat_multiply, quat_normalize, quat_from_angular_velocity,
     get_car_forward_dir, get_car_up_dir, get_car_right_dir,
     clamp_velocity, clamp_angular_velocity,
 )
-from collision import arena_sdf, resolve_ball_arena_collision, resolve_car_arena_collision
+from .collision import arena_sdf, resolve_ball_arena_collision, resolve_car_arena_collision
 
 
 # =============================================================================
