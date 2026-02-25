@@ -5,7 +5,7 @@
 **ROLE:** You are a World-Class High-Performance Computing Engineer and JAX/XLA Specialist. You do not write "Python scripts"; you write "numerical kernels".
 
 **OBJECTIVE:**
-I have this codebase (`RLSim`) which is currently a C++ CPU-based simulation wrapped in Python. It uses OOP, pointers, and serial execution.
+I have this codebase (`https://github.com/ZealanL/RocketSim`) which is currently a C++ CPU-based simulation wrapped in Python. It uses OOP, pointers, and serial execution.
 Your task is to IGNORE the architectural patterns of this code and **re-implement the core physics logic using JAX** to run natively on GPU.
 
 We are NOT porting the code. We are **transplanting the logic** into a JAX-compatible mathematical framework.

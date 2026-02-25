@@ -19,11 +19,7 @@ from rocket_sim import (
     BALL_RADIUS,
     ARENA_EXTENT_X,
 )
-from rocket_sim.constants import (
-    CAR_SPAWN_Z,
-    N_STEPS,
-    MAX_CARS,
-)
+from rocket_sim.constants import CAR_SPAWN_Z
 
 
 def simulate_n_steps(
