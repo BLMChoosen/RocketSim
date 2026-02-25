@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import jax.lax as lax
 
 # Import from our new package
-from rocket_sim import (
+from src import (
     create_initial_state,
     create_zero_controls,
     step_physics,
@@ -19,7 +19,7 @@ from rocket_sim import (
     BALL_RADIUS,
     ARENA_EXTENT_X,
 )
-from rocket_sim.constants import (
+from src.sim_constants import (
     CAR_SPAWN_Z,
     N_STEPS,
     MAX_CARS,

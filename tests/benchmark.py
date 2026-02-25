@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import jax.lax as lax
 
 # Import from our package
-from rocket_sim import (
+from src import (
     create_initial_state,
     create_zero_controls,
     step_physics,

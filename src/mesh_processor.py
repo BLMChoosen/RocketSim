@@ -1,6 +1,6 @@
 import numpy as np
 import os
-import cmf_loader
+from . import cmf_loader
 import pickle
 
 # Constants
