@@ -108,7 +108,7 @@ pip install -r requirements.txt
 ```python
 import jax
 import jax.numpy as jnp
-from rocket_sim import create_initial_state, create_zero_controls, step_physics
+from src import create_initial_state, create_zero_controls, step_physics
 
 # Create 1024 parallel environments
 N_ENVS = 1024
@@ -128,7 +128,7 @@ print(f"Ball position: {state.ball.pos[0]}")  # First environment
 ### RL Training Example
 
 ```python
-from rocket_sim import step_env, get_observations, reset_round
+from src import step_env, get_observations, reset_round
 
 rng_key = jax.random.PRNGKey(0)
 state = create_initial_state(n_envs=1024)

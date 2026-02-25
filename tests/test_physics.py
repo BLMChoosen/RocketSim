@@ -19,6 +19,7 @@ from src import (
     BALL_RADIUS,
     ARENA_EXTENT_X,
 )
+from src.constants import CAR_SPAWN_Z
 from src.sim_constants import (
     CAR_SPAWN_Z,
     N_STEPS,

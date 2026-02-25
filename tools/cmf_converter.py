@@ -1,3 +1,9 @@
+"""
+CMF to OBJ Converter
+====================
+Tkinter GUI for converting RocketSim collision mesh files (.cmf) to Wavefront OBJ.
+"""
+
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
 import struct
@@ -5,22 +11,20 @@ import os
 import glob
 import threading
 
+
 class CMFConverterApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("RL Collision Converter (.cmf -> .obj) [FIXED]")
+        self.root.title("RL Collision Converter (.cmf -> .obj)")
         self.root.geometry("700x500")
         self.root.resizable(False, False)
 
-        # Variables
         self.source_path = tk.StringVar()
         self.dest_path = tk.StringVar()
 
-        # UI Layout
         self.create_widgets()
 
     def create_widgets(self):
-        # --- Source Folder Selection ---
         lbl_source = tk.Label(self.root, text="Source Folder (contains .cmf files):", font=("Arial", 10, "bold"))
         lbl_source.pack(anchor="w", padx=10, pady=(10, 0))
 
@@ -33,7 +37,6 @@ class CMFConverterApp:
         btn_browse_source = tk.Button(frame_source, text="Browse...", command=self.select_source_folder)
         btn_browse_source.pack(side="right", padx=(5, 0))
 
-        # --- Destination Folder Selection ---
         lbl_dest = tk.Label(self.root, text="Destination Folder (save .obj files here):", font=("Arial", 10, "bold"))
         lbl_dest.pack(anchor="w", padx=10, pady=(10, 0))
 
@@ -46,11 +49,10 @@ class CMFConverterApp:
         btn_browse_dest = tk.Button(frame_dest, text="Browse...", command=self.select_dest_folder)
         btn_browse_dest.pack(side="right", padx=(5, 0))
 
-        # --- Action Button ---
-        self.btn_convert = tk.Button(self.root, text="START CONVERSION", bg="#2196F3", fg="white", font=("Arial", 11, "bold"), command=self.start_thread)
+        self.btn_convert = tk.Button(self.root, text="START CONVERSION", bg="#2196F3", fg="white",
+                                      font=("Arial", 11, "bold"), command=self.start_thread)
         self.btn_convert.pack(pady=20, ipadx=20, ipady=5)
 
-        # --- Log Area ---
         lbl_log = tk.Label(self.root, text="Conversion Log:", font=("Arial", 9))
         lbl_log.pack(anchor="w", padx=10)
 
@@ -70,7 +72,6 @@ class CMFConverterApp:
             self.dest_path.set(folder)
 
     def log_message(self, message):
-        """Thread-safe logging to text widget"""
         self.log_area.config(state="normal")
         self.log_area.insert(tk.END, message + "\n")
         self.log_area.see(tk.END)
@@ -88,7 +89,7 @@ class CMFConverterApp:
         threading.Thread(target=self.run_conversion, args=(source, dest), daemon=True).start()
 
     def run_conversion(self, source_dir, dest_dir):
-        self.log_message(f"--- Started Conversion ---")
+        self.log_message("--- Started Conversion ---")
         
         cmf_files = glob.glob(os.path.join(source_dir, "*.cmf"))
         
@@ -108,8 +109,7 @@ class CMFConverterApp:
             obj_path = os.path.join(dest_dir, obj_filename)
 
             try:
-                # Chama a função de conversão corrigida
-                counts = self.convert_file_fixed(cmf_file, obj_path)
+                counts = self.convert_file(cmf_file, obj_path)
                 self.log_message(f"[OK] {filename} -> {counts['verts']} verts, {counts['tris']} tris")
                 success_count += 1
             except Exception as e:
@@ -125,12 +125,8 @@ class CMFConverterApp:
     def restore_ui(self):
         self.root.after(0, lambda: self.btn_convert.config(state="normal", text="START CONVERSION", bg="#2196F3"))
 
-    def convert_file_fixed(self, cmf_path, obj_path):
-        """
-        Lógica baseada em RocketSim/src/CollisionMeshFile.cpp
-        Header: int32 NumVerts, int32 NumTris
-        Data: [Vertices...], [Triangles...]
-        """
+    def convert_file(self, cmf_path, obj_path):
+        """Convert a single .cmf file to .obj format."""
         file_size = os.path.getsize(cmf_path)
         
         with open(cmf_path, "rb") as f:
@@ -138,49 +134,38 @@ class CMFConverterApp:
 
         offset = 0
         
-        # 1. HEADER: Lê os dois contadores (8 bytes)
         if len(data) < 8:
             raise ValueError("File too small for header")
             
-        # Tenta ler NumVerts e NumTris
-        # '<II' significa: Little Endian, Unsigned Int, Unsigned Int
         num_verts, num_tris = struct.unpack_from('<II', data, offset)
         offset += 8
         
-        # Validação de sanidade: Verifica se o tamanho do arquivo bate com o esperado
         expected_size = 8 + (num_verts * 12) + (num_tris * 12)
         
-        # Nota: Às vezes tem bytes extras no final (hash), então verificamos se tem PELO MENOS o tamanho esperado
         if file_size < expected_size:
-             # Tenta inverter a ordem se falhar (caso o formato seja Tris, Verts)
             num_tris_alt, num_verts_alt = num_verts, num_tris
             expected_alt = 8 + (num_verts_alt * 12) + (num_tris_alt * 12)
             
             if file_size >= expected_alt:
-                # Era invertido mesmo
                 num_verts = num_verts_alt
                 num_tris = num_tris_alt
             else:
                 raise ValueError(f"Corrupt file or wrong format. Expected >{expected_size} bytes, got {file_size}")
 
         vertices = []
-        # 2. BLOCO DE VÉRTICES
         for _ in range(num_verts):
             vx, vy, vz = struct.unpack_from('<fff', data, offset)
             vertices.append((vx, vy, vz))
-            offset += 12 # 3 floats * 4 bytes
+            offset += 12
         
         indices = []
-        # 3. BLOCO DE TRIÂNGULOS (Índices)
         for _ in range(num_tris):
-            i1, i2, i3 = struct.unpack_from('<III', data, offset) # RocketSim usa int32 para indices
-            # OBJ começa em 1, C++ começa em 0
-            indices.append((i1 + 1, i2 + 1, i3 + 1))
-            offset += 12 # 3 ints * 4 bytes
+            i1, i2, i3 = struct.unpack_from('<III', data, offset)
+            indices.append((i1 + 1, i2 + 1, i3 + 1))  # OBJ is 1-indexed
+            offset += 12
 
-        # 4. Escreve .OBJ
         with open(obj_path, "w") as f:
-            f.write(f"# RocketSim Dump\n")
+            f.write(f"# RocketSim Collision Mesh\n")
             f.write(f"# Verts: {num_verts}, Tris: {num_tris}\n")
             for v in vertices:
                 f.write(f"v {v[0]:.4f} {v[1]:.4f} {v[2]:.4f}\n")
@@ -188,6 +173,7 @@ class CMFConverterApp:
                 f.write(f"f {idx[0]} {idx[1]} {idx[2]}\n")
                 
         return {"verts": num_verts, "tris": num_tris}
+
 
 if __name__ == "__main__":
     root = tk.Tk()

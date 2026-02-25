@@ -10,6 +10,7 @@ import jax.numpy as jnp
 
 
 def quat_multiply(q1: jnp.ndarray, q2: jnp.ndarray) -> jnp.ndarray:
+    """Hamilton product of two quaternions [w, x, y, z]."""
     """
     Hamilton product of two quaternions.
     
