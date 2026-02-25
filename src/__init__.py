@@ -29,7 +29,7 @@ For RL training:
 from __future__ import annotations
 
 # Type definitions
-from .types import (
+from .sim_types import (
     BallState,
     CarState,
     CarControls,
@@ -37,7 +37,7 @@ from .types import (
 )
 
 # Constants (for advanced users)
-from .constants import (
+from .sim_constants import (
     DT,
     GRAVITY_Z,
     BALL_RADIUS,

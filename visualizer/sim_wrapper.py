@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import time
-from src import create_initial_state, step_physics, create_zero_controls
+from src.game import create_initial_state, step_physics, create_zero_controls
 try:
     from visualizer.states import GameState, CarState, PhysState
 except ImportError:
