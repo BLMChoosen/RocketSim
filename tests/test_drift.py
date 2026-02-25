@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import jax
 jax.config.update('jax_platform_name', 'cpu')
 
-from rocket_sim import create_initial_state, step_physics, create_zero_controls
+from src import create_initial_state, step_physics, create_zero_controls
 import jax.numpy as jnp
 
 print("=== Car Stability Test ===")

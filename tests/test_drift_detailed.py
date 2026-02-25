@@ -7,8 +7,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 import jax
 import jax.numpy as jnp
-from rocket_sim import create_initial_state, create_zero_controls, step_physics
-from rocket_sim.math_utils import get_car_forward_dir
+from src import create_initial_state, create_zero_controls, step_physics
+from src.math_utils import get_car_forward_dir
 
 state = create_initial_state(1, 6)
 controls = create_zero_controls(1, 6)

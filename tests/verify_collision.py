@@ -6,7 +6,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import jax.numpy as jnp
-from rocket_sim.collision import arena_sdf
+from src.collision import arena_sdf
 
 def test_point(name, pos):
     pos_arr = jnp.array([pos])
