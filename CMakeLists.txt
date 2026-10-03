@@ -154,6 +154,13 @@ add_executable(throughput_benchmark benchmarks/throughput_benchmark.cu)
 target_include_directories(throughput_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(throughput_benchmark PRIVATE rocketsim_cuda_core)
 
+add_executable(cpu_readme_benchmark benchmarks/cpu_readme_benchmark.cpp)
+target_include_directories(cpu_readme_benchmark PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/libsrc/bullet3-3.24
+)
+target_link_libraries(cpu_readme_benchmark PRIVATE rocketsim_cpu)
+
 # CTest Integration
 enable_testing()
 add_test(NAME TestMath COMMAND test_math)
