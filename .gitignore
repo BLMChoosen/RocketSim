@@ -37,6 +37,7 @@ out/
 
 # Raw binary files
 *.bin
+*.rsgold
 
 # Visual Studio (not using anything VS-related)
 .vs/
