@@ -37,6 +37,7 @@ out/
 
 # Raw binary files
 *.bin
+*.rsgold
 
 # Visual Studio (not using anything VS-related)
 .vs/
@@ -48,3 +49,7 @@ CMakeSettings.json
 
 # Anything starting with three underscores
 ___*
+
+# Agent teamwork orchestration scratchpads
+.agents/
+ORIGINAL_REQUEST.md

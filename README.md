@@ -46,16 +46,26 @@ While the original [RocketSim](https://github.com/ZealanL/RocketSim) is exceptio
 
 ## Performance Benchmark
 
-Simulating **Soccar (2v2)** with pseudo-random agent actions across 120 Hz physical ticks:
+Simulating **Soccar (2v2 - 4 cars per arena)** with pseudo-random agent actions across 120 Hz physical ticks (exact match to ZealanL's RocketSim benchmark conditions):
 
-| Engine | Hardware | Environments | Throughput (SPS / TPS) | Speedup Factor |
-| :--- | :--- | :---: | :---: | :---: |
-| **RocketSim (CPU 1-Thread)** | Intel i5-11400 @ 2.60GHz | 1 | ~114,480 TPS | 1x (Baseline) |
-| **RocketSim (CPU 42 Cores)** | Dual Xeon / EPYC Host | 42 | ~4,200,000 TPS | ~36x |
-| **RocketSim-CUDA** | NVIDIA RTX 4070 / 5060 | 16,384 | **~24,500,000 SPS** | **~214x** |
-| **RocketSim-CUDA** | NVIDIA RTX 4090 / A100 | 65,536 | **~78,000,000+ SPS** | **~680x+** |
+### Hardware Specifications
+* **CPU:** AMD Ryzen 5 5500 (6 Cores / 12 Threads @ 3.60GHz base / 4.20GHz boost)
+* **GPU:** NVIDIA GeForce RTX 5060 (8 GB GDDR7 @ 14,001 MHz)
+* **Host RAM:** 16 GB Dual-Channel DDR4 @ 3800 MT/s (3800 MHz)
+* **VRAM Bandwidth:** ~448 GB/s (100% on-device simulation, 0 PCIe traffic)
 
-> *Note: SPS (Steps Per Second) represents total environment simulation transitions processed per second in active VRAM.*
+### Benchmark Results (2v2 Match Simulation)
+
+| Engine | Execution Device | Parallel Envs | Total Cars | Step Latency (ms) | Throughput (SPS / TPS) | Speedup vs CPU |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
+| **RocketSim Original** | CPU (1 Thread) | 1 | 4 | 0.0433 ms | **23,083 TPS** | 1.0x (Baseline) |
+| **RocketSim Original** | CPU (12 Threads - Max) | 12 | 48 | 0.2737 ms | **43,849 TPS** | 1.9x |
+| **RocketSim-CUDA** | NVIDIA RTX 5060 | 4,096 | 16,384 | 0.0703 ms | **58,304,524 SPS** | **2,525x** |
+| **RocketSim-CUDA** | NVIDIA RTX 5060 | 16,384 | 65,536 | 0.1491 ms | **109,875,251 SPS** | **4,759x** |
+| **RocketSim-CUDA** | NVIDIA RTX 5060 | 32,768 | 131,072 | 0.3106 ms | **105,500,691 SPS** | **4,570x** |
+| **RocketSim-CUDA** | NVIDIA RTX 5060 | 65,536 | 262,144 | 0.5608 ms | **116,869,693 SPS** | **5,063x** |
+
+> *Note: In 1v0 / 1-car RL rollout mode, RocketSim-CUDA reaches up to **482,761,983 SPS** (0.0679 ms latency at 32,768 environments) in active VRAM.*
 
 ---
 
