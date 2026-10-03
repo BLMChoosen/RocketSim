@@ -112,7 +112,7 @@ No PCIe Traffic
 
 ```bash
 # Clone the repository with submodules
-git clone --recursive [https://github.com/BLMChoosen/RocketSim-CUDA.git)
+git clone --recursive https://github.com/BLMChoosen/RocketSim-CUDA.git
 cd RocketSim-CUDA
 
 # Build and install in editable mode via scikit-build-core & nanobind
