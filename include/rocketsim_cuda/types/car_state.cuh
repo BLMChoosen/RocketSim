@@ -22,6 +22,17 @@ struct CarStatePOD {
     uint8_t is_demoed           = 0;
     uint8_t wheels_with_contact[4] = {1, 1, 1, 1};
     float suspension_lengths[4]    = {0.0f, 0.0f, 0.0f, 0.0f};
+
+    // State persistence
+    uint8_t is_boosting         = 0;
+    float boosting_time         = 0.0f;
+    float handbrake_val         = 0.0f;
+    uint8_t is_jumping          = 0;
+    float jump_time             = 0.0f;
+    float air_time_since_jump   = 0.0f;
+    float flip_time             = 0.0f;
+    uint8_t is_flipping         = 0;
+
     CarControls last_controls;
 };
 
@@ -119,6 +130,27 @@ struct CarStateSoA {
     uint8_t* __restrict__ last_controls_jump     = nullptr;
     uint8_t* __restrict__ last_controls_handbrake= nullptr;
 
+    // --- 11. Persistent Wheel Dynamics (for 1:1 btVehicleRL parity) ---
+    float* __restrict__ wheel_engine_force       = nullptr;
+    float* __restrict__ wheel_brake              = nullptr;
+    float* __restrict__ wheel_steer_angle        = nullptr;
+    float* __restrict__ wheel_lat_friction_0     = nullptr;
+    float* __restrict__ wheel_lat_friction_1     = nullptr;
+    float* __restrict__ wheel_lat_friction_2     = nullptr;
+    float* __restrict__ wheel_lat_friction_3     = nullptr;
+    float* __restrict__ wheel_long_friction_0    = nullptr;
+    float* __restrict__ wheel_long_friction_1    = nullptr;
+    float* __restrict__ wheel_long_friction_2    = nullptr;
+    float* __restrict__ wheel_long_friction_3    = nullptr;
+
+    // --- 12. Persistent Bullet Unit Dynamics (for zero-truncation IEEE-754 parity) ---
+    float* __restrict__ pos_bt_x                 = nullptr;
+    float* __restrict__ pos_bt_y                 = nullptr;
+    float* __restrict__ pos_bt_z                 = nullptr;
+    float* __restrict__ vel_bt_x                 = nullptr;
+    float* __restrict__ vel_bt_y                 = nullptr;
+    float* __restrict__ vel_bt_z                 = nullptr;
+
     // Device helper methods
     __device__ inline Vec3 get_pos(uint32_t idx) const {
         return Vec3(pos_x[idx], pos_y[idx], pos_z[idx]);
@@ -171,6 +203,15 @@ struct CarStateSoA {
         pod.suspension_lengths[2]  = suspension_length_2[idx];
         pod.suspension_lengths[3]  = suspension_length_3[idx];
 
+        pod.is_boosting            = is_boosting[idx];
+        pod.boosting_time          = boosting_time[idx];
+        pod.handbrake_val          = handbrake_val[idx];
+        pod.is_jumping             = is_jumping[idx];
+        pod.jump_time              = jump_time[idx];
+        pod.air_time_since_jump    = air_time_since_jump[idx];
+        pod.flip_time              = flip_time[idx];
+        pod.is_flipping            = is_flipping[idx];
+
         pod.last_controls.throttle  = last_controls_throttle[idx];
         pod.last_controls.steer     = last_controls_steer[idx];
         pod.last_controls.pitch     = last_controls_pitch[idx];
@@ -188,6 +229,13 @@ struct CarStateSoA {
         set_quat(idx, pod.quat);
         set_ang_vel(idx, pod.ang_vel);
 
+        pos_bt_x[idx] = pod.pos.x * 0.02f;
+        pos_bt_y[idx] = pod.pos.y * 0.02f;
+        pos_bt_z[idx] = pod.pos.z * 0.02f;
+        vel_bt_x[idx] = pod.vel.x * 0.02f;
+        vel_bt_y[idx] = pod.vel.y * 0.02f;
+        vel_bt_z[idx] = pod.vel.z * 0.02f;
+
         boost[idx]                 = pod.boost;
         is_on_ground[idx]          = pod.is_on_ground;
         has_jumped[idx]            = pod.has_jumped;
@@ -203,6 +251,15 @@ struct CarStateSoA {
         suspension_length_1[idx]   = pod.suspension_lengths[1];
         suspension_length_2[idx]   = pod.suspension_lengths[2];
         suspension_length_3[idx]   = pod.suspension_lengths[3];
+
+        is_boosting[idx]           = pod.is_boosting;
+        boosting_time[idx]         = pod.boosting_time;
+        handbrake_val[idx]         = pod.handbrake_val;
+        is_jumping[idx]            = pod.is_jumping;
+        jump_time[idx]             = pod.jump_time;
+        air_time_since_jump[idx]   = pod.air_time_since_jump;
+        flip_time[idx]             = pod.flip_time;
+        is_flipping[idx]           = pod.is_flipping;
 
         last_controls_throttle[idx]   = pod.last_controls.throttle;
         last_controls_steer[idx]      = pod.last_controls.steer;

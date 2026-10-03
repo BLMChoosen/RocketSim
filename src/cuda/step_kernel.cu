@@ -18,8 +18,8 @@ __device__ void StepBallDevice(
     Vec3 ang_vel(ball_state.ang_vel_x[env_idx], ball_state.ang_vel_y[env_idx], ball_state.ang_vel_z[env_idx]);
     Quat quat(ball_state.q_w[env_idx], ball_state.q_x[env_idx], ball_state.q_y[env_idx], ball_state.q_z[env_idx]);
 
-    // Check if sleeping (zero velocity)
-    if (vel.length_sq() == 0.0f && ang_vel.length_sq() == 0.0f) {
+    // Check if sleeping (zero velocity on ground)
+    if (vel.length_sq() == 0.0f && ang_vel.length_sq() == 0.0f && pos.z <= BALL_REST_Z + 1.0f) {
         return;
     }
 
@@ -64,15 +64,7 @@ __device__ void StepCarDevice(
     const float* __restrict__ actions_tensor,
     float dt)
 {
-    Vec3 pos(car_state.pos_x[car_idx], car_state.pos_y[car_idx], car_state.pos_z[car_idx]);
-    Vec3 vel(car_state.vel_x[car_idx], car_state.vel_y[car_idx], car_state.vel_z[car_idx]);
-    Vec3 omega(car_state.ang_vel_x[car_idx], car_state.ang_vel_y[car_idx], car_state.ang_vel_z[car_idx]);
-    Quat quat(car_state.q_w[car_idx], car_state.q_x[car_idx], car_state.q_y[car_idx], car_state.q_z[car_idx]);
-    float boost = car_state.boost[car_idx];
-
-    Mat3 basis = Mat3::from_quat(quat);
-
-    // Controls: Direct VRAM tensor consumption or fallback to CarControlsSoA
+    // 1. Controls: Direct VRAM tensor consumption or fallback to CarControlsSoA
     CarControls ctrl;
     if (actions_tensor) {
         const float* a = actions_tensor + car_idx * 8;
@@ -96,66 +88,125 @@ __device__ void StepCarDevice(
         ctrl.jump      = controls.jump[car_idx];
         ctrl.handbrake = controls.handbrake[car_idx];
         ctrl.padding   = 0;
+        ctrl.clamp_fix();
     }
 
-    // Suspension
+    // 2. Load car state
+    Vec3 pos_bt(car_state.pos_bt_x[car_idx], car_state.pos_bt_y[car_idx], car_state.pos_bt_z[car_idx]);
+    Vec3 pos = pos_bt * 50.0f;
+    Vec3 vel(car_state.vel_x[car_idx], car_state.vel_y[car_idx], car_state.vel_z[car_idx]);
+    Vec3 omega(car_state.ang_vel_x[car_idx], car_state.ang_vel_y[car_idx], car_state.ang_vel_z[car_idx]);
+    Quat quat(car_state.q_w[car_idx], car_state.q_x[car_idx], car_state.q_y[car_idx], car_state.q_z[car_idx]);
+
+    Mat3 basis = Mat3::from_quat(quat);
+
+    // 3. Wheel raycast query (btVehicleRL::updateVehicleFirst)
     uint8_t wheels_contact[4] = {0};
     float susp_lengths[4] = {0};
-    Vec3 susp_impulse(0.0f, 0.0f, 0.0f);
-    Vec3 susp_torque_impulse(0.0f, 0.0f, 0.0f);
+    WheelRaycastResult wheel_results[4];
 
-    update_car_suspension(
-        pos, vel, omega, basis, dt,
+    evaluate_car_wheels_raycast(
+        pos, basis,
         wheels_contact, susp_lengths,
-        susp_impulse, susp_torque_impulse
+        wheel_results
     );
 
     int num_wheels_contact = wheels_contact[0] + wheels_contact[1] + wheels_contact[2] + wheels_contact[3];
     bool is_on_ground = (num_wheels_contact >= 3);
 
-    // Forces accumulation
-    Vec3 total_force = susp_impulse * (1.0f / dt);
-    Vec3 total_torque = susp_torque_impulse * (1.0f / dt);
+    // 4. Load previous tick's cached wheel dynamics
+    float cached_engine_force = car_state.wheel_engine_force[car_idx];
+    float cached_brake = car_state.wheel_brake[car_idx];
+    float cached_steer_angle = car_state.wheel_steer_angle[car_idx];
+    float cached_lat_frictions[4] = {
+        car_state.wheel_lat_friction_0[car_idx],
+        car_state.wheel_lat_friction_1[car_idx],
+        car_state.wheel_lat_friction_2[car_idx],
+        car_state.wheel_lat_friction_3[car_idx]
+    };
+    float cached_long_frictions[4] = {
+        car_state.wheel_long_friction_0[car_idx],
+        car_state.wheel_long_friction_1[car_idx],
+        car_state.wheel_long_friction_2[car_idx],
+        car_state.wheel_long_friction_3[car_idx]
+    };
 
+    // 5. Apply suspension & bilateral tire friction impulses
+    apply_suspension_and_friction(
+        pos, basis, wheel_results, dt,
+        cached_engine_force, cached_brake, cached_steer_angle,
+        cached_lat_frictions, cached_long_frictions,
+        vel, omega
+    );
+
+    // 6. Update wheel dynamics (throttle, brake, steer, friction curves, sticky downforce) for NEXT tick
+    Vec3 total_force(0.0f, 0.0f, 0.0f);
+    Vec3 contact_normals[4] = {
+        wheel_results[0].contact_normal,
+        wheel_results[1].contact_normal,
+        wheel_results[2].contact_normal,
+        wheel_results[3].contact_normal
+    };
+
+    update_car_wheel_dynamics(
+        car_idx, car_state, ctrl,
+        num_wheels_contact, wheels_contact,
+        contact_normals, basis,
+        vel, omega, dt,
+        total_force
+    );
+
+    // 7. Air control vs flipping reset
     float fwd_speed = vel.dot(basis.forward);
-
-    // Drive torque from throttle or Air Control
-    if (is_on_ground) {
-        float abs_fwd_speed = fabsf(fwd_speed);
-        float drive_scale = (abs_fwd_speed < 1400.0f) ? (1.0f - (abs_fwd_speed / 1400.0f) * 0.9f) : 0.1f;
-        float drive_force_mag = ctrl.throttle * (400.0f * CAR_MASS * 0.02f) * drive_scale * 50.0f;
-        total_force = total_force + basis.forward * drive_force_mag;
-    } else {
+    if (num_wheels_contact < 3) {
         update_car_air_control(car_idx, car_state, ctrl, basis, dt, omega, total_force);
+    } else {
+        car_state.is_flipping[car_idx] = 0;
     }
 
-    // Jump & Flip mechanics
+    // 8. Jump, double jump, flip/dodge
     update_car_jump(car_idx, car_state, ctrl, is_on_ground, basis, fwd_speed, dt, vel, total_force);
 
-    // Boost
-    if (ctrl.boost && boost > 0.0f) {
-        float boost_accel = is_on_ground ? BOOST_ACCEL_GROUND : BOOST_ACCEL_AIR;
-        total_force = total_force + basis.forward * (boost_accel * CAR_MASS);
-        boost = fmaxf(0.0f, boost - BOOST_CONSUMPTION_RATE * dt);
-    }
+    // 9. Boost update (persists minimum boost time and fuel)
+    update_car_boost(car_idx, car_state, ctrl, is_on_ground, basis, dt, total_force);
 
-    // Gravity
+    // 10. Gravity
     total_force.z += GRAVITY_Z * CAR_MASS;
 
-    // Symplectic Euler Linear Integration (in Bullet units for exact rounding parity)
+    // 11. Symplectic Euler linear integration (in Bullet units for exact rounding parity)
     vel = vel + total_force * ((1.0f / CAR_MASS) * dt);
-    pos = (pos * 0.02f + vel * (0.02f * dt)) * 50.0f;
+    pos_bt = pos_bt + (vel * 0.02f) * dt;
+    pos = pos_bt * 50.0f;
 
-    // Angular Dynamics
+    // 12. Angular dynamics
+    Vec3 total_torque(0.0f, 0.0f, 0.0f);
     bullet_angular_dynamics(omega, total_torque, get_octane_inv_inertia_local(), basis, dt);
 
-    // Chassis Arena Contact
+    // 13. Chassis arena contact
     resolve_chassis_arena_collision(pos, vel, omega, basis, dt);
+    pos_bt = pos * 0.02f;
 
-    // Quaternion Integration
+    // 14. Quaternion integration
     quat = bullet_integrate_quaternion(quat, omega, dt);
 
-    // Write back SoA
+    // 15. Velocity limiting (clamping)
+    float speed_sq = vel.length_sq();
+    if (speed_sq > CAR_MAX_SPEED * CAR_MAX_SPEED) {
+        vel = vel * (CAR_MAX_SPEED / sqrtf(speed_sq));
+    }
+    float ang_speed_sq = omega.length_sq();
+    if (ang_speed_sq > CAR_MAX_ANG_SPEED * CAR_MAX_ANG_SPEED) {
+        omega = omega * (CAR_MAX_ANG_SPEED / sqrtf(ang_speed_sq));
+    }
+
+    // 16. Supersonic status update
+    update_car_supersonic(car_idx, car_state, vel, dt);
+
+    // 17. Write back SoA
+    car_state.pos_bt_x[car_idx] = pos_bt.x;
+    car_state.pos_bt_y[car_idx] = pos_bt.y;
+    car_state.pos_bt_z[car_idx] = pos_bt.z;
+
     car_state.pos_x[car_idx] = pos.x;
     car_state.pos_y[car_idx] = pos.y;
     car_state.pos_z[car_idx] = pos.z;
@@ -173,7 +224,6 @@ __device__ void StepCarDevice(
     car_state.ang_vel_y[car_idx] = omega.y;
     car_state.ang_vel_z[car_idx] = omega.z;
 
-    car_state.boost[car_idx] = boost;
     car_state.is_on_ground[car_idx] = is_on_ground ? 1 : 0;
 
     car_state.wheel_contact_0[car_idx] = wheels_contact[0];
@@ -228,19 +278,46 @@ __global__ void StepSimulationKernel(
         float bx = ball_state.pos_x[env_idx];
         float by = ball_state.pos_y[env_idx];
         float bz = ball_state.pos_z[env_idx];
+        float b_vy = ball_state.vel_y[env_idx];
 
+        uint8_t goal_flag = 0;
+        uint8_t score_team = 0;
         if (fabsf(bx) < GOAL_WIDTH * 0.5f && bz < GOAL_HEIGHT) {
             if (by > ARENA_EXTENT_Y) {
-                arena_state.is_goal[env_idx] = 1;
-                arena_state.scoring_team[env_idx] = 0;
+                goal_flag = 1;
+                score_team = 0;
             } else if (by < -ARENA_EXTENT_Y) {
-                arena_state.is_goal[env_idx] = 1;
-                arena_state.scoring_team[env_idx] = 1;
+                goal_flag = 1;
+                score_team = 1;
             }
         }
+        arena_state.is_goal[env_idx] = goal_flag;
+        arena_state.scoring_team[env_idx] = score_team;
 
+        uint8_t oob_flag = 0;
         if (bz > ARENA_HEIGHT + 200.0f || fabsf(bx) > ARENA_EXTENT_X + 500.0f || fabsf(by) > ARENA_EXTENT_Y + 1200.0f) {
-            arena_state.is_out_of_bounds[env_idx] = 1;
+            oob_flag = 1;
+        }
+        arena_state.is_out_of_bounds[env_idx] = oob_flag;
+
+        if (arena_state.terminated) {
+            arena_state.terminated[env_idx] = (goal_flag || oob_flag) ? 1 : 0;
+        }
+        if (arena_state.truncated) {
+            arena_state.truncated[env_idx] = 0;
+        }
+
+        if (arena_state.rewards) {
+            for (uint32_t c = 0; c < cars_per_env; ++c) {
+                uint32_t car_idx = env_idx * cars_per_env + c;
+                uint8_t team = (c % 2 == 0) ? 0 : 1;
+                float goal_dir = (team == 0) ? 1.0f : -1.0f;
+                float rew = (b_vy * goal_dir) * (1.0f / 6000.0f);
+                if (goal_flag) {
+                    rew += (score_team == team) ? 1.0f : -1.0f;
+                }
+                arena_state.rewards[car_idx] = rew;
+            }
         }
 
         if (arena_state.pad_cooldown) {

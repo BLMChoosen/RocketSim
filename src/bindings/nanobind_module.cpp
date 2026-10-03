@@ -11,6 +11,79 @@
 namespace nb = nanobind;
 using namespace rocketsim_cuda;
 
+// CUDA Asynchronous Hardware Event Wrapper for non-blocking benchmarking & synchronization
+class GpuEvent {
+public:
+    cudaEvent_t m_event = nullptr;
+    bool m_enable_timing = true;
+
+    explicit GpuEvent(bool enable_timing = true) : m_enable_timing(enable_timing) {
+        unsigned int flags = enable_timing ? cudaEventDefault : cudaEventDisableTiming;
+        cudaEventCreateWithFlags(&m_event, flags);
+    }
+
+    ~GpuEvent() {
+        if (m_event) {
+            cudaEventDestroy(m_event);
+            m_event = nullptr;
+        }
+    }
+
+    // Disable copy, allow move
+    GpuEvent(const GpuEvent&) = delete;
+    GpuEvent& operator=(const GpuEvent&) = delete;
+    GpuEvent(GpuEvent&& o) noexcept : m_event(o.m_event), m_enable_timing(o.m_enable_timing) {
+        o.m_event = nullptr;
+    }
+    GpuEvent& operator=(GpuEvent&& o) noexcept {
+        if (this != &o) {
+            if (m_event) cudaEventDestroy(m_event);
+            m_event = o.m_event;
+            m_enable_timing = o.m_enable_timing;
+            o.m_event = nullptr;
+        }
+        return *this;
+    }
+
+    void record(nb::object stream = nb::none()) {
+        cudaStream_t s = nullptr;
+        if (!stream.is_none()) {
+            if (nb::isinstance<nb::int_>(stream)) {
+                s = reinterpret_cast<cudaStream_t>(nb::cast<uintptr_t>(stream));
+            } else if (nb::hasattr(stream, "cuda_stream")) {
+                s = reinterpret_cast<cudaStream_t>(nb::cast<uintptr_t>(stream.attr("cuda_stream")));
+            }
+        }
+        cudaEventRecord(m_event, s);
+    }
+
+    void wait(nb::object stream = nb::none()) {
+        cudaStream_t s = nullptr;
+        if (!stream.is_none()) {
+            if (nb::isinstance<nb::int_>(stream)) {
+                s = reinterpret_cast<cudaStream_t>(nb::cast<uintptr_t>(stream));
+            } else if (nb::hasattr(stream, "cuda_stream")) {
+                s = reinterpret_cast<cudaStream_t>(nb::cast<uintptr_t>(stream.attr("cuda_stream")));
+            }
+        }
+        cudaStreamWaitEvent(s, m_event, 0);
+    }
+
+    void synchronize() {
+        cudaEventSynchronize(m_event);
+    }
+
+    bool query() const {
+        return cudaEventQuery(m_event) == cudaSuccess;
+    }
+
+    float elapsed_time(const GpuEvent& end) const {
+        float ms = 0.0f;
+        cudaEventElapsedTime(&ms, m_event, end.m_event);
+        return ms;
+    }
+};
+
 // Zero-copy DLPack-compliant GPU Tensor View structure
 struct GpuTensorView {
     void* data = nullptr;
@@ -20,6 +93,154 @@ struct GpuTensorView {
     int device_type = 2; // kDLCUDA
     int device_id = 0;
     nb::object owner;
+
+    size_t get_element_size() const {
+        if (dtype == "uint8") return 1;
+        if (dtype == "int64") return 8;
+        return 4; // float32, int32, uint32
+    }
+
+    int64_t total_elements() const {
+        int64_t count = 1;
+        for (auto s : shape) count *= s;
+        return count;
+    }
+
+    nb::object getitem(nb::object idx_obj) const {
+        std::vector<int64_t> indices;
+        if (nb::isinstance<nb::tuple>(idx_obj)) {
+            nb::tuple t = nb::cast<nb::tuple>(idx_obj);
+            for (size_t i = 0; i < t.size(); ++i) {
+                indices.push_back(nb::cast<int64_t>(t[i]));
+            }
+        } else if (nb::isinstance<nb::int_>(idx_obj)) {
+            indices.push_back(nb::cast<int64_t>(idx_obj));
+        } else {
+            throw std::invalid_argument("Index must be an integer or tuple of integers");
+        }
+
+        if (indices.size() > shape.size()) {
+            throw std::invalid_argument("Too many indices for tensor dimension");
+        }
+
+        int64_t offset = 0;
+        for (size_t i = 0; i < indices.size(); ++i) {
+            int64_t idx = indices[i];
+            if (idx < 0) idx += shape[i];
+            if (idx < 0 || idx >= shape[i]) {
+                throw std::out_of_range("Index out of range");
+            }
+            offset += idx * strides[i];
+        }
+
+        if (indices.size() == shape.size()) {
+            if (dtype == "float32") {
+                float val = 0.0f;
+                cudaMemcpy(&val, static_cast<const float*>(data) + offset, sizeof(float), cudaMemcpyDeviceToHost);
+                return nb::cast(val);
+            } else if (dtype == "uint8") {
+                uint8_t val = 0;
+                cudaMemcpy(&val, static_cast<const uint8_t*>(data) + offset, sizeof(uint8_t), cudaMemcpyDeviceToHost);
+                return nb::cast(val);
+            } else if (dtype == "uint32") {
+                uint32_t val = 0;
+                cudaMemcpy(&val, static_cast<const uint32_t*>(data) + offset, sizeof(uint32_t), cudaMemcpyDeviceToHost);
+                return nb::cast(val);
+            } else if (dtype == "int32") {
+                int32_t val = 0;
+                cudaMemcpy(&val, static_cast<const int32_t*>(data) + offset, sizeof(int32_t), cudaMemcpyDeviceToHost);
+                return nb::cast(val);
+            } else if (dtype == "int64") {
+                int64_t val = 0;
+                cudaMemcpy(&val, static_cast<const int64_t*>(data) + offset, sizeof(int64_t), cudaMemcpyDeviceToHost);
+                return nb::cast(val);
+            }
+            throw std::runtime_error("Unsupported dtype");
+        } else {
+            GpuTensorView sub;
+            sub.data = static_cast<char*>(data) + offset * get_element_size();
+            sub.shape.assign(shape.begin() + indices.size(), shape.end());
+            sub.strides.assign(strides.begin() + indices.size(), strides.end());
+            sub.dtype = dtype;
+            sub.device_type = device_type;
+            sub.device_id = device_id;
+            sub.owner = owner;
+            return nb::cast(sub);
+        }
+    }
+
+    void setitem(nb::object idx_obj, nb::object val_obj) {
+        std::vector<int64_t> indices;
+        if (nb::isinstance<nb::tuple>(idx_obj)) {
+            nb::tuple t = nb::cast<nb::tuple>(idx_obj);
+            for (size_t i = 0; i < t.size(); ++i) {
+                indices.push_back(nb::cast<int64_t>(t[i]));
+            }
+        } else if (nb::isinstance<nb::int_>(idx_obj)) {
+            indices.push_back(nb::cast<int64_t>(idx_obj));
+        } else {
+            throw std::invalid_argument("Index must be an integer or tuple of integers");
+        }
+
+        if (indices.size() != shape.size()) {
+            throw std::invalid_argument("Assignment requires all dimensional indices");
+        }
+
+        int64_t offset = 0;
+        for (size_t i = 0; i < indices.size(); ++i) {
+            int64_t idx = indices[i];
+            if (idx < 0) idx += shape[i];
+            if (idx < 0 || idx >= shape[i]) {
+                throw std::out_of_range("Index out of range");
+            }
+            offset += idx * strides[i];
+        }
+
+        if (dtype == "float32") {
+            float val = nb::cast<float>(val_obj);
+            cudaMemcpy(static_cast<float*>(data) + offset, &val, sizeof(float), cudaMemcpyHostToDevice);
+        } else if (dtype == "uint8") {
+            uint8_t val = nb::cast<uint8_t>(val_obj);
+            cudaMemcpy(static_cast<uint8_t*>(data) + offset, &val, sizeof(uint8_t), cudaMemcpyHostToDevice);
+        } else if (dtype == "uint32") {
+            uint32_t val = nb::cast<uint32_t>(val_obj);
+            cudaMemcpy(static_cast<uint32_t*>(data) + offset, &val, sizeof(uint32_t), cudaMemcpyHostToDevice);
+        } else if (dtype == "int32") {
+            int32_t val = nb::cast<int32_t>(val_obj);
+            cudaMemcpy(static_cast<int32_t*>(data) + offset, &val, sizeof(int32_t), cudaMemcpyHostToDevice);
+        } else if (dtype == "int64") {
+            int64_t val = nb::cast<int64_t>(val_obj);
+            cudaMemcpy(static_cast<int64_t*>(data) + offset, &val, sizeof(int64_t), cudaMemcpyHostToDevice);
+        }
+    }
+
+    void zero_() {
+        int64_t total_bytes = total_elements() * get_element_size();
+        cudaMemset(data, 0, total_bytes);
+    }
+
+    GpuTensorView clone() const {
+        int64_t total = total_elements();
+        size_t elem_size = get_element_size();
+        size_t total_bytes = total * elem_size;
+
+        void* d_new = nullptr;
+        cudaMalloc(&d_new, total_bytes);
+        cudaMemcpy(d_new, data, total_bytes, cudaMemcpyDeviceToDevice);
+
+        GpuTensorView c;
+        c.data = d_new;
+        c.shape = shape;
+        c.strides = strides;
+        c.dtype = dtype;
+        c.device_type = device_type;
+        c.device_id = device_id;
+        nb::capsule cleanup(d_new, [](void* p) noexcept {
+            if (p) cudaFree(p);
+        });
+        c.owner = cleanup;
+        return c;
+    }
 
     nb::object to_dlpack(nb::object /* stream */ = nb::none()) const {
         std::vector<size_t> u_shape(shape.begin(), shape.end());
@@ -77,7 +298,25 @@ NB_MODULE(rocketsim_cuda, m) {
         })
         .def_prop_ro("dtype", [](const GpuTensorView& v) { return v.dtype; })
         .def_prop_ro("device", [](const GpuTensorView& v) { return "cuda:0"; })
+        .def_prop_ro("is_cuda", [](const GpuTensorView&) { return true; })
         .def_prop_ro("data_ptr", [](const GpuTensorView& v) { return reinterpret_cast<uintptr_t>(v.data); })
+        .def("get_data_ptr", [](const GpuTensorView& v) { return reinterpret_cast<uintptr_t>(v.data); })
+        .def("size", [](const GpuTensorView& v) {
+            nb::list l;
+            for (auto s : v.shape) l.append(s);
+            return nb::tuple(l);
+        })
+        .def("stride", [](const GpuTensorView& v) {
+            nb::list l;
+            for (auto s : v.strides) l.append(s);
+            return nb::tuple(l);
+        })
+        .def("dim", [](const GpuTensorView& v) { return v.shape.size(); })
+        .def("__len__", [](const GpuTensorView& v) { return v.shape.empty() ? 0 : v.shape[0]; })
+        .def("__getitem__", &GpuTensorView::getitem)
+        .def("__setitem__", &GpuTensorView::setitem)
+        .def("zero_", &GpuTensorView::zero_)
+        .def("clone", &GpuTensorView::clone)
         .def("__dlpack__", &GpuTensorView::to_dlpack, nb::arg("stream") = nb::none())
         .def("__dlpack_device__", [](const GpuTensorView& v) {
             return std::make_pair(v.device_type, v.device_id);
@@ -270,6 +509,45 @@ NB_MODULE(rocketsim_cuda, m) {
             v.owner = nb::borrow(self);
             return v;
         }, "Get DLPack CUDA tensor view of Episode Tick Counts [num_envs]")
+        .def("get_rewards", [](nb::handle self) {
+            auto& ctx = nb::cast<SimContext&>(self);
+            GpuTensorView v;
+            v.data = ctx.GetRewards();
+            v.shape = { static_cast<int64_t>(ctx.GetNumEnvs()), static_cast<int64_t>(ctx.GetCarsPerEnv()) };
+            v.strides = { static_cast<int64_t>(ctx.GetCarsPerEnv()), 1 };
+            v.dtype = "float32";
+            v.device_type = 2;
+            v.device_id = 0;
+            v.owner = nb::borrow(self);
+            return v;
+        }, "Get DLPack CUDA tensor view of Episode Rewards [num_envs, cars_per_env]")
+        .def("get_terminated", [](nb::handle self) {
+            auto& ctx = nb::cast<SimContext&>(self);
+            GpuTensorView v;
+            v.data = ctx.GetTerminated();
+            v.shape = { static_cast<int64_t>(ctx.GetNumEnvs()) };
+            v.strides = { 1 };
+            v.dtype = "uint8";
+            v.device_type = 2;
+            v.device_id = 0;
+            v.owner = nb::borrow(self);
+            return v;
+        }, "Get DLPack CUDA tensor view of Terminated flags [num_envs]")
+        .def("get_truncated", [](nb::handle self) {
+            auto& ctx = nb::cast<SimContext&>(self);
+            GpuTensorView v;
+            v.data = ctx.GetTruncated();
+            v.shape = { static_cast<int64_t>(ctx.GetNumEnvs()) };
+            v.strides = { 1 };
+            v.dtype = "uint8";
+            v.device_type = 2;
+            v.device_id = 0;
+            v.owner = nb::borrow(self);
+            return v;
+        }, "Get DLPack CUDA tensor view of Truncated flags [num_envs]")
+        .def("get_stream", [](const SimContext& ctx) {
+            return reinterpret_cast<uintptr_t>(ctx.GetStream());
+        }, "Get raw CUDA stream pointer (uintptr_t)")
 
         // Simulation Step
         .def("step", [](SimContext& ctx, uint32_t batch_size) {
@@ -371,4 +649,53 @@ NB_MODULE(rocketsim_cuda, m) {
             }
             ctx.ResetEnvironmentsMasked(d_mask);
         }, nb::arg("mask"), "Reset environments using a GPU boolean/uint8 mask");
+
+    // Asynchronous CUDA Events (for non-blocking latency/throughput benchmarking)
+    nb::class_<GpuEvent>(m, "GpuEvent")
+        .def(nb::init<bool>(), nb::arg("enable_timing") = true)
+        .def("record", &GpuEvent::record, nb::arg("stream") = nb::none())
+        .def("wait", &GpuEvent::wait, nb::arg("stream") = nb::none())
+        .def("synchronize", &GpuEvent::synchronize)
+        .def("query", &GpuEvent::query)
+        .def("elapsed_time", &GpuEvent::elapsed_time, nb::arg("end_event"));
+
+    m.attr("Event") = m.attr("GpuEvent");
+
+    // Allocate zeroed GPU tensor in VRAM
+    m.def("zeros", [](std::vector<int64_t> shape, const std::string& dtype) {
+        int64_t total = 1;
+        for (auto s : shape) total *= s;
+        size_t elem_size = (dtype == "uint8") ? 1 : ((dtype == "int64") ? 8 : 4);
+        size_t total_bytes = total * elem_size;
+
+        void* d_ptr = nullptr;
+        cudaMalloc(&d_ptr, total_bytes);
+        cudaMemset(d_ptr, 0, total_bytes);
+
+        std::vector<int64_t> strides(shape.size());
+        int64_t st = 1;
+        for (int i = static_cast<int>(shape.size()) - 1; i >= 0; --i) {
+            strides[i] = st;
+            st *= shape[i];
+        }
+
+        GpuTensorView v;
+        v.data = d_ptr;
+        v.shape = shape;
+        v.strides = strides;
+        v.dtype = dtype;
+        v.device_type = 2;
+        v.device_id = 0;
+        nb::capsule cleanup(d_ptr, [](void* p) noexcept {
+            if (p) cudaFree(p);
+        });
+        v.owner = cleanup;
+        return v;
+    }, nb::arg("shape"), nb::arg("dtype") = "float32", "Allocate a zeroed GPU tensor in VRAM");
+
+    m.def("get_vram_info", []() {
+        size_t free_b = 0, total_b = 0;
+        cudaMemGetInfo(&free_b, &total_b);
+        return std::make_pair(free_b, total_b);
+    }, "Return tuple of (free_vram_bytes, total_vram_bytes)");
 }

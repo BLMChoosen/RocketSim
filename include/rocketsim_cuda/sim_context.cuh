@@ -39,6 +39,15 @@ public:
     const ArenaStateSoA& GetArenaState() const { return m_arena_state; }
     ArenaStateSoA& GetArenaState() { return m_arena_state; }
 
+    const float* GetRewards() const { return m_arena_state.rewards; }
+    float* GetRewards() { return m_arena_state.rewards; }
+
+    const uint8_t* GetTerminated() const { return m_arena_state.terminated; }
+    uint8_t* GetTerminated() { return m_arena_state.terminated; }
+
+    const uint8_t* GetTruncated() const { return m_arena_state.truncated; }
+    uint8_t* GetTruncated() { return m_arena_state.truncated; }
+
     const CarControlsSoA& GetControls() const { return m_controls; }
     CarControlsSoA& GetControls() { return m_controls; }
 

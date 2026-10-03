@@ -111,14 +111,40 @@ __device__ inline void init_single_car(CarStateSoA& car_state, uint32_t idx) {
     car_state.last_controls_boost[idx] = 0;
     car_state.last_controls_jump[idx] = 0;
     car_state.last_controls_handbrake[idx] = 0;
+
+    car_state.wheel_engine_force[idx] = 0.0f;
+    car_state.wheel_brake[idx] = 0.0f;
+    car_state.wheel_steer_angle[idx] = 0.0f;
+    car_state.wheel_lat_friction_0[idx] = 0.0f;
+    car_state.wheel_lat_friction_1[idx] = 0.0f;
+    car_state.wheel_lat_friction_2[idx] = 0.0f;
+    car_state.wheel_lat_friction_3[idx] = 0.0f;
+    car_state.wheel_long_friction_0[idx] = 0.0f;
+    car_state.wheel_long_friction_1[idx] = 0.0f;
+    car_state.wheel_long_friction_2[idx] = 0.0f;
+    car_state.wheel_long_friction_3[idx] = 0.0f;
+
+    car_state.pos_bt_x[idx] = car_state.pos_x[idx] * 0.02f;
+    car_state.pos_bt_y[idx] = car_state.pos_y[idx] * 0.02f;
+    car_state.pos_bt_z[idx] = car_state.pos_z[idx] * 0.02f;
+    car_state.vel_bt_x[idx] = car_state.vel_x[idx] * 0.02f;
+    car_state.vel_bt_y[idx] = car_state.vel_y[idx] * 0.02f;
+    car_state.vel_bt_z[idx] = car_state.vel_z[idx] * 0.02f;
 }
 
-__device__ inline void init_single_arena(ArenaStateSoA& arena_state, uint32_t env_idx) {
+__device__ inline void init_single_arena(ArenaStateSoA& arena_state, uint32_t env_idx, uint32_t cars_per_env = 1) {
     if (arena_state.is_goal) {
         arena_state.is_goal[env_idx] = 0;
         arena_state.scoring_team[env_idx] = 0;
         arena_state.is_out_of_bounds[env_idx] = 0;
         arena_state.tick_count[env_idx] = 0;
+        if (arena_state.terminated) arena_state.terminated[env_idx] = 0;
+        if (arena_state.truncated) arena_state.truncated[env_idx] = 0;
+        if (arena_state.rewards) {
+            for (uint32_t c = 0; c < cars_per_env; ++c) {
+                arena_state.rewards[env_idx * cars_per_env + c] = 0.0f;
+            }
+        }
         for (uint32_t p = 0; p < MAX_BOOST_PADS; ++p) {
             arena_state.pad_is_active[env_idx * MAX_BOOST_PADS + p] = 1;
             arena_state.pad_cooldown[env_idx * MAX_BOOST_PADS + p] = 0.0f;
@@ -138,10 +164,10 @@ __global__ void k_init_car_state(CarStateSoA car_state, uint32_t count) {
     init_single_car(car_state, idx);
 }
 
-__global__ void k_init_arena_state(ArenaStateSoA arena_state, uint32_t count) {
+__global__ void k_init_arena_state(ArenaStateSoA arena_state, uint32_t count, uint32_t cars_per_env) {
     uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= count) return;
-    init_single_arena(arena_state, idx);
+    init_single_arena(arena_state, idx, cars_per_env);
 }
 
 template <typename TIndex>
@@ -161,7 +187,7 @@ __global__ void k_reset_environments_indexed(
 
     uint32_t e = static_cast<uint32_t>(env_idx);
     init_single_ball(ball_state, e);
-    init_single_arena(arena_state, e);
+    init_single_arena(arena_state, e, cars_per_env);
 
     for (uint32_t c = 0; c < cars_per_env; ++c) {
         uint32_t car_idx = e * cars_per_env + c;
@@ -182,7 +208,7 @@ __global__ void k_reset_environments_masked(
     if (!reset_mask[e]) return;
 
     init_single_ball(ball_state, e);
-    init_single_arena(arena_state, e);
+    init_single_arena(arena_state, e, cars_per_env);
 
     for (uint32_t c = 0; c < cars_per_env; ++c) {
         uint32_t car_idx = e * cars_per_env + c;
@@ -342,6 +368,8 @@ void SimContext::AllocateArena() {
     // Last controls: 5 floats, 3 uint8
     total += calc_slice(car_count, sizeof(float)) * 5;
     total += calc_slice(car_count, sizeof(uint8_t)) * 3;
+    // Persistent wheel & Bullet unit dynamics: 17 floats
+    total += calc_slice(car_count, sizeof(float)) * 17;
 
     // --- Controls SoA slices (length = car_count) ---
     total += calc_slice(car_count, sizeof(float)) * 5;
@@ -352,6 +380,9 @@ void SimContext::AllocateArena() {
     total += calc_slice(env_count, sizeof(uint8_t));                  // scoring_team
     total += calc_slice(env_count, sizeof(uint8_t));                  // is_out_of_bounds
     total += calc_slice(env_count, sizeof(uint32_t));                 // tick_count
+    total += calc_slice(env_count, sizeof(uint8_t));                  // terminated
+    total += calc_slice(env_count, sizeof(uint8_t));                  // truncated
+    total += calc_slice(car_count, sizeof(float));                    // rewards
     total += calc_slice(env_count * MAX_BOOST_PADS, sizeof(uint8_t)); // pad_is_active
     total += calc_slice(env_count * MAX_BOOST_PADS, sizeof(float));   // pad_cooldown
 
@@ -490,6 +521,25 @@ void SimContext::AllocateArena() {
     m_car_state.last_controls_jump        = static_cast<uint8_t*>(assign_slice(car_count, sizeof(uint8_t)));
     m_car_state.last_controls_handbrake   = static_cast<uint8_t*>(assign_slice(car_count, sizeof(uint8_t)));
 
+    m_car_state.wheel_engine_force        = static_cast<float*>(assign_slice(car_count, sizeof(float)));
+    m_car_state.wheel_brake               = static_cast<float*>(assign_slice(car_count, sizeof(float)));
+    m_car_state.wheel_steer_angle         = static_cast<float*>(assign_slice(car_count, sizeof(float)));
+    m_car_state.wheel_lat_friction_0      = static_cast<float*>(assign_slice(car_count, sizeof(float)));
+    m_car_state.wheel_lat_friction_1      = static_cast<float*>(assign_slice(car_count, sizeof(float)));
+    m_car_state.wheel_lat_friction_2      = static_cast<float*>(assign_slice(car_count, sizeof(float)));
+    m_car_state.wheel_lat_friction_3      = static_cast<float*>(assign_slice(car_count, sizeof(float)));
+    m_car_state.wheel_long_friction_0     = static_cast<float*>(assign_slice(car_count, sizeof(float)));
+    m_car_state.wheel_long_friction_1     = static_cast<float*>(assign_slice(car_count, sizeof(float)));
+    m_car_state.wheel_long_friction_2     = static_cast<float*>(assign_slice(car_count, sizeof(float)));
+    m_car_state.wheel_long_friction_3     = static_cast<float*>(assign_slice(car_count, sizeof(float)));
+
+    m_car_state.pos_bt_x                 = static_cast<float*>(assign_slice(car_count, sizeof(float)));
+    m_car_state.pos_bt_y                 = static_cast<float*>(assign_slice(car_count, sizeof(float)));
+    m_car_state.pos_bt_z                 = static_cast<float*>(assign_slice(car_count, sizeof(float)));
+    m_car_state.vel_bt_x                 = static_cast<float*>(assign_slice(car_count, sizeof(float)));
+    m_car_state.vel_bt_y                 = static_cast<float*>(assign_slice(car_count, sizeof(float)));
+    m_car_state.vel_bt_z                 = static_cast<float*>(assign_slice(car_count, sizeof(float)));
+
     // Assign Controls pointers
     m_controls.throttle  = static_cast<float*>(assign_slice(car_count, sizeof(float)));
     m_controls.steer     = static_cast<float*>(assign_slice(car_count, sizeof(float)));
@@ -505,6 +555,9 @@ void SimContext::AllocateArena() {
     m_arena_state.scoring_team     = static_cast<uint8_t*>(assign_slice(env_count, sizeof(uint8_t)));
     m_arena_state.is_out_of_bounds = static_cast<uint8_t*>(assign_slice(env_count, sizeof(uint8_t)));
     m_arena_state.tick_count       = static_cast<uint32_t*>(assign_slice(env_count, sizeof(uint32_t)));
+    m_arena_state.terminated       = static_cast<uint8_t*>(assign_slice(env_count, sizeof(uint8_t)));
+    m_arena_state.truncated        = static_cast<uint8_t*>(assign_slice(env_count, sizeof(uint8_t)));
+    m_arena_state.rewards          = static_cast<float*>(assign_slice(car_count, sizeof(float)));
     m_arena_state.pad_is_active    = static_cast<uint8_t*>(assign_slice(env_count * MAX_BOOST_PADS, sizeof(uint8_t)));
     m_arena_state.pad_cooldown     = static_cast<float*>(assign_slice(env_count * MAX_BOOST_PADS, sizeof(float)));
 }
@@ -530,7 +583,7 @@ void SimContext::ResetToDefault() {
     }
 
     uint32_t arena_blocks = (m_num_envs + threads - 1) / threads;
-    k_init_arena_state<<<arena_blocks, threads, 0, m_stream>>>(m_arena_state, m_num_envs);
+    k_init_arena_state<<<arena_blocks, threads, 0, m_stream>>>(m_arena_state, m_num_envs, m_cars_per_env);
 
     if (m_stream) {
         cudaStreamSynchronize(m_stream);

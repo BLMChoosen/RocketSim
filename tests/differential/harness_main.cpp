@@ -267,7 +267,7 @@ int main(int argc, char** argv) {
             gpu_sim.CopyCarStateToHost(gpu_cars.data(), 0, args.envs);
 
             for (uint32_t e = 0; e < args.envs; e++) {
-                if (t <= 2) {
+                if (t <= 3) {
                     std::cout << "[DEBUG Tick " << t << " Env " << e << "]\n"
                               << "  CPU Pos: (" << std::setprecision(8) << cpu_cars[e].pos.x << ", " << cpu_cars[e].pos.y << ", " << cpu_cars[e].pos.z << ")\n"
                               << "  GPU Pos: (" << std::setprecision(8) << gpu_cars[e].pos.x << ", " << gpu_cars[e].pos.y << ", " << gpu_cars[e].pos.z << ")\n"
@@ -276,6 +276,11 @@ int main(int argc, char** argv) {
                                                   << std::fabs(cpu_cars[e].pos.z - gpu_cars[e].pos.z) << ")\n"
                               << "  CPU Vel: (" << cpu_cars[e].vel.x << ", " << cpu_cars[e].vel.y << ", " << cpu_cars[e].vel.z << ")\n"
                               << "  GPU Vel: (" << gpu_cars[e].vel.x << ", " << gpu_cars[e].vel.y << ", " << gpu_cars[e].vel.z << ")\n"
+                              << "  CPU OnGround: " << (int)cpu_cars[e].is_on_ground << " GPU OnGround: " << (int)gpu_cars[e].is_on_ground << "\n"
+                              << "  CPU Wheels: (" << (int)cpu_cars[e].wheels_with_contact[0] << ", " << (int)cpu_cars[e].wheels_with_contact[1] << ", " << (int)cpu_cars[e].wheels_with_contact[2] << ", " << (int)cpu_cars[e].wheels_with_contact[3] << ")\n"
+                              << "  GPU Wheels: (" << (int)gpu_cars[e].wheels_with_contact[0] << ", " << (int)gpu_cars[e].wheels_with_contact[1] << ", " << (int)gpu_cars[e].wheels_with_contact[2] << ", " << (int)gpu_cars[e].wheels_with_contact[3] << ")\n"
+                              << "  CPU Susp: (" << cpu_cars[e].suspension_lengths[0] << ", " << cpu_cars[e].suspension_lengths[1] << ", " << cpu_cars[e].suspension_lengths[2] << ", " << cpu_cars[e].suspension_lengths[3] << ")\n"
+                              << "  GPU Susp: (" << gpu_cars[e].suspension_lengths[0] << ", " << gpu_cars[e].suspension_lengths[1] << ", " << gpu_cars[e].suspension_lengths[2] << ", " << gpu_cars[e].suspension_lengths[3] << ")\n"
                               << "  Controls: thr=" << step_controls[e].throttle << " steer=" << step_controls[e].steer
                               << " jump=" << (int)step_controls[e].jump << " boost=" << (int)step_controls[e].boost << "\n";
                 }
