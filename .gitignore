@@ -52,4 +52,5 @@ ___*
 
 # Agent teamwork orchestration scratchpads
 .agents/
-ORIGINAL_REQUEST.md
+ORIGINAL_REQUEST.md
+*.pyc
