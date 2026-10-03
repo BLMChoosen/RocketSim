@@ -57,22 +57,30 @@ target_include_directories(rocketsim_cpu PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libsrc/bullet3-3.24>
 )
 
+if(NOT DEFINED CUDAToolkit_ROOT)
+    if(DEFINED ENV{CUDA_PATH})
+        set(CUDAToolkit_ROOT "$ENV{CUDA_PATH}")
+    else()
+        set(CUDAToolkit_ROOT "C:/Users/Choosen/CUDA_Toolkit")
+    endif()
+endif()
+
 # -----------------------------------------------------------------------------
-# Target 2: rocketsim_cuda (GPU Physics & SoA Memory Engine)
+# Target 2: rocketsim_cuda_core (GPU Physics & SoA Memory Engine)
 # -----------------------------------------------------------------------------
 set(ROCKETSIM_CUDA_SOURCES
     src/cuda/sim_context.cu
     src/cuda/step_kernel.cu
 )
 
-add_library(rocketsim_cuda STATIC ${ROCKETSIM_CUDA_SOURCES})
-add_library(RocketSim::CUDA ALIAS rocketsim_cuda)
+add_library(rocketsim_cuda_core STATIC ${ROCKETSIM_CUDA_SOURCES})
+add_library(RocketSim::CUDA ALIAS rocketsim_cuda_core)
 
-target_include_directories(rocketsim_cuda PUBLIC
+target_include_directories(rocketsim_cuda_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CUDAToolkit_ROOT}/include>
 )
-target_link_libraries(rocketsim_cuda PUBLIC
+target_link_libraries(rocketsim_cuda_core PUBLIC
     "${CUDAToolkit_ROOT}/lib/x64/cudart.lib"
 )
 
@@ -94,7 +102,33 @@ target_include_directories(differential_harness PRIVATE
 
 target_link_libraries(differential_harness PRIVATE
     rocketsim_cpu
-    rocketsim_cuda
+    rocketsim_cuda_core
+)
+
+# -----------------------------------------------------------------------------
+# Target 4: rocketsim_cuda (Nanobind Python Module with DLPack Zero-Copy)
+# -----------------------------------------------------------------------------
+find_package(Python 3.9 COMPONENTS Interpreter Development.Module REQUIRED)
+
+execute_process(
+    COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
+    OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE nanobind_ROOT)
+list(APPEND CMAKE_PREFIX_PATH "${nanobind_ROOT}")
+find_package(nanobind CONFIG REQUIRED)
+
+nanobind_add_module(rocketsim_cuda
+    NB_DOMAIN rocketsim_cuda
+    src/bindings/nanobind_module.cpp
+)
+
+target_include_directories(rocketsim_cuda PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CUDAToolkit_ROOT}/include
+)
+
+target_link_libraries(rocketsim_cuda PRIVATE
+    rocketsim_cuda_core
+    "${CUDAToolkit_ROOT}/lib/x64/cudart.lib"
 )
 
 # -----------------------------------------------------------------------------
@@ -102,23 +136,23 @@ target_link_libraries(differential_harness PRIVATE
 # -----------------------------------------------------------------------------
 add_executable(test_math tests/unit/test_math.cu)
 target_include_directories(test_math PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_math PRIVATE rocketsim_cuda)
+target_link_libraries(test_math PRIVATE rocketsim_cuda_core)
 
 add_executable(test_soa tests/unit/test_soa.cu)
 target_include_directories(test_soa PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_soa PRIVATE rocketsim_cuda)
+target_link_libraries(test_soa PRIVATE rocketsim_cuda_core)
 
 add_executable(test_sdf tests/unit/test_sdf.cu)
 target_include_directories(test_sdf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_sdf PRIVATE rocketsim_cuda)
+target_link_libraries(test_sdf PRIVATE rocketsim_cuda_core)
 
 add_executable(test_integrator tests/unit/test_integrator.cu)
 target_include_directories(test_integrator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_integrator PRIVATE rocketsim_cuda)
+target_link_libraries(test_integrator PRIVATE rocketsim_cuda_core)
 
 add_executable(throughput_benchmark benchmarks/throughput_benchmark.cu)
 target_include_directories(throughput_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(throughput_benchmark PRIVATE rocketsim_cuda)
+target_link_libraries(throughput_benchmark PRIVATE rocketsim_cuda_core)
 
 # CTest Integration
 enable_testing()
@@ -126,4 +160,5 @@ add_test(NAME TestMath COMMAND test_math)
 add_test(NAME TestSoA COMMAND test_soa)
 add_test(NAME TestSdf COMMAND test_sdf)
 add_test(NAME TestIntegrator COMMAND test_integrator)
+add_test(NAME TestPythonBindings COMMAND "${Python_EXECUTABLE}" -m pytest "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_bindings.py" -v)
 add_test(NAME DifferentialHarness COMMAND differential_harness --ticks 100 --envs 2)

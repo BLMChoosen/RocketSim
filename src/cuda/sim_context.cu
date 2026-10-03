@@ -10,10 +10,7 @@ inline size_t align_128(size_t size) {
     return (size + 127) & ~size_t(127);
 }
 
-__global__ void k_init_ball_state(BallStateSoA ball_state, uint32_t count) {
-    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= count) return;
-
+__device__ inline void init_single_ball(BallStateSoA& ball_state, uint32_t idx) {
     ball_state.pos_x[idx] = 0.0f;
     ball_state.pos_y[idx] = 0.0f;
     ball_state.pos_z[idx] = BALL_REST_Z;
@@ -32,10 +29,7 @@ __global__ void k_init_ball_state(BallStateSoA ball_state, uint32_t count) {
     ball_state.ang_vel_z[idx] = 0.0f;
 }
 
-__global__ void k_init_car_state(CarStateSoA car_state, uint32_t count) {
-    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= count) return;
-
+__device__ inline void init_single_car(CarStateSoA& car_state, uint32_t idx) {
     car_state.pos_x[idx] = 0.0f;
     car_state.pos_y[idx] = 0.0f;
     car_state.pos_z[idx] = 17.0f;
@@ -119,6 +113,83 @@ __global__ void k_init_car_state(CarStateSoA car_state, uint32_t count) {
     car_state.last_controls_handbrake[idx] = 0;
 }
 
+__device__ inline void init_single_arena(ArenaStateSoA& arena_state, uint32_t env_idx) {
+    if (arena_state.is_goal) {
+        arena_state.is_goal[env_idx] = 0;
+        arena_state.scoring_team[env_idx] = 0;
+        arena_state.is_out_of_bounds[env_idx] = 0;
+        arena_state.tick_count[env_idx] = 0;
+        for (uint32_t p = 0; p < MAX_BOOST_PADS; ++p) {
+            arena_state.pad_is_active[env_idx * MAX_BOOST_PADS + p] = 1;
+            arena_state.pad_cooldown[env_idx * MAX_BOOST_PADS + p] = 0.0f;
+        }
+    }
+}
+
+__global__ void k_init_ball_state(BallStateSoA ball_state, uint32_t count) {
+    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= count) return;
+    init_single_ball(ball_state, idx);
+}
+
+__global__ void k_init_car_state(CarStateSoA car_state, uint32_t count) {
+    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= count) return;
+    init_single_car(car_state, idx);
+}
+
+__global__ void k_init_arena_state(ArenaStateSoA arena_state, uint32_t count) {
+    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= count) return;
+    init_single_arena(arena_state, idx);
+}
+
+template <typename TIndex>
+__global__ void k_reset_environments_indexed(
+    const TIndex* __restrict__ env_indices,
+    uint32_t num_resets,
+    uint32_t cars_per_env,
+    BallStateSoA ball_state,
+    CarStateSoA car_state,
+    ArenaStateSoA arena_state)
+{
+    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= num_resets) return;
+
+    int64_t env_idx = env_indices[i];
+    if (env_idx < 0) return;
+
+    uint32_t e = static_cast<uint32_t>(env_idx);
+    init_single_ball(ball_state, e);
+    init_single_arena(arena_state, e);
+
+    for (uint32_t c = 0; c < cars_per_env; ++c) {
+        uint32_t car_idx = e * cars_per_env + c;
+        init_single_car(car_state, car_idx);
+    }
+}
+
+__global__ void k_reset_environments_masked(
+    const uint8_t* __restrict__ reset_mask,
+    uint32_t num_envs,
+    uint32_t cars_per_env,
+    BallStateSoA ball_state,
+    CarStateSoA car_state,
+    ArenaStateSoA arena_state)
+{
+    uint32_t e = blockIdx.x * blockDim.x + threadIdx.x;
+    if (e >= num_envs) return;
+    if (!reset_mask[e]) return;
+
+    init_single_ball(ball_state, e);
+    init_single_arena(arena_state, e);
+
+    for (uint32_t c = 0; c < cars_per_env; ++c) {
+        uint32_t car_idx = e * cars_per_env + c;
+        init_single_car(car_state, car_idx);
+    }
+}
+
 __global__ void k_export_ball_pod(BallStateSoA src, BallStatePOD* dst, uint32_t count, uint32_t start_env) {
     uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= count) return;
@@ -171,12 +242,14 @@ SimContext::SimContext(SimContext&& o) noexcept
       m_stream(o.m_stream),
       m_ball_state(o.m_ball_state),
       m_car_state(o.m_car_state),
+      m_arena_state(o.m_arena_state),
       m_controls(o.m_controls) {
     o.m_d_pool = nullptr;
     o.m_allocated_bytes = 0;
     o.m_num_envs = 0;
     o.m_cars_per_env = 0;
     o.m_total_cars = 0;
+    o.m_arena_state = ArenaStateSoA{};
 }
 
 SimContext& SimContext::operator=(SimContext&& o) noexcept {
@@ -190,6 +263,7 @@ SimContext& SimContext::operator=(SimContext&& o) noexcept {
         m_stream = o.m_stream;
         m_ball_state = o.m_ball_state;
         m_car_state = o.m_car_state;
+        m_arena_state = o.m_arena_state;
         m_controls = o.m_controls;
 
         o.m_d_pool = nullptr;
@@ -197,8 +271,18 @@ SimContext& SimContext::operator=(SimContext&& o) noexcept {
         o.m_num_envs = 0;
         o.m_cars_per_env = 0;
         o.m_total_cars = 0;
+        o.m_arena_state = ArenaStateSoA{};
     }
     return *this;
+}
+
+size_t SimContext::GetBallPitchFloats() const {
+    return align_128(m_num_envs * sizeof(float)) / sizeof(float);
+}
+
+size_t SimContext::GetCarPitchFloats() const {
+    size_t car_count = (m_total_cars > 0) ? m_total_cars : 1;
+    return align_128(car_count * sizeof(float)) / sizeof(float);
 }
 
 void SimContext::AllocateArena() {
@@ -262,6 +346,14 @@ void SimContext::AllocateArena() {
     // --- Controls SoA slices (length = car_count) ---
     total += calc_slice(car_count, sizeof(float)) * 5;
     total += calc_slice(car_count, sizeof(uint8_t)) * 3;
+
+    // --- Arena SoA slices (length = env_count) ---
+    total += calc_slice(env_count, sizeof(uint8_t));                  // is_goal
+    total += calc_slice(env_count, sizeof(uint8_t));                  // scoring_team
+    total += calc_slice(env_count, sizeof(uint8_t));                  // is_out_of_bounds
+    total += calc_slice(env_count, sizeof(uint32_t));                 // tick_count
+    total += calc_slice(env_count * MAX_BOOST_PADS, sizeof(uint8_t)); // pad_is_active
+    total += calc_slice(env_count * MAX_BOOST_PADS, sizeof(float));   // pad_cooldown
 
     // --- Staging POD buffers (pre-allocated to eliminate runtime allocations) ---
     total += calc_slice(env_count, sizeof(BallStatePOD));
@@ -407,6 +499,14 @@ void SimContext::AllocateArena() {
     m_controls.boost     = static_cast<uint8_t*>(assign_slice(car_count, sizeof(uint8_t)));
     m_controls.jump      = static_cast<uint8_t*>(assign_slice(car_count, sizeof(uint8_t)));
     m_controls.handbrake = static_cast<uint8_t*>(assign_slice(car_count, sizeof(uint8_t)));
+
+    // Assign Arena pointers
+    m_arena_state.is_goal          = static_cast<uint8_t*>(assign_slice(env_count, sizeof(uint8_t)));
+    m_arena_state.scoring_team     = static_cast<uint8_t*>(assign_slice(env_count, sizeof(uint8_t)));
+    m_arena_state.is_out_of_bounds = static_cast<uint8_t*>(assign_slice(env_count, sizeof(uint8_t)));
+    m_arena_state.tick_count       = static_cast<uint32_t*>(assign_slice(env_count, sizeof(uint32_t)));
+    m_arena_state.pad_is_active    = static_cast<uint8_t*>(assign_slice(env_count * MAX_BOOST_PADS, sizeof(uint8_t)));
+    m_arena_state.pad_cooldown     = static_cast<float*>(assign_slice(env_count * MAX_BOOST_PADS, sizeof(float)));
 }
 
 void SimContext::FreeArena() {
@@ -429,11 +529,44 @@ void SimContext::ResetToDefault() {
         k_init_car_state<<<car_blocks, threads, 0, m_stream>>>(m_car_state, m_total_cars);
     }
 
+    uint32_t arena_blocks = (m_num_envs + threads - 1) / threads;
+    k_init_arena_state<<<arena_blocks, threads, 0, m_stream>>>(m_arena_state, m_num_envs);
+
     if (m_stream) {
         cudaStreamSynchronize(m_stream);
     } else {
         cudaDeviceSynchronize();
     }
+}
+
+void SimContext::ResetEnvironmentsIndexed(const int32_t* d_env_indices, uint32_t num_resets) {
+    if (!d_env_indices || num_resets == 0) return;
+    constexpr uint32_t threads = 128;
+    uint32_t blocks = (num_resets + threads - 1) / threads;
+    k_reset_environments_indexed<<<blocks, threads, 0, m_stream>>>(
+        d_env_indices, num_resets, m_cars_per_env, m_ball_state, m_car_state, m_arena_state
+    );
+    // Asynchronous execution on m_stream with NO host synchronization barriers
+}
+
+void SimContext::ResetEnvironmentsIndexed(const int64_t* d_env_indices, uint32_t num_resets) {
+    if (!d_env_indices || num_resets == 0) return;
+    constexpr uint32_t threads = 128;
+    uint32_t blocks = (num_resets + threads - 1) / threads;
+    k_reset_environments_indexed<<<blocks, threads, 0, m_stream>>>(
+        d_env_indices, num_resets, m_cars_per_env, m_ball_state, m_car_state, m_arena_state
+    );
+    // Asynchronous execution on m_stream with NO host synchronization barriers
+}
+
+void SimContext::ResetEnvironmentsMasked(const uint8_t* d_reset_mask) {
+    if (!d_reset_mask || m_num_envs == 0) return;
+    constexpr uint32_t threads = 128;
+    uint32_t blocks = (m_num_envs + threads - 1) / threads;
+    k_reset_environments_masked<<<blocks, threads, 0, m_stream>>>(
+        d_reset_mask, m_num_envs, m_cars_per_env, m_ball_state, m_car_state, m_arena_state
+    );
+    // Asynchronous execution on m_stream with NO host synchronization barriers
 }
 
 void SimContext::CopyBallStateToHost(BallStatePOD* host_out, uint32_t env_start, uint32_t count) {

@@ -61,6 +61,7 @@ __device__ void StepCarDevice(
     uint32_t car_idx,
     CarStateSoA& car_state,
     const CarControlsSoA& controls,
+    const float* __restrict__ actions_tensor,
     float dt)
 {
     Vec3 pos(car_state.pos_x[car_idx], car_state.pos_y[car_idx], car_state.pos_z[car_idx]);
@@ -71,16 +72,31 @@ __device__ void StepCarDevice(
 
     Mat3 basis = Mat3::from_quat(quat);
 
-    // Controls
+    // Controls: Direct VRAM tensor consumption or fallback to CarControlsSoA
     CarControls ctrl;
-    ctrl.throttle  = controls.throttle[car_idx];
-    ctrl.steer     = controls.steer[car_idx];
-    ctrl.pitch     = controls.pitch[car_idx];
-    ctrl.yaw       = controls.yaw[car_idx];
-    ctrl.roll      = controls.roll[car_idx];
-    ctrl.boost     = controls.boost[car_idx];
-    ctrl.jump      = controls.jump[car_idx];
-    ctrl.handbrake = controls.handbrake[car_idx];
+    if (actions_tensor) {
+        const float* a = actions_tensor + car_idx * 8;
+        ctrl.throttle  = a[0];
+        ctrl.steer     = a[1];
+        ctrl.pitch     = a[2];
+        ctrl.yaw       = a[3];
+        ctrl.roll      = a[4];
+        ctrl.jump      = (a[5] > 0.5f) ? 1 : 0;
+        ctrl.boost     = (a[6] > 0.5f) ? 1 : 0;
+        ctrl.handbrake = (a[7] > 0.5f) ? 1 : 0;
+        ctrl.padding   = 0;
+        ctrl.clamp_fix();
+    } else {
+        ctrl.throttle  = controls.throttle[car_idx];
+        ctrl.steer     = controls.steer[car_idx];
+        ctrl.pitch     = controls.pitch[car_idx];
+        ctrl.yaw       = controls.yaw[car_idx];
+        ctrl.roll      = controls.roll[car_idx];
+        ctrl.boost     = controls.boost[car_idx];
+        ctrl.jump      = controls.jump[car_idx];
+        ctrl.handbrake = controls.handbrake[car_idx];
+        ctrl.padding   = 0;
+    }
 
     // Suspension
     uint8_t wheels_contact[4] = {0};
@@ -186,7 +202,9 @@ __global__ void StepSimulationKernel(
     uint32_t cars_per_env,
     BallStateSoA ball_state,
     CarStateSoA car_state,
+    ArenaStateSoA arena_state,
     CarControlsSoA controls,
+    const float* __restrict__ actions_tensor,
     float dt)
 {
     uint32_t env_idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -198,11 +216,51 @@ __global__ void StepSimulationKernel(
     // Step Cars
     for (uint32_t c = 0; c < cars_per_env; ++c) {
         uint32_t car_idx = env_idx * cars_per_env + c;
-        StepCarDevice(car_idx, car_state, controls, dt);
+        StepCarDevice(car_idx, car_state, controls, actions_tensor, dt);
+    }
+
+    // Step Arena Termination & Boost Pads
+    if (arena_state.tick_count) {
+        arena_state.tick_count[env_idx]++;
+    }
+
+    if (arena_state.is_goal) {
+        float bx = ball_state.pos_x[env_idx];
+        float by = ball_state.pos_y[env_idx];
+        float bz = ball_state.pos_z[env_idx];
+
+        if (fabsf(bx) < GOAL_WIDTH * 0.5f && bz < GOAL_HEIGHT) {
+            if (by > ARENA_EXTENT_Y) {
+                arena_state.is_goal[env_idx] = 1;
+                arena_state.scoring_team[env_idx] = 0;
+            } else if (by < -ARENA_EXTENT_Y) {
+                arena_state.is_goal[env_idx] = 1;
+                arena_state.scoring_team[env_idx] = 1;
+            }
+        }
+
+        if (bz > ARENA_HEIGHT + 200.0f || fabsf(bx) > ARENA_EXTENT_X + 500.0f || fabsf(by) > ARENA_EXTENT_Y + 1200.0f) {
+            arena_state.is_out_of_bounds[env_idx] = 1;
+        }
+
+        if (arena_state.pad_cooldown) {
+            for (uint32_t p = 0; p < MAX_BOOST_PADS; ++p) {
+                uint32_t pad_idx = env_idx * MAX_BOOST_PADS + p;
+                float cd = arena_state.pad_cooldown[pad_idx];
+                if (cd > 0.0f) {
+                    cd -= dt;
+                    if (cd <= 0.0f) {
+                        cd = 0.0f;
+                        arena_state.pad_is_active[pad_idx] = 1;
+                    }
+                    arena_state.pad_cooldown[pad_idx] = cd;
+                }
+            }
+        }
     }
 }
 
-void sim_step_batch(SimContext* ctx, uint32_t batch_size, const CarControlsSoA* controls) {
+void sim_step_batch(SimContext* ctx, uint32_t batch_size, const CarControlsSoA* controls, const float* actions_tensor) {
     if (!ctx) return;
     uint32_t num_envs = (batch_size > 0) ? batch_size : ctx->GetNumEnvs();
     uint32_t cars_per_env = ctx->GetCarsPerEnv();
@@ -218,13 +276,15 @@ void sim_step_batch(SimContext* ctx, uint32_t batch_size, const CarControlsSoA* 
         cars_per_env,
         ctx->GetBallState(),
         ctx->GetCarState(),
+        ctx->GetArenaState(),
         ctrl_soa,
+        actions_tensor,
         DELTA_TIME
     );
 }
 
-void SimContext::Step(uint32_t batch_size) {
-    sim_step_batch(this, batch_size, nullptr);
+void SimContext::Step(uint32_t batch_size, const float* actions_tensor) {
+    sim_step_batch(this, batch_size, nullptr, actions_tensor);
 }
 
 } // namespace rocketsim_cuda

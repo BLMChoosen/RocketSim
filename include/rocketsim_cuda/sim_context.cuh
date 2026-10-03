@@ -6,6 +6,7 @@
 #include "types/car_state.cuh"
 #include "types/ball_state.cuh"
 #include "types/car_controls.cuh"
+#include "types/arena_state.cuh"
 
 namespace rocketsim_cuda {
 
@@ -26,11 +27,17 @@ public:
     size_t GetAllocatedBytes() const { return m_allocated_bytes; }
     cudaStream_t GetStream() const { return m_stream; }
 
+    size_t GetBallPitchFloats() const;
+    size_t GetCarPitchFloats() const;
+
     const BallStateSoA& GetBallState() const { return m_ball_state; }
     BallStateSoA& GetBallState() { return m_ball_state; }
 
     const CarStateSoA& GetCarState() const { return m_car_state; }
     CarStateSoA& GetCarState() { return m_car_state; }
+
+    const ArenaStateSoA& GetArenaState() const { return m_arena_state; }
+    ArenaStateSoA& GetArenaState() { return m_arena_state; }
 
     const CarControlsSoA& GetControls() const { return m_controls; }
     CarControlsSoA& GetControls() { return m_controls; }
@@ -38,14 +45,20 @@ public:
     // State initialization kernels
     void ResetToDefault();
 
+    // Asynchronous GPU selective resets (no host synchronization barriers)
+    void ResetEnvironmentsIndexed(const int32_t* d_env_indices, uint32_t num_resets);
+    void ResetEnvironmentsIndexed(const int64_t* d_env_indices, uint32_t num_resets);
+    void ResetEnvironmentsMasked(const uint8_t* d_reset_mask);
+
     // State transfer helpers for differential testing & serialization
     void CopyBallStateToHost(BallStatePOD* host_out, uint32_t env_start = 0, uint32_t count = 0);
     void CopyCarStateToHost(CarStatePOD* host_out, uint32_t car_start = 0, uint32_t count = 0);
     void CopyBallStateToDevice(const BallStatePOD* host_in, uint32_t env_start = 0, uint32_t count = 0);
     void CopyCarStateToDevice(const CarStatePOD* host_in, uint32_t car_start = 0, uint32_t count = 0);
     void CopyControlsToDevice(const CarControls* host_in, uint32_t car_start = 0, uint32_t count = 0);
+
     // Simulation Step
-    void Step(uint32_t batch_size = 0);
+    void Step(uint32_t batch_size = 0, const float* actions_tensor = nullptr);
 
 private:
     void AllocateArena();
@@ -60,10 +73,11 @@ private:
 
     BallStateSoA m_ball_state;
     CarStateSoA m_car_state;
+    ArenaStateSoA m_arena_state;
     CarControlsSoA m_controls;
 };
 
 // Global Simulation Step Entry Point (GEMINI.md Section 6.2)
-void sim_step_batch(SimContext* ctx, uint32_t batch_size = 0, const CarControlsSoA* controls = nullptr);
+void sim_step_batch(SimContext* ctx, uint32_t batch_size = 0, const CarControlsSoA* controls = nullptr, const float* actions_tensor = nullptr);
 
 } // namespace rocketsim_cuda
