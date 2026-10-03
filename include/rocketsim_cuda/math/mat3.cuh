@@ -48,7 +48,17 @@ struct Mat3 {
     }
 
     __host__ __device__ static Mat3 from_quat(const Quat& q) {
-        return Mat3(q.forward(), q.right(), q.up());
+        float s = 2.0f;
+        float xs = q.x * s, ys = q.y * s, zs = q.z * s;
+        float wx = q.w * xs, wy = q.w * ys, wz = q.w * zs;
+        float xx = q.x * xs, xy = q.x * ys, xz = q.x * zs;
+        float yy = q.y * ys, yz = q.y * zs, zz = q.z * zs;
+
+        return Mat3(
+            Vec3(1.0f - (yy + zz), xy + wz, xz - wy),
+            Vec3(xy - wz, 1.0f - (xx + zz), yz + wx),
+            Vec3(xz + wy, yz - wx, 1.0f - (xx + yy))
+        );
     }
 
     __host__ __device__ Quat to_quat() const {

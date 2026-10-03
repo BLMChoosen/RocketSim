@@ -44,6 +44,8 @@ public:
     void CopyBallStateToDevice(const BallStatePOD* host_in, uint32_t env_start = 0, uint32_t count = 0);
     void CopyCarStateToDevice(const CarStatePOD* host_in, uint32_t car_start = 0, uint32_t count = 0);
     void CopyControlsToDevice(const CarControls* host_in, uint32_t car_start = 0, uint32_t count = 0);
+    // Simulation Step
+    void Step(uint32_t batch_size = 0);
 
 private:
     void AllocateArena();
@@ -60,5 +62,8 @@ private:
     CarStateSoA m_car_state;
     CarControlsSoA m_controls;
 };
+
+// Global Simulation Step Entry Point (GEMINI.md Section 6.2)
+void sim_step_batch(SimContext* ctx, uint32_t batch_size = 0, const CarControlsSoA* controls = nullptr);
 
 } // namespace rocketsim_cuda

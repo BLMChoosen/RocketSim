@@ -62,6 +62,7 @@ target_include_directories(rocketsim_cpu PUBLIC
 # -----------------------------------------------------------------------------
 set(ROCKETSIM_CUDA_SOURCES
     src/cuda/sim_context.cu
+    src/cuda/step_kernel.cu
 )
 
 add_library(rocketsim_cuda STATIC ${ROCKETSIM_CUDA_SOURCES})

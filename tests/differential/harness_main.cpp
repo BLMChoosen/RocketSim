@@ -222,6 +222,100 @@ int main(int argc, char** argv) {
               << " > Threshold " << fail.threshold << "\n";
     std::cout << "[+] Comparator Sensitivity verified: Strictly enforces GEMINI.md tolerances.\n\n";
 
+    // ------------------------------------------------------------------
+    // Test 5: Lockstep GPU vs CPU Oracle Differential Simulation (Milestone 2 R5)
+    // ------------------------------------------------------------------
+    std::cout << "[Test 5/5] Lockstep Differential Simulation: GPU vs CPU Oracle ("
+              << args.ticks << " ticks, " << args.envs << " envs)...\n";
+
+    try {
+        SimContext gpu_sim(args.envs, 1);
+
+        std::vector<CPURefSim> lockstep_cpu_envs;
+        lockstep_cpu_envs.reserve(args.envs);
+        for (uint32_t e = 0; e < args.envs; e++) {
+            lockstep_cpu_envs.emplace_back(1, true, TICK_RATE, static_cast<int>(e));
+        }
+
+        std::vector<BallStatePOD> init_balls(args.envs);
+        std::vector<CarStatePOD> init_cars(args.envs);
+        for (uint32_t e = 0; e < args.envs; e++) {
+            lockstep_cpu_envs[e].GetBallState(init_balls[e]);
+            lockstep_cpu_envs[e].GetCarState(0, init_cars[e]);
+        }
+        gpu_sim.CopyBallStateToDevice(init_balls.data(), 0, args.envs);
+        gpu_sim.CopyCarStateToDevice(init_cars.data(), 0, args.envs);
+
+        DeterministicInputGenerator lockstep_gen(args.seed);
+        std::vector<CarControls> step_controls(args.envs);
+        std::vector<BallStatePOD> gpu_balls(args.envs);
+        std::vector<CarStatePOD> gpu_cars(args.envs);
+        std::vector<BallStatePOD> cpu_balls(args.envs);
+        std::vector<CarStatePOD> cpu_cars(args.envs);
+
+        for (uint32_t t = 0; t < args.ticks; t++) {
+            for (uint32_t e = 0; e < args.envs; e++) {
+                step_controls[e] = lockstep_gen.Generate();
+                lockstep_cpu_envs[e].Step(&step_controls[e], 1);
+                lockstep_cpu_envs[e].GetBallState(cpu_balls[e]);
+                lockstep_cpu_envs[e].GetCarState(0, cpu_cars[e]);
+            }
+
+            gpu_sim.CopyControlsToDevice(step_controls.data(), 0, args.envs);
+            gpu_sim.Step(args.envs);
+            gpu_sim.CopyBallStateToHost(gpu_balls.data(), 0, args.envs);
+            gpu_sim.CopyCarStateToHost(gpu_cars.data(), 0, args.envs);
+
+            for (uint32_t e = 0; e < args.envs; e++) {
+                if (t <= 2) {
+                    std::cout << "[DEBUG Tick " << t << " Env " << e << "]\n"
+                              << "  CPU Pos: (" << std::setprecision(8) << cpu_cars[e].pos.x << ", " << cpu_cars[e].pos.y << ", " << cpu_cars[e].pos.z << ")\n"
+                              << "  GPU Pos: (" << std::setprecision(8) << gpu_cars[e].pos.x << ", " << gpu_cars[e].pos.y << ", " << gpu_cars[e].pos.z << ")\n"
+                              << "  Delta Pos: (" << std::fabs(cpu_cars[e].pos.x - gpu_cars[e].pos.x) << ", "
+                                                  << std::fabs(cpu_cars[e].pos.y - gpu_cars[e].pos.y) << ", "
+                                                  << std::fabs(cpu_cars[e].pos.z - gpu_cars[e].pos.z) << ")\n"
+                              << "  CPU Vel: (" << cpu_cars[e].vel.x << ", " << cpu_cars[e].vel.y << ", " << cpu_cars[e].vel.z << ")\n"
+                              << "  GPU Vel: (" << gpu_cars[e].vel.x << ", " << gpu_cars[e].vel.y << ", " << gpu_cars[e].vel.z << ")\n"
+                              << "  Controls: thr=" << step_controls[e].throttle << " steer=" << step_controls[e].steer
+                              << " jump=" << (int)step_controls[e].jump << " boost=" << (int)step_controls[e].boost << "\n";
+                }
+                if (!comparator.CompareBall(t, e, cpu_balls[e], gpu_balls[e], fail)) {
+                    std::cerr << "[-] Lockstep Differential Failure on Ball at tick " << t << ", env " << e << ":\n"
+                              << "    Attribute: " << fail.attribute << "\n"
+                              << "    Max delta: " << fail.max_delta << " > tol " << fail.threshold << "\n";
+                    return 1;
+                }
+                if (!comparator.CompareCar(t, e, 0, cpu_cars[e], gpu_cars[e], fail)) {
+                    std::cerr << "[-] Lockstep Differential Failure on Car at tick " << t << ", env " << e << ":\n"
+                              << "    Attribute: " << fail.attribute << "\n"
+                              << "    Max delta: " << fail.max_delta << " > tol " << fail.threshold << "\n"
+                              << "    Delta Pos: (" << std::setprecision(8)
+                              << std::fabs(cpu_cars[e].pos.x - gpu_cars[e].pos.x) << ", "
+                              << std::fabs(cpu_cars[e].pos.y - gpu_cars[e].pos.y) << ", "
+                              << std::fabs(cpu_cars[e].pos.z - gpu_cars[e].pos.z) << ")\n"
+                              << "    CPU Pos: (" << cpu_cars[e].pos.x << ", " << cpu_cars[e].pos.y << ", " << cpu_cars[e].pos.z << ")\n"
+                              << "    GPU Pos: (" << gpu_cars[e].pos.x << ", " << gpu_cars[e].pos.y << ", " << gpu_cars[e].pos.z << ")\n"
+                              << "    CPU Vel: (" << cpu_cars[e].vel.x << ", " << cpu_cars[e].vel.y << ", " << cpu_cars[e].vel.z << ")\n"
+                              << "    GPU Vel: (" << gpu_cars[e].vel.x << ", " << gpu_cars[e].vel.y << ", " << gpu_cars[e].vel.z << ")\n"
+                              << "    CPU Ang: (" << cpu_cars[e].ang_vel.x << ", " << cpu_cars[e].ang_vel.y << ", " << cpu_cars[e].ang_vel.z << ")\n"
+                              << "    GPU Ang: (" << gpu_cars[e].ang_vel.x << ", " << gpu_cars[e].ang_vel.y << ", " << gpu_cars[e].ang_vel.z << ")\n"
+                              << "    CPU Quat: (" << cpu_cars[e].quat.w << ", " << cpu_cars[e].quat.x << ", " << cpu_cars[e].quat.y << ", " << cpu_cars[e].quat.z << ")\n"
+                              << "    GPU Quat: (" << gpu_cars[e].quat.w << ", " << gpu_cars[e].quat.x << ", " << gpu_cars[e].quat.y << ", " << gpu_cars[e].quat.z << ")\n"
+                              << "    Controls: thr=" << step_controls[e].throttle << " steer=" << step_controls[e].steer
+                              << " pitch=" << step_controls[e].pitch << " yaw=" << step_controls[e].yaw
+                              << " roll=" << step_controls[e].roll << " jump=" << (int)step_controls[e].jump
+                              << " boost=" << (int)step_controls[e].boost << " handbrake=" << (int)step_controls[e].handbrake << "\n";
+                    return 1;
+                }
+            }
+        }
+        std::cout << "[+] Lockstep Differential Simulation verified: 100% parity across all "
+                  << args.ticks << " ticks!\n\n";
+    } catch (const std::exception& ex) {
+        std::cerr << "[-] GPU Lockstep Differential exception: " << ex.what() << "\n";
+        return 1;
+    }
+
     std::cout << "======================================================================\n"
               << "  ALL DIFFERENTIAL PARITY & GOLDEN MASTER TESTS PASSED SUCCESSFULLY!  \n"
               << "======================================================================\n";

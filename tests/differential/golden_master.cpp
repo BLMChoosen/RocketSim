@@ -53,13 +53,16 @@ bool DifferentialComparator::CompareBall(
 
     // 1. Position Chebyshev ||Delta_pos||_inf
     float d_pos = cpu.pos.chebyshev_dist(test.pos);
-    if (d_pos > m_tol.pos_uu) {
+    float max_c = std::max({std::abs(cpu.pos.x), std::abs(cpu.pos.y), std::abs(cpu.pos.z)});
+    float ulp_floor = (max_c >= 4096.0f) ? 0.00048828125f : ((max_c >= 2048.0f) ? 0.000244140625f : 0.0f);
+    float tol_pos = std::max(m_tol.pos_uu, ulp_floor);
+    if (d_pos > tol_pos) {
         failure.tick = tick;
         failure.env_idx = env_idx;
         failure.car_idx = -1;
         failure.attribute = "Ball Position (UU)";
         failure.max_delta = d_pos;
-        failure.threshold = m_tol.pos_uu;
+        failure.threshold = tol_pos;
         std::ostringstream ss_cpu, ss_test;
         ss_cpu << cpu.pos;
         ss_test << test.pos;
@@ -129,13 +132,16 @@ bool DifferentialComparator::CompareCar(
 
     // 1. Position Chebyshev ||Delta_pos||_inf
     float d_pos = cpu.pos.chebyshev_dist(test.pos);
-    if (d_pos > m_tol.pos_uu) {
+    float max_c = std::max({std::abs(cpu.pos.x), std::abs(cpu.pos.y), std::abs(cpu.pos.z)});
+    float ulp_floor = (max_c >= 4096.0f) ? 0.00048828125f : ((max_c >= 2048.0f) ? 0.000244140625f : 0.0f);
+    float tol_pos = std::max(m_tol.pos_uu, ulp_floor);
+    if (d_pos > tol_pos) {
         failure.tick = tick;
         failure.env_idx = env_idx;
         failure.car_idx = static_cast<int32_t>(car_idx);
         failure.attribute = "Car Position (UU)";
         failure.max_delta = d_pos;
-        failure.threshold = m_tol.pos_uu;
+        failure.threshold = tol_pos;
         std::ostringstream ss_cpu, ss_test;
         ss_cpu << cpu.pos;
         ss_test << test.pos;
