@@ -76,7 +76,7 @@ int main(int argc, char** argv) {
     std::vector<CPURefSim> cpu_envs;
     cpu_envs.reserve(args.envs);
     for (uint32_t e = 0; e < args.envs; e++) {
-        cpu_envs.emplace_back(1, true, TICK_RATE);
+        cpu_envs.emplace_back(1, true, TICK_RATE, static_cast<int>(e));
     }
 
     DeterministicInputGenerator input_gen(args.seed);
@@ -128,7 +128,7 @@ int main(int argc, char** argv) {
     std::vector<CPURefSim> verifier_envs;
     verifier_envs.reserve(args.envs);
     for (uint32_t e = 0; e < args.envs; e++) {
-        verifier_envs.emplace_back(1, true, TICK_RATE);
+        verifier_envs.emplace_back(1, true, TICK_RATE, static_cast<int>(e));
     }
 
     DifferentialFailure fail;

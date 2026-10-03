@@ -1,3 +1,7 @@
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #pragma once
 #include <vector>
 #include <cstdint>
@@ -14,12 +18,16 @@ namespace rocketsim_cuda {
 
 class CPURefSim {
 public:
-    explicit CPURefSim(int numCars = 1, bool addFloor = true, float tickRate = 120.0f);
+    explicit CPURefSim(int numCars = 1, bool addFloor = true, float tickRate = 120.0f, int spawnSeed = 0);
     ~CPURefSim();
 
     // Disable copy
     CPURefSim(const CPURefSim&) = delete;
     CPURefSim& operator=(const CPURefSim&) = delete;
+
+    // Enable move
+    CPURefSim(CPURefSim&& other) noexcept;
+    CPURefSim& operator=(CPURefSim&& other) noexcept;
 
     void Step(const CarControls* controls = nullptr, int numCars = 1);
     void GetBallState(BallStatePOD& out) const;
@@ -40,6 +48,7 @@ private:
     int m_numCars = 1;
     bool m_addFloor = true;
     float m_tickRate = 120.0f;
+    int m_spawnSeed = 0;
 };
 
 } // namespace rocketsim_cuda

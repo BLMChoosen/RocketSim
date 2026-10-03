@@ -1,3 +1,7 @@
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #include "cpu_ref_sim.h"
 
 // RocketSim CPU & Bullet headers
@@ -21,20 +25,46 @@ namespace {
 
     void EnsureRocketSimInit() {
         if (!s_rocketSimInitialized) {
-            RocketSim::Init();
+            RocketSim::Init("", true);
             s_rocketSimInitialized = true;
         }
     }
 }
 
-CPURefSim::CPURefSim(int numCars, bool addFloor, float tickRate)
-    : m_numCars(numCars), m_addFloor(addFloor), m_tickRate(tickRate) {
+CPURefSim::CPURefSim(int numCars, bool addFloor, float tickRate, int spawnSeed)
+    : m_numCars(numCars), m_addFloor(addFloor), m_tickRate(tickRate), m_spawnSeed(spawnSeed) {
     EnsureRocketSimInit();
     InitArena();
 }
 
 CPURefSim::~CPURefSim() {
     CleanupArena();
+}
+
+CPURefSim::CPURefSim(CPURefSim&& other) noexcept
+    : m_arena(other.m_arena),
+      m_cars(std::move(other.m_cars)),
+      m_numCars(other.m_numCars),
+      m_addFloor(other.m_addFloor),
+      m_tickRate(other.m_tickRate),
+      m_spawnSeed(other.m_spawnSeed) {
+    other.m_arena = nullptr;
+    other.m_cars.clear();
+}
+
+CPURefSim& CPURefSim::operator=(CPURefSim&& other) noexcept {
+    if (this != &other) {
+        CleanupArena();
+        m_arena = other.m_arena;
+        m_cars = std::move(other.m_cars);
+        m_numCars = other.m_numCars;
+        m_addFloor = other.m_addFloor;
+        m_tickRate = other.m_tickRate;
+        m_spawnSeed = other.m_spawnSeed;
+        other.m_arena = nullptr;
+        other.m_cars.clear();
+    }
+    return *this;
 }
 
 void CPURefSim::InitArena() {
@@ -60,6 +90,8 @@ void CPURefSim::InitArena() {
         if (!car) {
             throw std::runtime_error("Failed to add car to RocketSim CPU Arena");
         }
+        // Enforce deterministic initial spawn position and boost
+        car->Respawn(RocketSim::GameMode::THE_VOID, m_spawnSeed + i, RocketSim::RLConst::BOOST_SPAWN_AMOUNT);
         m_cars.push_back(car);
     }
 }
@@ -85,7 +117,7 @@ void CPURefSim::Step(const CarControls* controls, int numCars) {
     if (!m_arena) return;
 
     if (controls) {
-        int applyCount = std::min(numCars, static_cast<int>(m_cars.size()));
+        int applyCount = (std::min)(numCars, static_cast<int>(m_cars.size()));
         for (int i = 0; i < applyCount; i++) {
             m_cars[i]->controls.throttle  = controls[i].throttle;
             m_cars[i]->controls.steer     = controls[i].steer;
@@ -137,7 +169,7 @@ void CPURefSim::GetCarState(int carIdx, CarStatePOD& out) const {
         out.wheels_with_contact[w] = cs.wheelsWithContact[w] ? 1 : 0;
         float restLen = car->_bulletVehicle.m_wheelInfo[w].getSuspensionRestLength();
         float curLen = car->_bulletVehicle.m_wheelInfo[w].m_raycastInfo.m_suspensionLength;
-        out.suspension_lengths[w] = (restLen - curLen) * RocketSim::BT_TO_UU;
+        out.suspension_lengths[w] = (restLen - curLen) * BT_TO_UU;
     }
 
     out.last_controls.throttle  = cs.lastControls.throttle;

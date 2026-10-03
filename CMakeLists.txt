@@ -16,22 +16,12 @@ if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
 endif()
 
 # Strict IEEE-754 Numerical Precision Invariants (GEMINI.md Section 2.3)
-set(ROCKETSIM_CUDA_FLAGS
-    --fmad=false
-    --prec-div=true
-    --prec-sqrt=true
-    -ftz=false
-)
-
-# Compiler configurations
 if(MSVC)
-    list(APPEND ROCKETSIM_CUDA_FLAGS -allow-unsupported-compiler)
-    set(MSVC_HOST_FLAGS /utf-8 /permissive- /Zc:__cplusplus /EHsc)
-    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:${MSVC_HOST_FLAGS}>)
-    add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8,/permissive-,/Zc:__cplusplus,/EHsc>)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /std:c++20 /utf-8 /permissive- /Zc:__cplusplus /EHsc")
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --fmad=false --prec-div=true --prec-sqrt=true -ftz=false -allow-unsupported-compiler -Xcompiler=/std:c++20,/utf-8,/permissive-,/Zc:__cplusplus,/EHsc")
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --fmad=false --prec-div=true --prec-sqrt=true -ftz=false")
 endif()
-
-add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:${ROCKETSIM_CUDA_FLAGS}>)
 
 # -----------------------------------------------------------------------------
 # Target 1: rocketsim_cpu (Ground Truth Oracle Library)
@@ -62,7 +52,6 @@ file(GLOB_RECURSE BULLET3_SOURCES "libsrc/bullet3-3.24/*.cpp")
 add_library(rocketsim_cpu STATIC ${ROCKETSIM_CPU_SOURCES} ${BULLET3_SOURCES})
 add_library(RocketSim::CPU ALIAS rocketsim_cpu)
 
-target_compile_features(rocketsim_cpu PUBLIC cxx_std_20)
 target_include_directories(rocketsim_cpu PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libsrc/bullet3-3.24>
@@ -78,9 +67,12 @@ set(ROCKETSIM_CUDA_SOURCES
 add_library(rocketsim_cuda STATIC ${ROCKETSIM_CUDA_SOURCES})
 add_library(RocketSim::CUDA ALIAS rocketsim_cuda)
 
-target_compile_features(rocketsim_cuda PUBLIC cxx_std_20)
 target_include_directories(rocketsim_cuda PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CUDAToolkit_ROOT}/include>
+)
+target_link_libraries(rocketsim_cuda PUBLIC
+    "${CUDAToolkit_ROOT}/lib/x64/cudart.lib"
 )
 
 # -----------------------------------------------------------------------------
