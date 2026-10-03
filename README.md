@@ -170,7 +170,7 @@ To guarantee that RL policies trained in `RocketSim-CUDA` transfer seamlessly to
 The harness records `.rsgold` state snapshots and enforces strict Chebyshev distance constraints:
 
 * **Position Error:** $\Vert{}\Delta_{\mathbf{p}}\Vert{}_\infty \le 10^{-4}\text{ UU}$
-* **Quaternion Distance:** $\min(\Vert{}q_{\text{cpu}} - q_{\text{gpu}}\Vert{}_\infty, \Vert{}q_{\text{cpu}} + q_{\text{gpu}}\Vert{}_\infty) \le 10^{-5}$
+* **Quaternion Distance:** $\min(\lVert q_{\text{cpu}} - q_{\text{gpu}} \rVert_\infty, \lVert q_{\text{cpu}} + q_{\text{gpu}} \rVert_\infty) \le 10^{-5}$
 
 ---
 
