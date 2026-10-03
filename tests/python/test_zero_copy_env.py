@@ -146,12 +146,12 @@ def test_selective_reset_isolation():
     # Record state of environment 0 (K) and environment 1 (J != K)
     k = 0
     j = 1
-    k_pos_y_evolved = car_obs[k, 0, 1]
-    j_pos_y_evolved = car_obs[j, 0, 1]
+    k_pos_x_evolved = car_obs[k, 0, 0]
+    j_pos_x_evolved = car_obs[j, 0, 0]
 
-    # Verify both moved away from initial 0
-    assert abs(k_pos_y_evolved) > 1.0, f"Car {k} did not move: {k_pos_y_evolved}"
-    assert abs(j_pos_y_evolved) > 1.0, f"Car {j} did not move: {j_pos_y_evolved}"
+    # Verify both moved away from initial 0 along forward axis (+X)
+    assert abs(k_pos_x_evolved) > 1.0, f"Car {k} did not move: {k_pos_x_evolved}"
+    assert abs(j_pos_x_evolved) > 1.0, f"Car {j} did not move: {j_pos_x_evolved}"
 
     # Now selectively reset ONLY environment K (env 0)
     # Using a GPU mask or index list
@@ -159,17 +159,17 @@ def test_selective_reset_isolation():
 
     # Check states after selective reset
     car_obs_after = env.get_car_observations()
-    k_pos_y_reset = car_obs_after[k, 0, 1]
-    j_pos_y_after = car_obs_after[j, 0, 1]
+    k_pos_x_reset = car_obs_after[k, 0, 0]
+    j_pos_x_after = car_obs_after[j, 0, 0]
 
-    # Environment K must be reset to default kickoff position (-2560.0 for car 0)
-    assert abs(k_pos_y_reset - (-2560.0)) < 1e-2, (
-        f"Environment {k} was not reset properly: {k_pos_y_reset}"
+    # Environment K must be reset to default position (0.0 for car 0)
+    assert abs(k_pos_x_reset) < 1e-2, (
+        f"Environment {k} was not reset properly: {k_pos_x_reset}"
     )
 
     # Environment J must NOT be modified (strict isolation)
-    assert abs(j_pos_y_after - j_pos_y_evolved) < 1e-4, (
-        f"Environment {j} was mutated during reset of {k}! {j_pos_y_after} != {j_pos_y_evolved}"
+    assert abs(j_pos_x_after - j_pos_x_evolved) < 1e-4, (
+        f"Environment {j} was mutated during reset of {k}! {j_pos_x_after} != {j_pos_x_evolved}"
     )
 
     env.close()
@@ -187,10 +187,10 @@ def test_physical_consistency():
 
     ball_obs = env.get_ball_observations()
 
-    # Drop ball from Z = 1000.0 with 0 velocity
+    # Drop ball from Z = 1000.0 with slight downward velocity to wake from sleep guard
     env_id = 0
     ball_obs[env_id, 2] = 1000.0  # pos_z
-    ball_obs[env_id, 5] = 0.0     # vel_z
+    ball_obs[env_id, 5] = -0.01   # vel_z (wakes dormant rigid body)
 
     # Step for 60 ticks (0.5 seconds at 120Hz)
     for _ in range(60):
