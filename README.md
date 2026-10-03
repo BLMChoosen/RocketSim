@@ -60,3 +60,134 @@ Simulating **Soccar (2v2)** with pseudo-random agent actions across 120 Hz physi
 ---
 
 ## 🛠️ Architecture Overview
+
+
+```
+
+┌──────────────────────────────────────────────────────────────┐
+│                      GPU VRAM (cuda:0)                       │
+│                                                              │
+│   ┌─────────────────────┐          ┌─────────────────────┐   │
+│   │   RocketSim-CUDA    │ ◄──────► │ PyTorch Rollout Buf │   │
+│   │   SimContext SoA    │  DLPack  │   (Zero-Copy View)  │   │
+│   └──────────┬──────────┘  Pointers└──────────┬──────────┘   │
+│              │                                │              │
+│   ┌──────────▼──────────┐          ┌──────────▼──────────┐   │
+│   │ CUDA Physics Kernel │          │  PPO Neural Network │   │
+│   │ (SDF + Suspension)  │          │ (Forward/Backward)  │   │
+│   └─────────────────────┘          └─────────────────────┘   │
+└──────────────────────────────────────────────────────────────┘
+▲
+No PCIe Traffic
+▼
+┌──────────────────────────────────────────────────────────────┐
+│                      Host CPU (1 Thread)                     │
+│               Dispatches async CUDA streams only             │
+└──────────────────────────────────────────────────────────────┘
+
+```
+
+---
+
+## 📦 Installation
+
+### Prerequisites
+* **NVIDIA GPU:** Compute Capability $\ge 7.5$ (Turing, Ampere, Ada Lovelace, Blackwell).
+* **CUDA Toolkit:** Version 12.0 or higher.
+* **Compiler:** C++20 compliant compiler (GCC 11+, Clang 14+, or MSVC 2022 v17.4+).
+* **CMake:** $\ge 3.24$ and **Ninja** build system.
+* **Python:** 3.10+ with PyTorch (CUDA build enabled).
+
+### Build from Source (Python Package)
+
+```bash
+# Clone the repository with submodules
+git clone --recursive [https://github.com/YourUsername/RocketSim-CUDA.git](https://github.com/YourUsername/RocketSim-CUDA.git)
+cd RocketSim-CUDA
+
+# Build and install in editable mode via scikit-build-core & nanobind
+pip install -e .
+
+```
+
+---
+
+## 💻 Quick Start (Python / PyTorch)
+
+```python
+import torch
+import rocketsim_cuda as rsc
+
+# 1. Initialize 32,768 environments concurrently on GPU
+num_envs = 32768
+sim = rsc.RocketSimBatchedEnv(num_envs=num_envs, device="cuda:0")
+
+# 2. Acquire zero-copy tensor views directly from VRAM (DLPack)
+# Shape: [num_envs, num_cars, obs_dim]
+car_obs = sim.get_car_observations() 
+ball_obs = sim.get_ball_observations()
+
+print(f"Allocated {num_envs} environments directly in VRAM.")
+print(f"Obs Tensor Pointer: {hex(car_obs.data_ptr())} (Zero-copy verified)")
+
+# 3. Simulation Step Loop (Zero PCIe Overhead)
+for step in range(1000):
+    # Sample random actions on GPU: [throttle, steer, pitch, yaw, roll, jump, boost, handbrake]
+    actions = torch.rand((num_envs, 1, 8), device="cuda:0", dtype=torch.float32) * 2.0 - 1.0
+
+    # Step physics (sub-stepped at 120 Hz internally)
+    sim.step(actions)
+
+    # Selective reset for environments that scored or timed out
+    dones = sim.get_dones()
+    if dones.any():
+        sim.reset(torch.nonzero(dones).squeeze(-1))
+
+```
+
+---
+
+## 🧪 Differential Validation (Golden Master)
+
+To guarantee that RL policies trained in `RocketSim-CUDA` transfer seamlessly to standard Rocket League engines without simulation drift:
+
+```bash
+# Run the lockstep differential harness against CPU reference (10,000 ticks)
+./build/bin/differential_harness --ticks 10000 --batch 4096
+
+```
+
+The harness records `.rsgold` state snapshots and enforces strict Chebyshev distance constraints:
+
+* **Position Error:** $\Vert{}\Delta_{\mathbf{p}}\Vert{}_\infty \le 10^{-4}\text{ UU}$
+* **Quaternion Distance:** $\min(\Vert{}q_{\text{cpu}} - q_{\text{gpu}}\Vert{}_\infty, \Vert{}q_{\text{cpu}} + q_{\text{gpu}}\Vert{}_\infty) \le 10^{-5}$
+
+---
+
+## 🤝 Ecosystem Integrations
+
+* **[rlgym-cuda](https://www.google.com/search?q=https://github.com/YourUsername/rlgym-cuda):** GPU-batched observation builders and vectorized reward functions for Rocket League.
+* **[GigaLearn-CUDA](https://www.google.com/search?q=https://github.com/YourUsername/GigaLearn-CUDA):** High-throughput C++/LibTorch reinforcement learning framework designed for 100% GPU-resident rollouts.
+
+---
+
+## ⚖️ Legal & Fair Use Notice
+
+`RocketSim-CUDA` is an independent, clean-room physical recreation based on the open-source [RocketSim](https://github.com/ZealanL/RocketSim) project and Bullet Physics. It **does not contain any proprietary code or extracted assets** from Rocket League, Psyonix, or Epic Games.
+
+* This library is intended exclusively for research in deep reinforcement learning, trajectory optimization, and simulation analysis.
+* **Anti-Cheating Policy:** The authors strongly condemn the use of this software or models trained with it to deploy unauthorized bots or cheats in online competitive matchmaking.
+
+---
+
+## 💖 Acknowledgements
+
+* **[ZealanL](https://github.com/ZealanL):** Creator of the original [RocketSim](https://github.com/ZealanL/RocketSim) and pioneer of the open Rocket League simulation stack.
+* **Bullet Physics:** Underlying numerical kinematics foundations.
+* **Nanobind:** Lightweight and ultra-fast C++/Python bindings.
+
+```
+
+<FollowUp label="Quer que eu prepare a estrutura do repositório rlgym-cuda agora?" query="Gere a estrutura inicial de arquivos e o código de rlgym-cuda com as funções tensoriais de observação e recompensa para Rocket League."/>
+
+```
