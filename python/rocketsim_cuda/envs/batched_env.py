@@ -75,6 +75,7 @@ class RocketSimBatchedEnv:
         self._tick_count_view = self.sim.get_tick_count()
         self._pad_active_view = self.sim.get_pad_is_active()
         self._pad_cd_view = self.sim.get_pad_cooldown()
+        self._ball_hit_is_valid_view = self.sim.get_ball_hit_is_valid()
 
         # Check if torch with CUDA support is active
         self._torch_cuda_ready = (
@@ -153,6 +154,10 @@ class RocketSimBatchedEnv:
     def get_pad_cooldown(self) -> Any:
         """Get zero-copy boost pad cooldown timers in GPU VRAM. Shape: [num_envs, 34]"""
         return self._wrap(self._pad_cd_view)
+
+    def get_ball_hit_is_valid(self) -> Any:
+        """Get zero-copy ball hit flags in GPU VRAM. Shape: [num_envs, cars_per_env]"""
+        return self._wrap(self._ball_hit_is_valid_view)
 
     @property
     def observations(self) -> Dict[str, Any]:

@@ -284,11 +284,19 @@ __global__ void StepSimulationKernel(
         StepCarDevice(car_idx, car_state, controls, actions_tensor, dt);
     }
 
-    // Step Arena Termination & Boost Pads
+    // Increment Arena Tick Count
     if (arena_state.tick_count) {
         arena_state.tick_count[env_idx]++;
     }
 
+    // Resolve Car-Ball Collisions
+    for (uint32_t c = 0; c < cars_per_env; ++c) {
+        uint32_t car_idx = env_idx * cars_per_env + c;
+        if (car_state.is_demoed && car_state.is_demoed[car_idx]) continue;
+        resolve_car_ball_collision(env_idx, car_idx, ball_state, car_state, arena_state, dt);
+    }
+
+    // Step Arena Termination & Boost Pads
     if (arena_state.is_goal) {
         float bx = ball_state.pos_x[env_idx];
         float by = ball_state.pos_y[env_idx];

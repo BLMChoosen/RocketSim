@@ -434,6 +434,20 @@ NB_MODULE(rocketsim_cuda, m) {
             );
         }, "Get raw DLPack PyCapsule of Car State")
 
+        // Ball Hit State Views: shape [num_envs, cars_per_env]
+        .def("get_ball_hit_is_valid", [](nb::handle self) {
+            auto& ctx = nb::cast<SimContext&>(self);
+            GpuTensorView v;
+            v.data = ctx.GetCarState().ball_hit_is_valid;
+            v.shape = { static_cast<int64_t>(ctx.GetNumEnvs()), static_cast<int64_t>(ctx.GetCarsPerEnv()) };
+            v.strides = { static_cast<int64_t>(ctx.GetCarsPerEnv()), 1 };
+            v.dtype = "uint8";
+            v.device_type = 2;
+            v.device_id = 0;
+            v.owner = nb::borrow(self);
+            return v;
+        }, "Get DLPack CUDA tensor view of Ball Hit Is Valid flags [num_envs, cars_per_env]")
+
         // Boost Pad States: shape [num_envs, 34], strides [34, 1]
         .def("get_pad_is_active", [](nb::handle self) {
             auto& ctx = nb::cast<SimContext&>(self);
