@@ -55,16 +55,16 @@ struct Mat3 {
         float trace = forward.x + right.y + up.z;
         if (trace > 0.0f) {
             float s = 0.5f / sqrtf(trace + 1.0f);
-            return Quat(0.25f / s, (up.y - right.z) * s, (forward.z - up.x) * s, (right.x - forward.y) * s);
+            return Quat(0.25f / s, (right.z - up.y) * s, (up.x - forward.z) * s, (forward.y - right.x) * s);
         } else if (forward.x > right.y && forward.x > up.z) {
             float s = 2.0f * sqrtf(1.0f + forward.x - right.y - up.z);
-            return Quat((up.y - right.z) / s, 0.25f * s, (forward.y + right.x) / s, (forward.z + up.x) / s);
+            return Quat((right.z - up.y) / s, 0.25f * s, (forward.y + right.x) / s, (forward.z + up.x) / s);
         } else if (right.y > up.z) {
             float s = 2.0f * sqrtf(1.0f + right.y - forward.x - up.z);
-            return Quat((forward.z - up.x) / s, (forward.y + right.x) / s, 0.25f * s, (right.z + up.y) / s);
+            return Quat((up.x - forward.z) / s, (forward.y + right.x) / s, 0.25f * s, (right.z + up.y) / s);
         } else {
             float s = 2.0f * sqrtf(1.0f + up.z - forward.x - right.y);
-            return Quat((right.x - forward.y) / s, (forward.z + up.x) / s, (right.z + up.y) / s, 0.25f * s);
+            return Quat((forward.y - right.x) / s, (forward.z + up.x) / s, (right.z + up.y) / s, 0.25f * s);
         }
     }
 };
