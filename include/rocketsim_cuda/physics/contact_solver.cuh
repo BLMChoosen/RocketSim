@@ -5,6 +5,7 @@
 #include "rocketsim_cuda/math/vec3.cuh"
 #include "rocketsim_cuda/math/mat3.cuh"
 #include "rocketsim_cuda/physics/arena_sdf.cuh"
+#include "rocketsim_cuda/types/car_state.cuh"
 
 namespace rocketsim_cuda {
 
@@ -54,9 +55,11 @@ __device__ __forceinline__ void resolve_ball_arena_collision(
 }
 
 /**
- * @brief Resolves chassis-arena and chassis-ground penetration (R4).
+ * @brief Resolves chassis-arena and chassis-ground penetration and records world contact normals.
  */
 __device__ __forceinline__ void resolve_chassis_arena_collision(
+    uint32_t car_idx,
+    CarStateSoA& car_state,
     Vec3& pos,
     Vec3& vel,
     Vec3& omega,
@@ -65,6 +68,9 @@ __device__ __forceinline__ void resolve_chassis_arena_collision(
 {
     Vec3 hitbox_offset = get_octane_hitbox_offset();
     Vec3 hitbox_half = get_octane_hitbox_half();
+
+    bool has_contact = false;
+    Vec3 sum_normal(0.0f, 0.0f, 0.0f);
 
     // Check 8 corner vertices of oriented hitbox
     #pragma unroll
@@ -85,6 +91,9 @@ __device__ __forceinline__ void resolve_chassis_arena_collision(
         arena_sdf_and_normal(world_corner, dist, normal);
 
         if (dist < 0.0f) {
+            has_contact = true;
+            sum_normal = sum_normal + normal;
+
             float depth = -dist;
             pos = pos + normal * (depth * 0.125f); // Distributed position correction
 
@@ -99,6 +108,19 @@ __device__ __forceinline__ void resolve_chassis_arena_collision(
                 omega = omega + rel_pos.cross(impulse) * (1.0f / (CAR_MASS * 1000.0f));
             }
         }
+    }
+
+    if (has_contact) {
+        Vec3 avg_normal = (sum_normal.length_sq() > 1e-6f) ? sum_normal.normalized() : Vec3(0.0f, 0.0f, 1.0f);
+        car_state.world_contact_has_contact[car_idx] = 1;
+        car_state.world_contact_normal_x[car_idx]    = avg_normal.x;
+        car_state.world_contact_normal_y[car_idx]    = avg_normal.y;
+        car_state.world_contact_normal_z[car_idx]    = avg_normal.z;
+    } else {
+        car_state.world_contact_has_contact[car_idx] = 0;
+        car_state.world_contact_normal_x[car_idx]    = 0.0f;
+        car_state.world_contact_normal_y[car_idx]    = 0.0f;
+        car_state.world_contact_normal_z[car_idx]    = 0.0f;
     }
 }
 

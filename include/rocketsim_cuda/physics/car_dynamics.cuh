@@ -43,6 +43,17 @@ constexpr float CAR_AIR_CONTROL_DAMPING_Z   = 50.0f;
 constexpr float CAR_TORQUE_SCALE            = 2.0f * 3.14159265358979323846f / 65536.0f * 1000.0f;
 constexpr float THROTTLE_AIR_ACCEL          = 200.0f / 3.0f;
 
+constexpr float BRAKING_NO_THROTTLE_SPEED_THRESH = 0.01f;
+
+constexpr float CAR_AUTOROLL_FORCE          = 100.0f;
+constexpr float CAR_AUTOROLL_TORQUE         = 80.0f;
+
+constexpr float CAR_AUTOFLIP_IMPULSE        = 200.0f;
+constexpr float CAR_AUTOFLIP_TORQUE         = 50.0f;
+constexpr float CAR_AUTOFLIP_TIME           = 0.4f;
+constexpr float CAR_AUTOFLIP_NORMZ_THRESH   = 0.7071067811865475f; // M_SQRT1_2
+constexpr float CAR_AUTOFLIP_ROLL_THRESH    = 2.8f;
+
 // Piecewise curve functions
 __device__ __forceinline__ float get_drive_torque_factor(float abs_fwd_speed) {
     if (abs_fwd_speed <= 0.0f) return 1.0f;
@@ -172,7 +183,7 @@ __device__ __forceinline__ void update_car_wheel_dynamics(
         if (abs_throttle >= 0.001f) {
             if (abs_fwd_speed > 25.0f && ((real_throttle > 0.0f) != (fwd_speed > 0.0f))) {
                 real_brake = 1.0f;
-                if (abs_fwd_speed > 100.0f) {
+                if (abs_fwd_speed > BRAKING_NO_THROTTLE_SPEED_THRESH) {
                     engine_throttle = 0.0f;
                 }
             }
@@ -348,6 +359,9 @@ __device__ __forceinline__ void update_car_jump(
             bool is_flip_input = (input_mag >= 0.5f);
 
             bool can_use = (!has_double_jumped && !has_flipped);
+            if (car_state.is_auto_flipping[car_idx]) {
+                can_use = false;
+            }
             if (can_use) {
                 if (is_flip_input) {
                     flip_time = 0.0f;
@@ -432,7 +446,8 @@ __device__ __forceinline__ void update_car_air_control(
     const Mat3& basis,
     float dt,
     Vec3& omega,
-    Vec3& total_force)
+    Vec3& total_force,
+    bool allow_air_torque = true)
 {
     // Air throttle
     if (controls.throttle != 0.0f) {
@@ -483,6 +498,8 @@ __device__ __forceinline__ void update_car_air_control(
         do_air_control = true;
     }
 
+    do_air_control = do_air_control && allow_air_torque && (car_state.is_auto_flipping[car_idx] == 0);
+
     if (do_air_control) {
         float pitch_torque_scale = 1.0f;
         if (is_flipping) {
@@ -503,6 +520,119 @@ __device__ __forceinline__ void update_car_air_control(
         Vec3 delta_omega = (air_torque - air_damping) * (CAR_TORQUE_SCALE * dt);
         omega = omega + delta_omega;
     }
+}
+
+/**
+ * @brief Turtle recovery (auto-flip) matching Car::_UpdateAutoFlip.
+ */
+__device__ __forceinline__ void update_car_auto_flip(
+    uint32_t car_idx,
+    CarStateSoA& car_state,
+    const CarControls& ctrl,
+    const Mat3& basis,
+    float dt,
+    Vec3& vel,
+    Vec3& omega)
+{
+    bool jump_pressed = ctrl.jump && !(car_state.last_controls_jump[car_idx]);
+
+    if (jump_pressed &&
+        car_state.world_contact_has_contact[car_idx] &&
+        car_state.world_contact_normal_z[car_idx] > CAR_AUTOFLIP_NORMZ_THRESH)
+    {
+        // Extract roll angle matching Angle::FromRotMat
+        float pitch = asinf(fmaxf(-1.0f, fminf(1.0f, -basis.forward.z)));
+        float roll = atan2f(basis.right.z, basis.up.z);
+        constexpr float HALF_PI = 1.5707963267948966f;
+        constexpr float PI_VAL  = 3.14159265358979323846f;
+        if (fabsf(pitch) >= HALF_PI - 1e-4f) {
+            if (roll > 0.0f) roll -= PI_VAL;
+            else roll += PI_VAL;
+        }
+        float angle_roll = -roll;
+
+        float abs_roll = fabsf(angle_roll);
+        if (abs_roll > CAR_AUTOFLIP_ROLL_THRESH) {
+            car_state.auto_flip_timer[car_idx] = CAR_AUTOFLIP_TIME * (abs_roll / PI_VAL);
+            car_state.auto_flip_torque_scale[car_idx] = (angle_roll > 0.0f) ? 1.0f : -1.0f;
+            car_state.is_auto_flipping[car_idx] = 1;
+
+            // Apply upward jump impulse away from ground
+            vel = vel - basis.up * CAR_AUTOFLIP_IMPULSE;
+        }
+    }
+
+    if (car_state.is_auto_flipping[car_idx]) {
+        float timer = car_state.auto_flip_timer[car_idx];
+        if (timer <= 0.0f) {
+            car_state.is_auto_flipping[car_idx] = 0;
+            car_state.auto_flip_timer[car_idx] = 0.0f;
+        } else {
+            omega = omega + basis.forward * (CAR_AUTOFLIP_TORQUE * car_state.auto_flip_torque_scale[car_idx] * dt);
+            timer -= dt;
+            car_state.auto_flip_timer[car_idx] = fmaxf(0.0f, timer);
+            if (timer <= 0.0f) {
+                car_state.is_auto_flipping[car_idx] = 0;
+            }
+        }
+    }
+}
+
+/**
+ * @brief Surface alignment (auto-roll) matching Car::_UpdateAutoRoll.
+ */
+__device__ __forceinline__ void update_car_auto_roll(
+    uint32_t car_idx,
+    const CarStateSoA& car_state,
+    int num_wheels_in_contact,
+    const uint8_t* wheels_contact,
+    const Vec3* contact_normals,
+    const Mat3& basis,
+    float dt,
+    Vec3& total_force,
+    Vec3& omega)
+{
+    Vec3 ground_up_dir;
+    if (num_wheels_in_contact > 0) {
+        Vec3 sum_contact_dir(0.0f, 0.0f, 0.0f);
+        #pragma unroll
+        for (int w = 0; w < 4; ++w) {
+            if (wheels_contact[w]) {
+                sum_contact_dir = sum_contact_dir + contact_normals[w];
+            }
+        }
+        ground_up_dir = (sum_contact_dir.length_sq() > 1e-6f) ? sum_contact_dir.normalized() : basis.up;
+    } else {
+        ground_up_dir = Vec3(
+            car_state.world_contact_normal_x[car_idx],
+            car_state.world_contact_normal_y[car_idx],
+            car_state.world_contact_normal_z[car_idx]
+        );
+        if (ground_up_dir.length_sq() > 1e-6f) {
+            ground_up_dir = ground_up_dir.normalized();
+        } else {
+            ground_up_dir = basis.up;
+        }
+    }
+
+    Vec3 ground_down_dir = ground_up_dir * -1.0f;
+    Vec3 forward_dir = basis.forward;
+    Vec3 right_dir   = basis.right;
+
+    Vec3 cross_right_dir   = ground_up_dir.cross(forward_dir);
+    Vec3 cross_forward_dir = ground_down_dir.cross(cross_right_dir);
+
+    float right_torque_factor   = 1.0f - fminf(fmaxf(right_dir.dot(cross_right_dir), 0.0f), 1.0f);
+    float forward_torque_factor = 1.0f - fminf(fmaxf(forward_dir.dot(cross_forward_dir), 0.0f), 1.0f);
+
+    Vec3 torque_dir_right   = forward_dir * (right_dir.dot(ground_up_dir) >= 0.0f ? -1.0f : 1.0f);
+    Vec3 torque_dir_forward = right_dir * (forward_dir.dot(ground_up_dir) >= 0.0f ? 1.0f : -1.0f);
+
+    Vec3 torque_right   = torque_dir_right * right_torque_factor;
+    Vec3 torque_forward = torque_dir_forward * forward_torque_factor;
+
+    total_force = total_force + ground_down_dir * (CAR_AUTOROLL_FORCE * CAR_MASS);
+    omega = omega + (torque_forward + torque_right) * (CAR_AUTOROLL_TORQUE * dt);
 }
 
 /**
