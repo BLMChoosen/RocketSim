@@ -267,23 +267,32 @@ int main(int argc, char** argv) {
             gpu_sim.CopyCarStateToHost(gpu_cars.data(), 0, args.envs);
 
             for (uint32_t e = 0; e < args.envs; e++) {
-                if (t <= 3) {
+                if (e <= 1 && t <= 8) {
                     std::cout << "[DEBUG Tick " << t << " Env " << e << "]\n"
                               << "  CPU Pos: (" << std::setprecision(8) << cpu_cars[e].pos.x << ", " << cpu_cars[e].pos.y << ", " << cpu_cars[e].pos.z << ")\n"
                               << "  GPU Pos: (" << std::setprecision(8) << gpu_cars[e].pos.x << ", " << gpu_cars[e].pos.y << ", " << gpu_cars[e].pos.z << ")\n"
-                              << "  Delta Pos: (" << std::fabs(cpu_cars[e].pos.x - gpu_cars[e].pos.x) << ", "
-                                                  << std::fabs(cpu_cars[e].pos.y - gpu_cars[e].pos.y) << ", "
-                                                  << std::fabs(cpu_cars[e].pos.z - gpu_cars[e].pos.z) << ")\n"
                               << "  CPU Vel: (" << cpu_cars[e].vel.x << ", " << cpu_cars[e].vel.y << ", " << cpu_cars[e].vel.z << ")\n"
                               << "  GPU Vel: (" << gpu_cars[e].vel.x << ", " << gpu_cars[e].vel.y << ", " << gpu_cars[e].vel.z << ")\n"
+                              << "  CPU Ang: (" << cpu_cars[e].ang_vel.x << ", " << cpu_cars[e].ang_vel.y << ", " << cpu_cars[e].ang_vel.z << ")\n"
+                              << "  GPU Ang: (" << gpu_cars[e].ang_vel.x << ", " << gpu_cars[e].ang_vel.y << ", " << gpu_cars[e].ang_vel.z << ")\n"
+                              << "  CPU Quat: (" << cpu_cars[e].quat.w << ", " << cpu_cars[e].quat.x << ", " << cpu_cars[e].quat.y << ", " << cpu_cars[e].quat.z << ")\n"
+                              << "  GPU Quat: (" << gpu_cars[e].quat.w << ", " << gpu_cars[e].quat.x << ", " << gpu_cars[e].quat.y << ", " << gpu_cars[e].quat.z << ")\n"
                               << "  CPU OnGround: " << (int)cpu_cars[e].is_on_ground << " GPU OnGround: " << (int)gpu_cars[e].is_on_ground << "\n"
                               << "  CPU Wheels: (" << (int)cpu_cars[e].wheels_with_contact[0] << ", " << (int)cpu_cars[e].wheels_with_contact[1] << ", " << (int)cpu_cars[e].wheels_with_contact[2] << ", " << (int)cpu_cars[e].wheels_with_contact[3] << ")\n"
                               << "  GPU Wheels: (" << (int)gpu_cars[e].wheels_with_contact[0] << ", " << (int)gpu_cars[e].wheels_with_contact[1] << ", " << (int)gpu_cars[e].wheels_with_contact[2] << ", " << (int)gpu_cars[e].wheels_with_contact[3] << ")\n"
                               << "  CPU Susp: (" << cpu_cars[e].suspension_lengths[0] << ", " << cpu_cars[e].suspension_lengths[1] << ", " << cpu_cars[e].suspension_lengths[2] << ", " << cpu_cars[e].suspension_lengths[3] << ")\n"
                               << "  GPU Susp: (" << gpu_cars[e].suspension_lengths[0] << ", " << gpu_cars[e].suspension_lengths[1] << ", " << gpu_cars[e].suspension_lengths[2] << ", " << gpu_cars[e].suspension_lengths[3] << ")\n"
+                              << "  CPU Jump: is_j=" << (int)cpu_cars[e].is_jumping << " j_time=" << cpu_cars[e].jump_time
+                              << " air_time_since_j=" << cpu_cars[e].air_time_since_jump << " is_flip=" << (int)cpu_cars[e].is_flipping
+                              << " has_flip=" << (int)cpu_cars[e].has_flipped << " flip_time=" << cpu_cars[e].flip_time << "\n"
+                              << "  GPU Jump: is_j=" << (int)gpu_cars[e].is_jumping << " j_time=" << gpu_cars[e].jump_time
+                              << " air_time_since_j=" << gpu_cars[e].air_time_since_jump << " is_flip=" << (int)gpu_cars[e].is_flipping
+                              << " has_flip=" << (int)gpu_cars[e].has_flipped << " flip_time=" << gpu_cars[e].flip_time << "\n"
                               << "  Controls: thr=" << step_controls[e].throttle << " steer=" << step_controls[e].steer
+                              << " pitch=" << step_controls[e].pitch << " yaw=" << step_controls[e].yaw << " roll=" << step_controls[e].roll
                               << " jump=" << (int)step_controls[e].jump << " boost=" << (int)step_controls[e].boost << "\n";
                 }
+
                 if (!comparator.CompareBall(t, e, cpu_balls[e], gpu_balls[e], fail)) {
                     std::cerr << "[-] Lockstep Differential Failure on Ball at tick " << t << ", env " << e << ":\n"
                               << "    Attribute: " << fail.attribute << "\n"

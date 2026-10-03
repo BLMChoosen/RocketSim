@@ -170,6 +170,17 @@ void CPURefSim::GetCarState(int carIdx, CarStatePOD& out) const {
         float restLen = car->_bulletVehicle.m_wheelInfo[w].getSuspensionRestLength();
         float curLen = car->_bulletVehicle.m_wheelInfo[w].m_raycastInfo.m_suspensionLength;
         out.suspension_lengths[w] = (restLen - curLen) * BT_TO_UU;
+        if (car->_bulletVehicle.m_wheelInfo[w].m_raycastInfo.m_isInContact) {
+            std::cout << "  [CPU WHEEL " << w << " CONTACT] suspForce=" << car->_bulletVehicle.m_wheelInfo[w].m_wheelsSuspensionForce
+                      << " suspRelVel=" << car->_bulletVehicle.m_wheelInfo[w].m_suspensionRelativeVelocity
+                      << " impulse=(" << car->_bulletVehicle.m_wheelInfo[w].m_impulse.x() << ", "
+                      << car->_bulletVehicle.m_wheelInfo[w].m_impulse.y() << ", "
+                      << car->_bulletVehicle.m_wheelInfo[w].m_impulse.z() << ")"
+                      << " latFric=" << car->_bulletVehicle.m_wheelInfo[w].m_latFriction
+                      << " longFric=" << car->_bulletVehicle.m_wheelInfo[w].m_longFriction
+                      << " extraPushback=" << car->_bulletVehicle.m_wheelInfo[w].m_extraPushback
+                      << std::endl;
+        }
     }
 
     out.last_controls.throttle  = cs.lastControls.throttle;
@@ -180,6 +191,12 @@ void CPURefSim::GetCarState(int carIdx, CarStatePOD& out) const {
     out.last_controls.boost     = cs.lastControls.boost ? 1 : 0;
     out.last_controls.jump      = cs.lastControls.jump ? 1 : 0;
     out.last_controls.handbrake = cs.lastControls.handbrake ? 1 : 0;
+
+    out.is_jumping              = cs.isJumping ? 1 : 0;
+    out.jump_time               = cs.jumpTime;
+    out.air_time_since_jump     = cs.airTimeSinceJump;
+    out.is_flipping             = cs.isFlipping ? 1 : 0;
+    out.flip_time               = cs.flipTime;
 }
 
 void CPURefSim::SetBallState(const BallStatePOD& in) {
