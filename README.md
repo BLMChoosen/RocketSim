@@ -22,7 +22,7 @@
 
 ---
 
-## ⚡ Why RocketSim-CUDA?
+## Why RocketSim-CUDA?
 
 While the original [RocketSim](https://github.com/ZealanL/RocketSim) is exceptionally optimized for multi-core CPUs, scaling reinforcement learning workloads across dozens of CPU threads encounters severe bottlenecks:
 1. **CPU Saturation:** Simulating 40+ CPU workers pins host processors at 100%, starving data loaders and neural network inference.
@@ -33,7 +33,7 @@ While the original [RocketSim](https://github.com/ZealanL/RocketSim) is exceptio
 
 ---
 
-## 🚀 Key Features
+## Key Features
 
 * **Massive Concurrency:** Simulate **16,384 to 65,536+ arenas in parallel** on a single consumer or data-center GPU.
 * **Zero-Copy PyTorch Loop (DLPack):** Observation and action buffers live directly in VRAM. Step the entire batch of environments without a single `cudaMemcpy` round-trip across PCIe.
@@ -44,7 +44,7 @@ While the original [RocketSim](https://github.com/ZealanL/RocketSim) is exceptio
 
 ---
 
-## 📊 Performance Benchmark
+## Performance Benchmark
 
 Simulating **Soccar (2v2)** with pseudo-random agent actions across 120 Hz physical ticks:
 
@@ -59,7 +59,7 @@ Simulating **Soccar (2v2)** with pseudo-random agent actions across 120 Hz physi
 
 ---
 
-## 🛠️ Architecture Overview
+## Architecture Overview
 
 
 ```
@@ -89,7 +89,7 @@ No PCIe Traffic
 
 ---
 
-## 📦 Installation
+## Installation
 
 ### Prerequisites
 * **NVIDIA GPU:** Compute Capability $\ge 7.5$ (Turing, Ampere, Ada Lovelace, Blackwell).
@@ -112,7 +112,7 @@ pip install -e .
 
 ---
 
-## 💻 Quick Start (Python / PyTorch)
+## Quick Start (Python / PyTorch)
 
 ```python
 import torch
@@ -147,7 +147,7 @@ for step in range(1000):
 
 ---
 
-## 🧪 Differential Validation (Golden Master)
+## Differential Validation (Golden Master)
 
 To guarantee that RL policies trained in `RocketSim-CUDA` transfer seamlessly to standard Rocket League engines without simulation drift:
 
@@ -164,14 +164,14 @@ The harness records `.rsgold` state snapshots and enforces strict Chebyshev dist
 
 ---
 
-## 🤝 Ecosystem Integrations
+## Ecosystem Integrations
 
-* **[rlgym-cuda](https://www.google.com/search?q=https://github.com/YourUsername/rlgym-cuda):** GPU-batched observation builders and vectorized reward functions for Rocket League.
-* **[GigaLearn-CUDA](https://www.google.com/search?q=https://github.com/YourUsername/GigaLearn-CUDA):** High-throughput C++/LibTorch reinforcement learning framework designed for 100% GPU-resident rollouts.
+* **[rlgym-cuda] (COMING SOON):** GPU-batched observation builders and vectorized reward functions for Rocket League.
+* **[GigaLearn-CUDA](COMING SOON):** High-throughput C++/LibTorch reinforcement learning framework designed for 100% GPU-resident rollouts.
 
 ---
 
-## ⚖️ Legal & Fair Use Notice
+## Legal & Fair Use Notice
 
 `RocketSim-CUDA` is an independent, clean-room physical recreation based on the open-source [RocketSim](https://github.com/ZealanL/RocketSim) project and Bullet Physics. It **does not contain any proprietary code or extracted assets** from Rocket League, Psyonix, or Epic Games.
 
@@ -180,7 +180,7 @@ The harness records `.rsgold` state snapshots and enforces strict Chebyshev dist
 
 ---
 
-## 💖 Acknowledgements
+## Acknowledgements
 
 * **[ZealanL](https://github.com/ZealanL):** Creator of the original [RocketSim](https://github.com/ZealanL/RocketSim) and pioneer of the open Rocket League simulation stack.
 * **Bullet Physics:** Underlying numerical kinematics foundations.
