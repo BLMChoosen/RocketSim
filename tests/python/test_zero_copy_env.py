@@ -123,7 +123,8 @@ def test_vram_leak_check_100k_steps():
 def test_selective_reset_isolation():
     """
     Test 3 (Selective Reset):
-    Verify resetting only environment K modifies K without affecting other environments.
+    Verify resetting only environment K modifies K without affecting other environments,
+    validating Euclidean displacement from authentic Soccar kickoff spawn poses.
     """
     num_envs = 16
     cars_per_env = 1
@@ -131,6 +132,10 @@ def test_selective_reset_isolation():
 
     # Reset all to default kickoff positions
     env.reset()
+    car_obs_initial = env.get_car_observations()
+    k, j = 0, 1
+    k_pos_init = (float(car_obs_initial[k, 0, 0]), float(car_obs_initial[k, 0, 1]))
+    j_pos_init = (float(car_obs_initial[j, 0, 0]), float(car_obs_initial[j, 0, 1]))
 
     # Apply throttle and step 60 ticks so all cars advance
     total_cars = num_envs * cars_per_env
@@ -141,36 +146,38 @@ def test_selective_reset_isolation():
     for _ in range(60):
         env.step(actions)
 
-    car_obs = env.get_car_observations()
+    car_obs_evolved = env.get_car_observations()
+    k_disp = ((float(car_obs_evolved[k, 0, 0]) - k_pos_init[0]) ** 2 +
+              (float(car_obs_evolved[k, 0, 1]) - k_pos_init[1]) ** 2) ** 0.5
+    j_disp = ((float(car_obs_evolved[j, 0, 0]) - j_pos_init[0]) ** 2 +
+              (float(car_obs_evolved[j, 0, 1]) - j_pos_init[1]) ** 2) ** 0.5
 
-    # Record state of environment 0 (K) and environment 1 (J != K)
-    k = 0
-    j = 1
-    k_pos_x_evolved = car_obs[k, 0, 0]
-    j_pos_x_evolved = car_obs[j, 0, 0]
+    assert k_disp > 1.0, f"Car {k} did not advance: disp={k_disp}"
+    assert j_disp > 1.0, f"Car {j} did not advance: disp={j_disp}"
 
-    # Verify both moved away from initial 0 along forward axis (+X)
-    assert abs(k_pos_x_evolved) > 1.0, f"Car {k} did not move: {k_pos_x_evolved}"
-    assert abs(j_pos_x_evolved) > 1.0, f"Car {j} did not move: {j_pos_x_evolved}"
+    # Snapshot evolved state of environment j
+    j_evolved_full = [float(car_obs_evolved[j, 0, dim]) for dim in range(14)]
 
     # Now selectively reset ONLY environment K (env 0)
-    # Using a GPU mask or index list
     env.reset(env_ids=[k])
 
     # Check states after selective reset
     car_obs_after = env.get_car_observations()
-    k_pos_x_reset = car_obs_after[k, 0, 0]
-    j_pos_x_after = car_obs_after[j, 0, 0]
+    k_pos_reset = (float(car_obs_after[k, 0, 0]), float(car_obs_after[k, 0, 1]))
 
-    # Environment K must be reset to default position (0.0 for car 0)
-    assert abs(k_pos_x_reset) < 1e-2, (
-        f"Environment {k} was not reset properly: {k_pos_x_reset}"
+    # Environment K must return to its authentic initial kickoff position
+    k_reset_error = ((k_pos_reset[0] - k_pos_init[0]) ** 2 +
+                     (k_pos_reset[1] - k_pos_init[1]) ** 2) ** 0.5
+    assert k_reset_error < 1e-2, (
+        f"Environment {k} failed to restore kickoff pose: err={k_reset_error}"
     )
 
-    # Environment J must NOT be modified (strict isolation)
-    assert abs(j_pos_x_after - j_pos_x_evolved) < 1e-4, (
-        f"Environment {j} was mutated during reset of {k}! {j_pos_x_after} != {j_pos_x_evolved}"
-    )
+    # Environment J must exhibit 100% strict isolation (zero mutation across all 14 dimensions)
+    for dim in range(14):
+        delta = abs(float(car_obs_after[j, 0, dim]) - j_evolved_full[dim])
+        assert delta < 1e-4, (
+            f"Environment {j} was mutated during reset of {k}! dim {dim}: delta={delta}"
+        )
 
     env.close()
 
@@ -187,10 +194,10 @@ def test_physical_consistency():
 
     ball_obs = env.get_ball_observations()
 
-    # Drop ball from Z = 1000.0 with slight downward velocity to wake from sleep guard
+    # Drop ball from Z = 1000.0 with 0 velocity (validates gravity wake-up)
     env_id = 0
     ball_obs[env_id, 2] = 1000.0  # pos_z
-    ball_obs[env_id, 5] = -0.01   # vel_z (wakes dormant rigid body)
+    ball_obs[env_id, 5] = 0.0     # vel_z = 0 (clean test without sleep guard workarounds)
 
     # Step for 60 ticks (0.5 seconds at 120Hz)
     for _ in range(60):
@@ -221,6 +228,63 @@ def test_physical_consistency():
     assert is_goal[goal_env] == 1, "Goal was not triggered in Orange goal cavity"
     assert scoring_team[goal_env] == 0, f"Scoring team should be Blue (0), got {scoring_team[goal_env]}"
     assert terminated[goal_env] == 1, "Episode was not terminated on goal"
+
+    env.close()
+
+
+def test_boost_pad_proximity_pickup():
+    """
+    Test 5 (Boost Pad Proximity Pickup & Cooldown):
+    Verify car picks up boost from 34 Soccar boost pads when within radius,
+    boost amount is granted (clamped to BOOST_MAX), and pad is deactivated with cooldown.
+    """
+    num_envs = 4
+    cars_per_env = 1
+    env = RocketSimBatchedEnv(num_envs=num_envs, cars_per_env=cars_per_env)
+    env.reset()
+
+    car_obs = env.get_car_observations()
+    pad_active = env.sim.get_pad_is_active()
+
+    # Test Big Pad pickup (Pad 0: Midfield Left at X=-3584, Y=0, Z=73)
+    # Teleport Car 0 directly onto Pad 0 with partial boost
+    car_obs[0, 0, 0] = -3584.0  # X
+    car_obs[0, 0, 1] = 0.0      # Y
+    car_obs[0, 0, 2] = 17.0     # Z (on ground)
+    car_obs[0, 0, 13] = 33.333  # Boost amount
+
+    # Verify Pad 0 initially active
+    assert pad_active[0, 0] == 1, "Pad 0 should be active initially"
+
+    # Step simulation 1 tick
+    env.sim.step()
+
+    # Car 0 should now have full boost (100.0)
+    new_car_obs = env.get_car_observations()
+    boost_val = float(new_car_obs[0, 0, 13])
+    assert abs(boost_val - 100.0) < 1e-2, f"Expected 100.0 boost, got {boost_val}"
+
+    # Pad 0 should now be inactive and have cooldown ~10.0s
+    new_pad_active = env.sim.get_pad_is_active()
+    new_pad_cd = env.sim.get_pad_cooldown()
+    assert new_pad_active[0, 0] == 0, "Pad 0 should be deactivated after pickup"
+    assert new_pad_cd[0, 0] > 9.9, f"Pad 0 cooldown should be ~10.0s, got {new_pad_cd[0, 0]}"
+
+    # Test Small Pad pickup (Pad 19: Midfield Inner Left at X=-1024, Y=0, Z=70)
+    # Teleport Car 1 onto Pad 19 with 20.0 boost
+    car_obs[1, 0, 0] = -1024.0
+    car_obs[1, 0, 1] = 0.0
+    car_obs[1, 0, 2] = 17.0
+    car_obs[1, 0, 13] = 20.0
+
+    env.sim.step()
+
+    new_car_obs = env.get_car_observations()
+    boost_val_1 = float(new_car_obs[1, 0, 13])
+    # Small pad grants +12.0 boost -> 20.0 + 12.0 = 32.0
+    assert abs(boost_val_1 - 32.0) < 1e-2, f"Expected 32.0 boost, got {boost_val_1}"
+    assert env.sim.get_pad_is_active()[1, 19] == 0, "Pad 19 should be deactivated"
+    assert env.sim.get_pad_cooldown()[1, 19] > 3.9, f"Pad 19 cooldown should be ~4.0s, got {env.sim.get_pad_cooldown()[1, 19]}"
 
     env.close()
 

@@ -5,6 +5,63 @@
 
 namespace rocketsim_cuda {
 
+// Boost pad definition (matching RLConst.h)
+struct BoostPadDef {
+    float x;
+    float y;
+    float z;
+    float radius;
+    float radius_sq;
+    float boost_amount;
+    float cooldown;
+    bool is_big;
+};
+
+// 34 Standard Soccar Boost Pads Table (6 big pads, 28 small pads matching RLConst.h)
+#if defined(__CUDA_ARCH__)
+__device__ static constexpr BoostPadDef SOCCAR_BOOST_PADS[MAX_BOOST_PADS] = {
+#else
+static constexpr BoostPadDef SOCCAR_BOOST_PADS[MAX_BOOST_PADS] = {
+#endif
+    // 6 Big Pads (indices 0..5): 100 boost, 10s cooldown, 208 radius (RLConst.h:305-312)
+    { -3584.0f,     0.0f, 73.0f, 208.0f, 43264.0f, 100.0f, 10.0f, true },
+    {  3584.0f,     0.0f, 73.0f, 208.0f, 43264.0f, 100.0f, 10.0f, true },
+    { -3072.0f,  4096.0f, 73.0f, 208.0f, 43264.0f, 100.0f, 10.0f, true },
+    {  3072.0f,  4096.0f, 73.0f, 208.0f, 43264.0f, 100.0f, 10.0f, true },
+    { -3072.0f, -4096.0f, 73.0f, 208.0f, 43264.0f, 100.0f, 10.0f, true },
+    {  3072.0f, -4096.0f, 73.0f, 208.0f, 43264.0f, 100.0f, 10.0f, true },
+
+    // 28 Small Pads (indices 6..33): 12 boost, 4s cooldown, 144 radius (RLConst.h:274-303)
+    {     0.0f, -4240.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    { -1792.0f, -4184.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    {  1792.0f, -4184.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    {  -940.0f, -3308.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    {   940.0f, -3308.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    {     0.0f, -2816.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    { -3584.0f, -2484.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    {  3584.0f, -2484.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    { -1788.0f, -2300.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    {  1788.0f, -2300.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    { -2048.0f, -1036.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    {     0.0f, -1024.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    {  2048.0f, -1036.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    { -1024.0f,     0.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    {  1024.0f,     0.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    { -2048.0f,  1036.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    {     0.0f,  1024.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    {  2048.0f,  1036.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    { -1788.0f,  2300.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    {  1788.0f,  2300.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    { -3584.0f,  2484.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    {  3584.0f,  2484.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    {     0.0f,  2816.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    {  -940.0f,  3308.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    {   940.0f,  3308.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    { -1792.0f,  4184.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    {  1792.0f,  4184.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false },
+    {     0.0f,  4240.0f, 70.0f, 144.0f, 20736.0f,  12.0f,  4.0f, false }
+};
+
 // Host POD structure for Arena episode state
 struct ArenaStatePOD {
     uint8_t is_goal = 0;

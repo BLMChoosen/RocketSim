@@ -19,7 +19,7 @@ __device__ void StepBallDevice(
     Quat quat(ball_state.q_w[env_idx], ball_state.q_x[env_idx], ball_state.q_y[env_idx], ball_state.q_z[env_idx]);
 
     // Check if sleeping (zero velocity on ground)
-    if (vel.length_sq() == 0.0f && ang_vel.length_sq() == 0.0f && pos.z <= BALL_REST_Z + 1.0f) {
+    if (vel.length_sq() == 0.0f && ang_vel.length_sq() == 0.0f && pos.z <= BALL_REST_Z + 0.05f) {
         return;
     }
 
@@ -92,8 +92,8 @@ __device__ void StepCarDevice(
     }
 
     // 2. Load car state
-    Vec3 pos_bt(car_state.pos_bt_x[car_idx], car_state.pos_bt_y[car_idx], car_state.pos_bt_z[car_idx]);
-    Vec3 pos = pos_bt * 50.0f;
+    Vec3 pos(car_state.pos_x[car_idx], car_state.pos_y[car_idx], car_state.pos_z[car_idx]);
+    Vec3 pos_bt = pos * 0.02f;
     Vec3 vel(car_state.vel_x[car_idx], car_state.vel_y[car_idx], car_state.vel_z[car_idx]);
     Vec3 omega(car_state.ang_vel_x[car_idx], car_state.ang_vel_y[car_idx], car_state.ang_vel_z[car_idx]);
     Quat quat(car_state.q_w[car_idx], car_state.q_x[car_idx], car_state.q_y[car_idx], car_state.q_z[car_idx]);
@@ -328,9 +328,45 @@ __global__ void StepSimulationKernel(
                     cd -= dt;
                     if (cd <= 0.0f) {
                         cd = 0.0f;
-                        arena_state.pad_is_active[pad_idx] = 1;
+                        if (arena_state.pad_is_active) {
+                            arena_state.pad_is_active[pad_idx] = 1;
+                        }
                     }
                     arena_state.pad_cooldown[pad_idx] = cd;
+                }
+            }
+        }
+
+        // Proximity Boost Pickup for cars in this environment
+        if (arena_state.pad_is_active) {
+            for (uint32_t c = 0; c < cars_per_env; ++c) {
+                uint32_t car_idx = env_idx * cars_per_env + c;
+                if (car_state.is_demoed && car_state.is_demoed[car_idx]) continue;
+                float current_boost = car_state.boost[car_idx];
+                if (current_boost >= BOOST_MAX) continue;
+
+                Vec3 car_pos(car_state.pos_x[car_idx], car_state.pos_y[car_idx], car_state.pos_z[car_idx]);
+                for (uint32_t p = 0; p < MAX_BOOST_PADS; ++p) {
+                    uint32_t pad_idx = env_idx * MAX_BOOST_PADS + p;
+                    if (arena_state.pad_is_active[pad_idx]) {
+                        const BoostPadDef& pad = SOCCAR_BOOST_PADS[p];
+                        float dz = fabsf(car_pos.z - pad.z);
+                        if (dz < 95.0f) {
+                            float dx = car_pos.x - pad.x;
+                            float dy = car_pos.y - pad.y;
+                            if ((dx * dx + dy * dy) < pad.radius_sq) {
+                                current_boost = fminf(current_boost + pad.boost_amount, BOOST_MAX);
+                                car_state.boost[car_idx] = current_boost;
+                                arena_state.pad_is_active[pad_idx] = 0;
+                                if (arena_state.pad_cooldown) {
+                                    arena_state.pad_cooldown[pad_idx] = pad.cooldown;
+                                }
+                                if (current_boost >= BOOST_MAX) {
+                                    break;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

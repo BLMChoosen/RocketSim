@@ -29,19 +29,74 @@ __device__ inline void init_single_ball(BallStateSoA& ball_state, uint32_t idx) 
     ball_state.ang_vel_z[idx] = 0.0f;
 }
 
-__device__ inline void init_single_car(CarStateSoA& car_state, uint32_t idx) {
-    car_state.pos_x[idx] = 0.0f;
-    car_state.pos_y[idx] = 0.0f;
-    car_state.pos_z[idx] = 17.0f;
+struct KickoffSpawn {
+    float x, y, z;
+    float qw, qx, qy, qz;
+};
+
+// 5 Standard Soccar kickoff spawns for Blue team (facing +Y towards Orange goal, RLConst.h:355-362)
+__device__ constexpr KickoffSpawn BLUE_KICKOFF_SPAWNS[5] = {
+    // 0: Diagonal Left (yaw = pi/4, 45 deg)
+    { -2048.0f, -2560.0f, 17.0f, 0.9238795f, 0.0f, 0.0f,  0.3826834f },
+    // 1: Diagonal Right (yaw = 3*pi/4, 135 deg)
+    {  2048.0f, -2560.0f, 17.0f, 0.3826834f, 0.0f, 0.0f,  0.9238795f },
+    // 2: Off-Center Left (yaw = pi/2, 90 deg)
+    {  -256.0f, -3840.0f, 17.0f, 0.7071068f, 0.0f, 0.0f,  0.7071068f },
+    // 3: Off-Center Right (yaw = pi/2, 90 deg)
+    {   256.0f, -3840.0f, 17.0f, 0.7071068f, 0.0f, 0.0f,  0.7071068f },
+    // 4: Goalie / Center (yaw = pi/2, 90 deg)
+    {     0.0f, -4608.0f, 17.0f, 0.7071068f, 0.0f, 0.0f,  0.7071068f }
+};
+
+// 5 Standard Soccar kickoff spawns for Orange team (X -> -X, Y -> -Y, yaw -> yaw + PI)
+__device__ constexpr KickoffSpawn ORANGE_KICKOFF_SPAWNS[5] = {
+    // 0: Diagonal Right (mirrored from Blue 0: X=2048, Y=2560, yaw = -3*pi/4)
+    {  2048.0f,  2560.0f, 17.0f, 0.3826834f, 0.0f, 0.0f, -0.9238795f },
+    // 1: Diagonal Left (mirrored from Blue 1: X=-2048, Y=2560, yaw = -pi/4)
+    { -2048.0f,  2560.0f, 17.0f, 0.9238795f, 0.0f, 0.0f, -0.3826834f },
+    // 2: Off-Center Right (mirrored from Blue 2: X=256, Y=3840, yaw = -pi/2)
+    {   256.0f,  3840.0f, 17.0f, 0.7071068f, 0.0f, 0.0f, -0.7071068f },
+    // 3: Off-Center Left (mirrored from Blue 3: X=-256, Y=3840, yaw = -pi/2)
+    {  -256.0f,  3840.0f, 17.0f, 0.7071068f, 0.0f, 0.0f, -0.7071068f },
+    // 4: Goalie / Center (mirrored from Blue 4: X=0, Y=4608, yaw = -pi/2)
+    {     0.0f,  4608.0f, 17.0f, 0.7071068f, 0.0f, 0.0f, -0.7071068f }
+};
+
+__device__ inline uint32_t get_kickoff_slot(uint32_t env_idx, uint32_t seed) {
+    uint32_t x = env_idx ^ (seed * 0x9E3779B9u);
+    x = ((x >> 16) ^ x) * 0x45d9f3bu;
+    x = ((x >> 16) ^ x) * 0x45d9f3bu;
+    x = (x >> 16) ^ x;
+    return x % 5;
+}
+
+__device__ inline void init_single_car(
+    CarStateSoA& car_state,
+    uint32_t idx,
+    uint32_t env_idx,
+    uint32_t car_in_env_idx,
+    uint32_t cars_per_env,
+    uint32_t seed = 0)
+{
+    uint8_t team = (cars_per_env > 1) ? (car_in_env_idx % 2) : 0;
+    uint32_t team_car_idx = (cars_per_env > 1) ? (car_in_env_idx / 2) : car_in_env_idx;
+    uint32_t base_slot = get_kickoff_slot(env_idx, seed);
+    uint32_t spawn_slot = (base_slot + team_car_idx) % 5;
+
+    const KickoffSpawn& spawn = (team == 0) ? BLUE_KICKOFF_SPAWNS[spawn_slot] : ORANGE_KICKOFF_SPAWNS[spawn_slot];
+
+    car_state.pos_x[idx] = spawn.x;
+    car_state.pos_y[idx] = spawn.y;
+    car_state.pos_z[idx] = spawn.z;
 
     car_state.vel_x[idx] = 0.0f;
     car_state.vel_y[idx] = 0.0f;
     car_state.vel_z[idx] = 0.0f;
 
-    car_state.q_w[idx] = 1.0f;
-    car_state.q_x[idx] = 0.0f;
-    car_state.q_y[idx] = 0.0f;
-    car_state.q_z[idx] = 0.0f;
+    car_state.q_w[idx] = spawn.qw;
+    car_state.q_x[idx] = spawn.qx;
+    car_state.q_y[idx] = spawn.qy;
+    car_state.q_z[idx] = spawn.qz;
 
     car_state.ang_vel_x[idx] = 0.0f;
     car_state.ang_vel_y[idx] = 0.0f;
@@ -158,10 +213,13 @@ __global__ void k_init_ball_state(BallStateSoA ball_state, uint32_t count) {
     init_single_ball(ball_state, idx);
 }
 
-__global__ void k_init_car_state(CarStateSoA car_state, uint32_t count) {
+__global__ void k_init_car_state(CarStateSoA car_state, uint32_t count, uint32_t cars_per_env, uint32_t seed = 0) {
     uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= count) return;
-    init_single_car(car_state, idx);
+    uint32_t cpe = (cars_per_env > 0) ? cars_per_env : 1;
+    uint32_t env_idx = idx / cpe;
+    uint32_t car_in_env_idx = idx % cpe;
+    init_single_car(car_state, idx, env_idx, car_in_env_idx, cars_per_env, seed);
 }
 
 __global__ void k_init_arena_state(ArenaStateSoA arena_state, uint32_t count, uint32_t cars_per_env) {
@@ -177,7 +235,8 @@ __global__ void k_reset_environments_indexed(
     uint32_t cars_per_env,
     BallStateSoA ball_state,
     CarStateSoA car_state,
-    ArenaStateSoA arena_state)
+    ArenaStateSoA arena_state,
+    uint32_t seed = 0)
 {
     uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= num_resets) return;
@@ -191,7 +250,7 @@ __global__ void k_reset_environments_indexed(
 
     for (uint32_t c = 0; c < cars_per_env; ++c) {
         uint32_t car_idx = e * cars_per_env + c;
-        init_single_car(car_state, car_idx);
+        init_single_car(car_state, car_idx, e, c, cars_per_env, seed);
     }
 }
 
@@ -201,7 +260,8 @@ __global__ void k_reset_environments_masked(
     uint32_t cars_per_env,
     BallStateSoA ball_state,
     CarStateSoA car_state,
-    ArenaStateSoA arena_state)
+    ArenaStateSoA arena_state,
+    uint32_t seed = 0)
 {
     uint32_t e = blockIdx.x * blockDim.x + threadIdx.x;
     if (e >= num_envs) return;
@@ -212,7 +272,7 @@ __global__ void k_reset_environments_masked(
 
     for (uint32_t c = 0; c < cars_per_env; ++c) {
         uint32_t car_idx = e * cars_per_env + c;
-        init_single_car(car_state, car_idx);
+        init_single_car(car_state, car_idx, e, c, cars_per_env, seed);
     }
 }
 
@@ -579,7 +639,7 @@ void SimContext::ResetToDefault() {
 
     if (m_total_cars > 0) {
         uint32_t car_blocks = (m_total_cars + threads - 1) / threads;
-        k_init_car_state<<<car_blocks, threads, 0, m_stream>>>(m_car_state, m_total_cars);
+        k_init_car_state<<<car_blocks, threads, 0, m_stream>>>(m_car_state, m_total_cars, m_cars_per_env, 0);
     }
 
     uint32_t arena_blocks = (m_num_envs + threads - 1) / threads;
@@ -597,7 +657,7 @@ void SimContext::ResetEnvironmentsIndexed(const int32_t* d_env_indices, uint32_t
     constexpr uint32_t threads = 128;
     uint32_t blocks = (num_resets + threads - 1) / threads;
     k_reset_environments_indexed<<<blocks, threads, 0, m_stream>>>(
-        d_env_indices, num_resets, m_cars_per_env, m_ball_state, m_car_state, m_arena_state
+        d_env_indices, num_resets, m_cars_per_env, m_ball_state, m_car_state, m_arena_state, 0
     );
     // Asynchronous execution on m_stream with NO host synchronization barriers
 }
@@ -607,7 +667,7 @@ void SimContext::ResetEnvironmentsIndexed(const int64_t* d_env_indices, uint32_t
     constexpr uint32_t threads = 128;
     uint32_t blocks = (num_resets + threads - 1) / threads;
     k_reset_environments_indexed<<<blocks, threads, 0, m_stream>>>(
-        d_env_indices, num_resets, m_cars_per_env, m_ball_state, m_car_state, m_arena_state
+        d_env_indices, num_resets, m_cars_per_env, m_ball_state, m_car_state, m_arena_state, 0
     );
     // Asynchronous execution on m_stream with NO host synchronization barriers
 }
@@ -617,7 +677,7 @@ void SimContext::ResetEnvironmentsMasked(const uint8_t* d_reset_mask) {
     constexpr uint32_t threads = 128;
     uint32_t blocks = (m_num_envs + threads - 1) / threads;
     k_reset_environments_masked<<<blocks, threads, 0, m_stream>>>(
-        d_reset_mask, m_num_envs, m_cars_per_env, m_ball_state, m_car_state, m_arena_state
+        d_reset_mask, m_num_envs, m_cars_per_env, m_ball_state, m_car_state, m_arena_state, 0
     );
     // Asynchronous execution on m_stream with NO host synchronization barriers
 }
