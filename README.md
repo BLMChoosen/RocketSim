@@ -195,9 +195,3 @@ The harness records `.rsgold` state snapshots and enforces strict Chebyshev dist
 * **[ZealanL](https://github.com/ZealanL):** Creator of the original [RocketSim](https://github.com/ZealanL/RocketSim) and pioneer of the open Rocket League simulation stack.
 * **Bullet Physics:** Underlying numerical kinematics foundations.
 * **Nanobind:** Lightweight and ultra-fast C++/Python bindings.
-
-```
-
-<FollowUp label="Quer que eu prepare a estrutura do repositório rlgym-cuda agora?" query="Gere a estrutura inicial de arquivos e o código de rlgym-cuda com as funções tensoriais de observação e recompensa para Rocket League."/>
-
-```
