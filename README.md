@@ -176,7 +176,7 @@ The harness records `.rsgold` state snapshots and enforces strict Chebyshev dist
 `RocketSim-CUDA` is an independent, clean-room physical recreation based on the open-source [RocketSim](https://github.com/ZealanL/RocketSim) project and Bullet Physics. It **does not contain any proprietary code or extracted assets** from Rocket League, Psyonix, or Epic Games.
 
 * This library is intended exclusively for research in deep reinforcement learning, trajectory optimization, and simulation analysis.
-* **Anti-Cheating Policy:** The authors strongly condemn the use of this software or models trained with it to deploy unauthorized bots or cheats in online competitive matchmaking.
+* **Anti-Cheating Policy:** I strongly condemn the use of this software or models trained with it to deploy unauthorized bots or cheats in online competitive matchmaking.
 
 ---
 
