@@ -54,8 +54,7 @@ bool DifferentialComparator::CompareBall(
     // 1. Position Chebyshev ||Delta_pos||_inf
     float d_pos = cpu.pos.chebyshev_dist(test.pos);
     float max_c = std::max({std::abs(cpu.pos.x), std::abs(cpu.pos.y), std::abs(cpu.pos.z)});
-    // IEEE-754 float32 machine epsilon: 1 ULP = 2^(floor(log2(x)) - 23). Allow up to 3 ULP rounding variation for large coordinates (>= 4096 UU)
-    float ulp_floor = (max_c >= 4096.0f) ? 0.00146484375f : ((max_c >= 2048.0f) ? 0.00048828125f : 0.0f);
+    float ulp_floor = (max_c >= 4096.0f) ? 0.00048828125f : ((max_c >= 2048.0f) ? 0.000244140625f : 0.0f);
     float tol_pos = std::max(m_tol.pos_uu, ulp_floor);
     if (d_pos > tol_pos) {
         failure.tick = tick;
@@ -134,8 +133,7 @@ bool DifferentialComparator::CompareCar(
     // 1. Position Chebyshev ||Delta_pos||_inf
     float d_pos = cpu.pos.chebyshev_dist(test.pos);
     float max_c = std::max({std::abs(cpu.pos.x), std::abs(cpu.pos.y), std::abs(cpu.pos.z)});
-    // IEEE-754 float32 machine epsilon: 1 ULP = 2^(floor(log2(x)) - 23). Allow up to 3 ULP rounding variation for large coordinates (>= 4096 UU)
-    float ulp_floor = (max_c >= 4096.0f) ? 0.00146484375f : ((max_c >= 2048.0f) ? 0.00048828125f : 0.0f);
+    float ulp_floor = (max_c >= 4096.0f) ? 0.00048828125f : ((max_c >= 2048.0f) ? 0.000244140625f : 0.0f);
     float tol_pos = std::max(m_tol.pos_uu, ulp_floor);
     if (d_pos > tol_pos) {
         failure.tick = tick;

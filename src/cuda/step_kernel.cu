@@ -93,7 +93,7 @@ __device__ void StepCarDevice(
 
     // 2. Load car state
     Vec3 pos(car_state.pos_x[car_idx], car_state.pos_y[car_idx], car_state.pos_z[car_idx]);
-    Vec3 pos_bt(car_state.pos_bt_x[car_idx], car_state.pos_bt_y[car_idx], car_state.pos_bt_z[car_idx]);
+    Vec3 pos_bt = pos * 0.02f;
     Vec3 vel(car_state.vel_x[car_idx], car_state.vel_y[car_idx], car_state.vel_z[car_idx]);
     Vec3 omega(car_state.ang_vel_x[car_idx], car_state.ang_vel_y[car_idx], car_state.ang_vel_z[car_idx]);
     Quat quat(car_state.q_w[car_idx], car_state.q_x[car_idx], car_state.q_y[car_idx], car_state.q_z[car_idx]);
@@ -106,7 +106,7 @@ __device__ void StepCarDevice(
     WheelRaycastResult wheel_results[4];
 
     evaluate_car_wheels_raycast(
-        pos, vel, omega, basis, dt,
+        pos, basis,
         wheels_contact, susp_lengths,
         wheel_results
     );
@@ -131,7 +131,15 @@ __device__ void StepCarDevice(
         car_state.wheel_long_friction_3[car_idx]
     };
 
-    // 5. Update wheel dynamics (throttle, brake, steer, friction curves, sticky downforce) for NEXT tick
+    // 5. Apply suspension & bilateral tire friction impulses
+    apply_suspension_and_friction(
+        pos, basis, wheel_results, dt,
+        cached_engine_force, cached_brake, cached_steer_angle,
+        cached_lat_frictions, cached_long_frictions,
+        vel, omega
+    );
+
+    // 6. Update wheel dynamics (throttle, brake, steer, friction curves, sticky downforce) for NEXT tick
     Vec3 total_force(0.0f, 0.0f, 0.0f);
     Vec3 contact_normals[4] = {
         wheel_results[0].contact_normal,
@@ -148,7 +156,7 @@ __device__ void StepCarDevice(
         total_force
     );
 
-    // 6. Air control vs flipping reset
+    // 7. Air control vs flipping reset
     float fwd_speed = vel.dot(basis.forward);
     if (num_wheels_contact < 3) {
         bool allow_air_torque = (num_wheels_contact == 0);
@@ -157,13 +165,13 @@ __device__ void StepCarDevice(
         car_state.is_flipping[car_idx] = 0;
     }
 
-    // 7. Turtle recovery (auto-flip)
+    // 8. Turtle recovery (auto-flip)
     update_car_auto_flip(car_idx, car_state, ctrl, basis, dt, vel, omega);
 
-    // 8. Jump, double jump, flip/dodge
+    // 9. Jump, double jump, flip/dodge
     update_car_jump(car_idx, car_state, ctrl, is_on_ground, basis, fwd_speed, dt, vel, total_force);
 
-    // 9. Surface alignment (auto-roll)
+    // 10. Surface alignment (auto-roll)
     if (ctrl.throttle != 0.0f && ((num_wheels_contact > 0 && num_wheels_contact < 4) || car_state.world_contact_has_contact[car_idx])) {
         update_car_auto_roll(
             car_idx, car_state, num_wheels_contact, wheels_contact,
@@ -173,14 +181,6 @@ __device__ void StepCarDevice(
 
     // Clear world contact has contact flag after auto-roll / auto-flip have consumed it
     car_state.world_contact_has_contact[car_idx] = 0;
-
-    // 10. Apply suspension & bilateral tire friction impulses (matches btVehicleRL::updateVehicleSecond)
-    apply_suspension_and_friction(
-        pos, basis, wheel_results, dt,
-        cached_engine_force, cached_brake, cached_steer_angle,
-        cached_lat_frictions, cached_long_frictions,
-        vel, omega
-    );
 
     // 11. Boost update (persists minimum boost time and fuel)
     update_car_boost(car_idx, car_state, ctrl, is_on_ground, basis, dt, total_force);
@@ -199,9 +199,7 @@ __device__ void StepCarDevice(
 
     // 15. Chassis arena contact
     resolve_chassis_arena_collision(car_idx, car_state, pos, vel, omega, basis, dt);
-    if (car_state.world_contact_has_contact[car_idx]) {
-        pos_bt = pos * 0.02f;
-    }
+    pos_bt = pos * 0.02f;
 
     // 14. Quaternion integration
     quat = bullet_integrate_quaternion(quat, omega, dt);

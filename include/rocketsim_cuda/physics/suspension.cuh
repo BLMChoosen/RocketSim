@@ -85,9 +85,6 @@ struct WheelRaycastResult {
     float hit_dist; // in UU
     Vec3 contact_pt; // in UU
     Vec3 contact_normal;
-    float susp_rel_vel; // in BT
-    float inv_contact_dot_susp;
-    float extra_pushback;
 };
 
 /**
@@ -96,24 +93,20 @@ struct WheelRaycastResult {
  */
 __device__ __forceinline__ void evaluate_car_wheels_raycast(
     const Vec3& car_pos,
-    const Vec3& vel,
-    const Vec3& omega,
     const Mat3& basis,
-    float dt,
     uint8_t* __restrict__ wheels_in_contact,
     float* __restrict__ suspension_lengths,
     WheelRaycastResult* __restrict__ results)
 {
     Vec3 up_dir = basis.up;
     Vec3 wheel_dir = up_dir * -1.0f;
-    Vec3 vel_bt = vel * 0.02f;
 
     #pragma unroll
     for (int w = 0; w < 4; ++w) {
         Vec3 hardpoint = car_pos + basis * get_octane_wheel_offset(w);
         float config_rest = get_octane_susp_rest(w);
         float radius = get_octane_wheel_rad(w);
-        float real_ray_len = config_rest + SUSP_MAX_TRAVEL + radius - SUSP_SUBTRACTION;
+        float real_ray_len = config_rest + radius - SUSP_SUBTRACTION;
 
         float hit_dist = 0.0f;
         Vec3 hit_normal = Vec3(0.0f, 0.0f, 1.0f);
@@ -126,47 +119,12 @@ __device__ __forceinline__ void evaluate_car_wheels_raycast(
 
         if (hit) {
             wheels_in_contact[w] = 1;
-            float cur_susp_len = fminf(fmaxf(hit_dist - radius, config_rest - SUSP_MAX_TRAVEL), config_rest + SUSP_MAX_TRAVEL);
-            suspension_lengths[w] = config_rest - cur_susp_len; // Compression in UU
-
-            Vec3 contact_pt = results[w].contact_pt;
-            Vec3 rel_pos_bt = (contact_pt - car_pos) * 0.02f;
-            Vec3 vel_at_pt_bt = vel_bt + omega.cross(rel_pos_bt);
-            float proj_vel_bt = hit_normal.dot(vel_at_pt_bt);
-            float denominator = hit_normal.dot(up_dir);
-
-            if (denominator > 0.1f) {
-                float inv = 1.0f / denominator;
-                results[w].susp_rel_vel = proj_vel_bt * inv;
-                results[w].inv_contact_dot_susp = inv;
-            } else {
-                results[w].susp_rel_vel = 0.0f;
-                results[w].inv_contact_dot_susp = 10.0f;
-            }
-
-            // Extra pushback computed during raycast matching btVehicleRL::rayCast
-            float pushback_thresh_bt = (config_rest + radius - SUSP_SUBTRACTION) * 0.02f;
-            float wheel_trace_len_bt = hit_dist * 0.02f;
-            float extra_pushback = 0.0f;
-            if (wheel_trace_len_bt < pushback_thresh_bt) {
-                float dist_delta = wheel_trace_len_bt - pushback_thresh_bt;
-                float pos_error = 0.2f * (-dist_delta) / dt;
-                float vel_error = -proj_vel_bt;
-                Vec3 inv_inertia_bt = get_octane_inv_inertia_bt();
-                Vec3 c0 = rel_pos_bt.cross(hit_normal);
-                Vec3 c0_loc = basis.transpose() * c0;
-                float denom = (1.0f / 180.0f) + (c0_loc.x * c0_loc.x * inv_inertia_bt.x
-                                               + c0_loc.y * c0_loc.y * inv_inertia_bt.y
-                                               + c0_loc.z * c0_loc.z * inv_inertia_bt.z);
-                extra_pushback = fmaxf(0.0f, (pos_error + vel_error) / denom) * 0.25f;
-            }
-            results[w].extra_pushback = extra_pushback;
+            float cur_susp_len = fminf(fmaxf(hit_dist - radius, config_rest - 2.0f * SUSP_MAX_TRAVEL), config_rest);
+            float rest_len_bullet = config_rest - SUSP_MAX_TRAVEL;
+            suspension_lengths[w] = rest_len_bullet - cur_susp_len; // Compression in UU
         } else {
             wheels_in_contact[w] = 0;
             suspension_lengths[w] = -SUSP_MAX_TRAVEL;
-            results[w].susp_rel_vel = 0.0f;
-            results[w].inv_contact_dot_susp = 1.0f;
-            results[w].extra_pushback = 0.0f;
         }
     }
 }
@@ -185,13 +143,12 @@ __device__ __forceinline__ void apply_suspension_and_friction(
     float cached_steer_angle,
     const float* cached_lat_frictions,
     const float* cached_long_frictions,
-    Vec3& vel,
+    Vec3& vel_bt,
     Vec3& omega)
 {
     Vec3 inv_inertia_bt = get_octane_inv_inertia_bt();
     Vec3 total_lin_imp_bt(0.0f, 0.0f, 0.0f);
     Vec3 total_ang_imp_bt(0.0f, 0.0f, 0.0f);
-    Vec3 vel_bt = vel * 0.02f;
 
     #pragma unroll
     for (int w = 0; w < 4; ++w) {
@@ -199,8 +156,9 @@ __device__ __forceinline__ void apply_suspension_and_friction(
 
         float config_rest = get_octane_susp_rest(w);
         float radius = get_octane_wheel_rad(w);
+        float rest_len_bullet = config_rest - SUSP_MAX_TRAVEL;
         float hit_dist = wheel_results[w].hit_dist;
-        float cur_susp_len = fminf(fmaxf(hit_dist - radius, config_rest - SUSP_MAX_TRAVEL), config_rest + SUSP_MAX_TRAVEL);
+        float cur_susp_len = fminf(fmaxf(hit_dist - radius, config_rest - 2.0f * SUSP_MAX_TRAVEL), config_rest);
 
         Vec3 contact_pt_uu = wheel_results[w].contact_pt;
         Vec3 hit_normal = wheel_results[w].contact_normal;
@@ -209,10 +167,12 @@ __device__ __forceinline__ void apply_suspension_and_friction(
         Vec3 vel_at_pt_bt = vel_bt + omega.cross(rel_pos_bt);
 
         // 1. Suspension Spring & Damping (btVehicleRL::updateSuspension)
-        float inv_dot = wheel_results[w].inv_contact_dot_susp;
-        float v_rel_bt = wheel_results[w].susp_rel_vel;
+        float denominator = hit_normal.dot(basis.up);
+        float inv_dot = (denominator > 0.1f) ? (1.0f / denominator) : 10.0f;
+        float proj_vel_bt = hit_normal.dot(vel_at_pt_bt);
+        float v_rel_bt = (denominator > 0.1f) ? (proj_vel_bt * inv_dot) : 0.0f;
 
-        float compression_bt = (config_rest - cur_susp_len) * 0.02f;
+        float compression_bt = (rest_len_bullet - cur_susp_len) * 0.02f;
         float spring_force = compression_bt * SUSP_STIFFNESS * inv_dot;
         float damping_scale = (v_rel_bt < 0.0f) ? SUSP_DAMPING_COMPRESSION : SUSP_DAMPING_RELAXATION;
         float susp_force = spring_force - (damping_scale * v_rel_bt);
@@ -220,7 +180,20 @@ __device__ __forceinline__ void apply_suspension_and_friction(
         if (susp_force < 0.0f) susp_force = 0.0f;
 
         // 2. Extra Pushback (resolveSingleCollision)
-        float extra_pushback = wheel_results[w].extra_pushback;
+        float extra_pushback = 0.0f;
+        float pushback_thresh_bt = (rest_len_bullet + radius - SUSP_SUBTRACTION) * 0.02f;
+        float wheel_trace_len_bt = hit_dist * 0.02f;
+        if (wheel_trace_len_bt < pushback_thresh_bt) {
+            float dist_delta = wheel_trace_len_bt - pushback_thresh_bt;
+            float pos_error = 0.2f * (-dist_delta) / dt;
+            float vel_error = -proj_vel_bt;
+            Vec3 c0 = rel_pos_bt.cross(hit_normal);
+            Vec3 c0_loc = basis.transpose() * c0;
+            float denom = (1.0f / 180.0f) + (c0_loc.x * c0_loc.x * inv_inertia_bt.x
+                                           + c0_loc.y * c0_loc.y * inv_inertia_bt.y
+                                           + c0_loc.z * c0_loc.z * inv_inertia_bt.z);
+            extra_pushback = fmaxf(0.0f, (pos_error + vel_error) / denom) * 0.25f;
+        }
 
         float base_scale_bt = (susp_force * dt) + extra_pushback;
         Vec3 susp_imp_bt = hit_normal * base_scale_bt;
@@ -251,12 +224,6 @@ __device__ __forceinline__ void apply_suspension_and_friction(
         Vec3 total_friction_force = forward_dir * (rolling_friction * cached_long_frictions[w])
                                   + axle_dir * (side_impulse * cached_lat_frictions[w]);
         Vec3 wheel_fric_imp_bt = total_friction_force * (60.0f * dt);
-        if (w == 2 && car_pos.x < -2320.0f) {
-            printf("  [GPU WHEEL 2] susp_force=%f side_imp=%f roll_fric=%f total_fric=(%f,%f,%f) lat_fric=%f long_fric=%f\n",
-                   susp_force, side_impulse, rolling_friction,
-                   total_friction_force.x * 60.0f, total_friction_force.y * 60.0f, total_friction_force.z * 60.0f,
-                   cached_lat_frictions[w], cached_long_frictions[w]);
-        }
 
         // Planar offset for tire friction: eliminates roll torque from tire sliding
         Vec3 r_planar_bt = rel_pos_bt - basis.up * basis.up.dot(rel_pos_bt);
@@ -267,7 +234,7 @@ __device__ __forceinline__ void apply_suspension_and_friction(
     }
 
     // Apply accumulated impulses directly to chassis velocity and angular velocity
-    vel = vel + total_lin_imp_bt * (50.0f / 180.0f);
+    vel_bt = vel_bt + total_lin_imp_bt * (1.0f / 180.0f);
     Vec3 delta_omega_loc = Vec3(
         inv_inertia_bt.x * (basis.transpose() * total_ang_imp_bt).x,
         inv_inertia_bt.y * (basis.transpose() * total_ang_imp_bt).y,

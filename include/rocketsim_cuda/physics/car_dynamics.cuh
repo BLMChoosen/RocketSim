@@ -458,9 +458,6 @@ __device__ __forceinline__ void update_car_air_control(
     Vec3 dir_yaw = basis.up;
     Vec3 dir_roll = basis.forward * -1.0f;
 
-    Vec3 dodge_torque_delta(0.0f, 0.0f, 0.0f);
-    Vec3 initial_omega = omega;
-
     bool is_flipping = (car_state.is_flipping[car_idx] != 0);
     float flip_time = car_state.flip_time[car_idx];
 
@@ -493,7 +490,7 @@ __device__ __forceinline__ void update_car_air_control(
                 rel_dodge_torque.y * FLIP_TORQUE_Y,
                 0.0f
             );
-            dodge_torque_delta = basis * dodge_torque * dt;
+            omega = omega + basis * dodge_torque * dt;
         } else {
             do_air_control = true;
         }
@@ -503,7 +500,6 @@ __device__ __forceinline__ void update_car_air_control(
 
     do_air_control = do_air_control && allow_air_torque && (car_state.is_auto_flipping[car_idx] == 0);
 
-    Vec3 air_control_delta(0.0f, 0.0f, 0.0f);
     if (do_air_control) {
         float pitch_torque_scale = 1.0f;
         if (is_flipping) {
@@ -516,15 +512,14 @@ __device__ __forceinline__ void update_car_air_control(
                         + dir_yaw * (controls.yaw * CAR_AIR_CONTROL_TORQUE_Y)
                         + dir_roll * (controls.roll * CAR_AIR_CONTROL_TORQUE_Z);
 
-        float damp_pitch = dir_pitch.dot(initial_omega) * CAR_AIR_CONTROL_DAMPING_X * (1.0f - fabsf(controls.pitch * pitch_torque_scale));
-        float damp_yaw = dir_yaw.dot(initial_omega) * CAR_AIR_CONTROL_DAMPING_Y * (1.0f - fabsf(controls.yaw));
-        float damp_roll = dir_roll.dot(initial_omega) * CAR_AIR_CONTROL_DAMPING_Z;
+        float damp_pitch = dir_pitch.dot(omega) * CAR_AIR_CONTROL_DAMPING_X * (1.0f - fabsf(controls.pitch * pitch_torque_scale));
+        float damp_yaw = dir_yaw.dot(omega) * CAR_AIR_CONTROL_DAMPING_Y * (1.0f - fabsf(controls.yaw));
+        float damp_roll = dir_roll.dot(omega) * CAR_AIR_CONTROL_DAMPING_Z;
 
         Vec3 air_damping = dir_yaw * damp_yaw + dir_pitch * damp_pitch + dir_roll * damp_roll;
-        air_control_delta = (air_torque - air_damping) * (CAR_TORQUE_SCALE * dt);
+        Vec3 delta_omega = (air_torque - air_damping) * (CAR_TORQUE_SCALE * dt);
+        omega = omega + delta_omega;
     }
-
-    omega = initial_omega + dodge_torque_delta + air_control_delta;
 }
 
 /**
