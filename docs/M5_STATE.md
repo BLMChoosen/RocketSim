@@ -1,11 +1,11 @@
 # Milestone 5 State Tracker — Phase 1: Core Physical Fidelity
 
-> **Document Version:** 1.3.0  
-> **Last Updated:** 2026-10-04T18:55:00Z  
-> **Active Worker:** Worker M5.6 (Finalizando: Validação de Boost Pads)  
+> **Document Version:** 1.4.0  
+> **Last Updated:** 2026-10-04T19:05:00Z  
+> **Active Worker:** Worker M5.7 (Phase 1 Consolidation & Parity Report)  
 > **Parent Orchestrator:** Orchestrator M5  
 > **Plan Reference:** [M5_PLAN.md](file:///C:/Users/Choosen/Documents/Estudo-Executor/RocketSim/docs/M5_PLAN.md)  
-> **Session State:** M5.6 validado com sucesso. Working tree pronto para commit, 35/35 testes verdes.
+> **Session State:** Phase 1 (M5.1 - M5.7) 100% Concluída e Validada. Full differential parity suite executada com código 0 (docs/PARITY_REPORT_DEPOIS.md), 35/35 testes Python passando, 8/8 testes SDF passando, leak de VRAM de 100k steps validado com delta zero bytes.
 
 ---
 
@@ -19,7 +19,7 @@
 | **M5.4** | Car-Ball Collision Fidelity (R4) | **COMPLETED** | `5e89cfe` | Impact car Z parity: CPU 15.50 vs GPU 15.49 UU (delta 0.01 UU); Kickoff goalie deflection angle delta 0.12° (<= 0.5°), post-hit exit vel error 0.38% (<= 0.5%); Car-ball hit deflection angle delta 0.21° (<= 0.5°), exit vel error 0.08% (<= 0.5%); pytests 35/35 green; test_sdf passes 8/8. |
 | **M5.5** | Jump & Flip Mechanics Validation (R5) | **COMPLETED** | `ea14226` | 7/7 pytests green; jump_flip airborne 115-tick parity: pos delta <= 0.0063 UU (<= 0.01), vel delta <= 0.00035 UU/s (<= 0.001), quat delta <= 1.19e-7 (<= 1e-6); single jump, double jump, 8-way flips, flip cancel, stall, auto-flip/roll verified. |
 | **M5.6** | Boost Pads Mechanics Validation (R6) | **COMPLETED** | `3dd6265` | 34 Soccar pads initialized in CPURefSim (_boostPads, _boostPadGrid, SOCCAR gameMode); boost_pad_pickup scenario (1205 ticks) validated: initial boost 0.0 vs 0.0 (bit-exact), pickup at tick 1 (100.0/12.0 bit-exact), pad deactivation (false), 10.0s cooldown, respawn tick 1202 (exactly 1201 ticks elapsed from tick 1) matching IEEE-754 float32 cooldown; 2/2 boost pytests and 35/35 suite green. |
-| **M5.7** | Phase 1 Completion & "Depois" Report (R7) | Pending | - | Before/after table comparison, Victory audit report. |
+| **M5.7** | Phase 1 Completion & "Depois" Report (R7) | **COMPLETED** | `b3210e2` | Full differential suite (17 scenarios) generated in docs/PARITY_REPORT_DEPOIS.md with exit code 0; Before/After consolidated table documented across all 5 physical domains; 35/35 Python tests green; 8/8 SDF tests green; 100k steps VRAM delta 0 bytes; Phase 1 100% complete. |
 
 ---
 
@@ -105,7 +105,10 @@ Evaluated on 2,048 parallel environments running `random` scenario across 600 ti
      - Duração de Cooldown: Exatamente 1201 ticks em float32 IEEE-754.
    - Testes Python de boost: 2/2 verdes (`pytest tests/python/ -k boost -v`).
    - Suíte Python completa: 35/35 testes verdes.
-7. **Próximo Módulo (M5.7):** Fase 1 Completion & "Depois" Report (R7)
-   - Execução do baseline completo de 2048 ambientes por 600 ticks (`--scenario random`).
-   - Geração da tabela de comparação "Antes vs Depois" e relatório de auditoria de vitória.
+7. **M5.7 Concluído (Fase 1 Consolidation & "Depois" Report - R7):**
+   - Execução completa da suíte diferencial de paridade em todos os cenários canônicos (`.\build\differential_harness.exe --scenario all --report --out-report docs/PARITY_REPORT_DEPOIS.md`) com exit code 0.
+   - Execução das suítes de testes unitários: Python `pytest tests/python/` (35/35 passing em 5.43s) e `.\build\test_sdf.exe` (8/8 passing).
+   - Verificação de estabilidade de VRAM e zero alocações dinâmicas: 100.000 steps executados continuamente em GPU; delta de memória verificado em exatamente 0 bytes (`1,149,698,048 B` inicial vs `1,149,698,048 B` final, $\Delta = 0\text{ B}$); zero `cudaMalloc`/`malloc` em caminhos de execução de simulação.
+   - Tabela consolidada "Antes vs Depois" gerada e documentada em `docs/M5_NOTES.md` cobrindo quiques de bola (8 superfícies), atrito de pneus (throttle e boost 120 ticks), colisão carro-bola (altura Z, ângulo e velocidade de saída), pulos e flips aéreos (115 ticks), boost pads (bit-exact e respawns 1201/480 ticks).
+   - **FASE 1 (Core Physical Fidelity) 100% CONCLUÍDA.** Pronto para revisão do usuário antes de iniciar a Fase 2.
 
