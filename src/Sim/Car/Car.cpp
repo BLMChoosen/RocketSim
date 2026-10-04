@@ -453,24 +453,6 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int 
 				if (baseFriction > 5)
 					frictionCurveInput = baseFriction / (abs(crossVec.dot(longDir)) + baseFriction);
 
-				if (i == 1 && _rigidBody.getWorldTransform().m_origin.x() < -46.0f) {
-					std::cout << "  [CPU WHEEL 1 DYNAMICS]\n"
-					          << "    vel=(" << vel.x() << "," << vel.y() << "," << vel.z() << ")\n"
-					          << "    angVel=(" << angularVel.x() << "," << angularVel.y() << "," << angularVel.z() << ")\n"
-					          << "    hardPointWS=(" << wheel.m_raycastInfo.m_hardPointWS.x() << "," << wheel.m_raycastInfo.m_hardPointWS.y() << "," << wheel.m_raycastInfo.m_hardPointWS.z() << ")\n"
-					          << "    origin=(" << _rigidBody.getWorldTransform().m_origin.x() << "," << _rigidBody.getWorldTransform().m_origin.y() << "," << _rigidBody.getWorldTransform().m_origin.z() << ")\n"
-					          << "    wheelDelta=(" << wheelDelta.x() << "," << wheelDelta.y() << "," << wheelDelta.z() << ")\n"
-					          << "    crossVec=(" << crossVec.x() << "," << crossVec.y() << "," << crossVec.z() << ")\n"
-					          << "    latDir=(" << latDir.x() << "," << latDir.y() << "," << latDir.z() << ")\n"
-					          << "    contactNormalWS=(" << wheel.m_raycastInfo.m_contactNormalWS.x() << "," << wheel.m_raycastInfo.m_contactNormalWS.y() << "," << wheel.m_raycastInfo.m_contactNormalWS.z() << ")\n"
-					          << "    longDir=(" << longDir.x() << "," << longDir.y() << "," << longDir.z() << ")\n"
-					          << "    crossVec.dot(latDir)=" << crossVec.dot(latDir) << "\n"
-					          << "    crossVec.dot(longDir)=" << crossVec.dot(longDir) << "\n"
-					          << "    baseFriction=" << baseFriction << "\n"
-					          << "    frictionCurveInput=" << frictionCurveInput << "\n"
-					          << "    steerAngle=" << wheel.m_steerAngle << "\n";
-				}
-
 				float latFriction = (config.threeWheels ? LAT_FRICTION_CURVE_THREEWHEEL : LAT_FRICTION_CURVE).GetOutput(frictionCurveInput);
 				float longFriction = LONG_FRICTION_CURVE.GetOutput(frictionCurveInput);
 

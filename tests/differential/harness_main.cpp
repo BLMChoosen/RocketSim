@@ -267,7 +267,7 @@ int main(int argc, char** argv) {
             gpu_sim.CopyCarStateToHost(gpu_cars.data(), 0, args.envs);
 
             for (uint32_t e = 0; e < args.envs; e++) {
-                if (e <= 1 && t <= 25) {
+                if (e <= 1 && t <= 8) {
                     std::cout << "[DEBUG Tick " << t << " Env " << e << "]\n"
                               << "  CPU Pos: (" << std::setprecision(8) << cpu_cars[e].pos.x << ", " << cpu_cars[e].pos.y << ", " << cpu_cars[e].pos.z << ")\n"
                               << "  GPU Pos: (" << std::setprecision(8) << gpu_cars[e].pos.x << ", " << gpu_cars[e].pos.y << ", " << gpu_cars[e].pos.z << ")\n"
@@ -296,15 +296,13 @@ int main(int argc, char** argv) {
                 if (!comparator.CompareBall(t, e, cpu_balls[e], gpu_balls[e], fail)) {
                     std::cerr << "[-] Lockstep Differential Failure on Ball at tick " << t << ", env " << e << ":\n"
                               << "    Attribute: " << fail.attribute << "\n"
-                              << "    Max delta: " << fail.max_delta << " > tol " << fail.threshold << "\n"
-                              << "    CPU Val: " << fail.cpu_val << " GPU Val: " << fail.test_val << "\n";
+                              << "    Max delta: " << fail.max_delta << " > tol " << fail.threshold << "\n";
                     return 1;
                 }
                 if (!comparator.CompareCar(t, e, 0, cpu_cars[e], gpu_cars[e], fail)) {
                     std::cerr << "[-] Lockstep Differential Failure on Car at tick " << t << ", env " << e << ":\n"
                               << "    Attribute: " << fail.attribute << "\n"
                               << "    Max delta: " << fail.max_delta << " > tol " << fail.threshold << "\n"
-                              << "    CPU Val: " << fail.cpu_val << " GPU Val: " << fail.test_val << "\n"
                               << "    Delta Pos: (" << std::setprecision(8)
                               << std::fabs(cpu_cars[e].pos.x - gpu_cars[e].pos.x) << ", "
                               << std::fabs(cpu_cars[e].pos.y - gpu_cars[e].pos.y) << ", "

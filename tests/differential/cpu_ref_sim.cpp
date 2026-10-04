@@ -170,18 +170,6 @@ void CPURefSim::GetCarState(int carIdx, CarStatePOD& out) const {
         float restLen = car->_bulletVehicle.m_wheelInfo[w].getSuspensionRestLength();
         float curLen = car->_bulletVehicle.m_wheelInfo[w].m_raycastInfo.m_suspensionLength;
         out.suspension_lengths[w] = (restLen - curLen) * BT_TO_UU;
-        if ((w == 2 || w == 3) && car->_rigidBody.getWorldTransform().m_origin.x() < -46.0f) {
-            std::cout << "  [CPU WHEEL " << w << " SUSP_LEN] restLen=" << restLen << " curLen=" << curLen
-                      << " traceLen=" << (car->_bulletVehicle.m_wheelInfo[w].m_raycastInfo.m_hardPointWS - car->_bulletVehicle.m_wheelInfo[w].m_raycastInfo.m_contactPointWS).dot(car->_bulletVehicle.getUpVector())
-                      << " hardPointWS=(" << car->_bulletVehicle.m_wheelInfo[w].m_raycastInfo.m_hardPointWS.x()
-                      << "," << car->_bulletVehicle.m_wheelInfo[w].m_raycastInfo.m_hardPointWS.y()
-                      << "," << car->_bulletVehicle.m_wheelInfo[w].m_raycastInfo.m_hardPointWS.z() << ")"
-                      << " contactPointWS=(" << car->_bulletVehicle.m_wheelInfo[w].m_raycastInfo.m_contactPointWS.x()
-                      << "," << car->_bulletVehicle.m_wheelInfo[w].m_raycastInfo.m_contactPointWS.y()
-                      << "," << car->_bulletVehicle.m_wheelInfo[w].m_raycastInfo.m_contactPointWS.z() << ")"
-                      << " upVector=(" << car->_bulletVehicle.getUpVector().x() << "," << car->_bulletVehicle.getUpVector().y() << "," << car->_bulletVehicle.getUpVector().z() << ")"
-                      << " out=" << out.suspension_lengths[w] << std::endl;
-        }
         if (car->_bulletVehicle.m_wheelInfo[w].m_raycastInfo.m_isInContact) {
             std::cout << "  [CPU WHEEL " << w << " CONTACT] suspForce=" << car->_bulletVehicle.m_wheelInfo[w].m_wheelsSuspensionForce
                       << " suspRelVel=" << car->_bulletVehicle.m_wheelInfo[w].m_suspensionRelativeVelocity

@@ -943,14 +943,6 @@ void btSequentialImpulseConstraintSolver::setupContactConstraint(btSolverConstra
 		btScalar vel2Dotn = solverConstraint.m_contactNormal2.dot(bodyB->m_linearVelocity + externalForceImpulseB) + solverConstraint.m_relpos2CrossNormal.dot(bodyB->m_angularVelocity + externalTorqueImpulseB);
 		btScalar rel_vel = vel1Dotn + vel2Dotn;
 
-		printf("  [CPU SOLVER VEL] linVel=(%f,%f,%f) extF=(%f,%f,%f) angVel=(%f,%f,%f) extT=(%f,%f,%f) rXn=(%f,%f,%f) vel1Dotn=%f\n",
-		       bodyA->m_linearVelocity.x(), bodyA->m_linearVelocity.y(), bodyA->m_linearVelocity.z(),
-		       externalForceImpulseA.x(), externalForceImpulseA.y(), externalForceImpulseA.z(),
-		       bodyA->m_angularVelocity.x(), bodyA->m_angularVelocity.y(), bodyA->m_angularVelocity.z(),
-		       externalTorqueImpulseA.x(), externalTorqueImpulseA.y(), externalTorqueImpulseA.z(),
-		       solverConstraint.m_relpos1CrossNormal.x(), solverConstraint.m_relpos1CrossNormal.y(), solverConstraint.m_relpos1CrossNormal.z(),
-		       vel1Dotn);
-
 		btScalar positionalError = 0.f;
 		btScalar velocityError = restitution - rel_vel;  // * damping;
 
@@ -984,8 +976,6 @@ void btSequentialImpulseConstraintSolver::setupContactConstraint(btSolverConstra
 		solverConstraint.m_cfm = cfm * solverConstraint.m_jacDiagABInv;
 		solverConstraint.m_lowerLimit = 0;
 		solverConstraint.m_upperLimit = 1e10f;
-		printf("  [CPU SOLVER SETUP] pen=%f posErr=%f velErr=%f penImp=%f velImp=%f rhs=%f jacDiagABInv=%f erp=%f split=%d slop=%f\n",
-		       penetration, positionalError, velocityError, penetrationImpulse, velocityImpulse, solverConstraint.m_rhs, solverConstraint.m_jacDiagABInv, erp, infoGlobal.m_splitImpulse, infoGlobal.m_linearSlop);
 	}
 
 	// ROCKETSIM CHANGE: Copy over m_isSpecial from contact point

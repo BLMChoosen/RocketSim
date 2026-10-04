@@ -204,16 +204,15 @@ bool DifferentialComparator::CompareCar(
     }
 
     // 5. Suspension compression (per wheel)
-    float tol_susp = std::max(m_tol.suspension_uu, ulp_floor);
     for (int w = 0; w < 4; w++) {
         float d_susp = std::fabs(cpu.suspension_lengths[w] - test.suspension_lengths[w]);
-        if (d_susp > tol_susp) {
+        if (d_susp > m_tol.suspension_uu) {
             failure.tick = tick;
             failure.env_idx = env_idx;
             failure.car_idx = static_cast<int32_t>(car_idx);
             failure.attribute = "Car Suspension Compression Wheel " + std::to_string(w) + " (UU)";
             failure.max_delta = d_susp;
-            failure.threshold = tol_susp;
+            failure.threshold = m_tol.suspension_uu;
             failure.cpu_val = std::to_string(cpu.suspension_lengths[w]);
             failure.test_val = std::to_string(test.suspension_lengths[w]);
             return false;
