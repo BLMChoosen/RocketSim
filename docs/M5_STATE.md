@@ -15,7 +15,7 @@
 | :--- | :--- | :--- | :--- | :--- |
 | **M5.1** | Harness & Parity Baseline (R1) | **COMPLETED** | `e883ba9` | 2048-env baseline recorded across 19 components and 5 snapshot ticks (1, 10, 60, 120, 600); all 35 Python tests green. |
 | **M5.2** | Ball Bounces Fidelity (R2) | **COMPLETED** | `1201094` | 8 canonical surfaces validated in differential_harness; floor/walls/ceiling/crossbar/goalpost match rebound tick (0 tick delta); angled floor spin v_x delta dropped from 109.96 to 0.09 UU/s; test_sdf passes 8/8; pytests 35/35 green. |
-| **M5.3** | Tire Friction & Contact Solver (R3) | **COMPLETED** | [pending] | Throttle 120-tick pos error 0.014 UU (<= 1.0 UU), vel error 0.00006% (<= 0.1%); Boost 120-tick pos error 0.010 UU (<= 1.0 UU), vel error 0.00012% (<= 0.1%); pytests 35/35 green; test_sdf passes. |
+| **M5.3** | Tire Friction & Contact Solver (R3) | **COMPLETED** | `3e18280` | Throttle 120-tick pos error 0.014 UU (<= 1.0 UU), vel error 0.00006% (<= 0.1%); Boost 120-tick pos error 0.010 UU (<= 1.0 UU), vel error 0.00012% (<= 0.1%); pytests 35/35 green; test_sdf passes. |
 | **M5.4** | Car-Ball Collision Fidelity (R4) | Pending | - | Target $\le 0.5\%$ vel, $\le 0.5^\circ$ deflection angle; resolve car Z height at impact. |
 | **M5.5** | Jump & Flip Mechanics Validation (R5) | Pending | - | 8-way directional flips, cancels, stalls against Bullet. |
 | **M5.6** | Boost Pads Mechanics Validation (R6) | Pending | - | Pickup detection, respawn, boost gain parity. |
