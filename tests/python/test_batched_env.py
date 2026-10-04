@@ -100,5 +100,78 @@ def test_env_reward_goal_signal():
     env.close()
 
 
+def test_env_goal_and_selective_reset_lifecycle():
+    """
+    Exhaustively verify M4.4 requirements:
+    1. Ball in Orange goal -> Blue scores (scoring_team = 0, is_goal = 1, terminated = 1).
+    2. Ball in Blue goal -> Orange scores (scoring_team = 1, is_goal = 1, terminated = 1).
+    3. Ball in field -> No goal (is_goal = 0, terminated = 0).
+    4. Auto/selective reset restores ball to (0, 0, 93) with zero velocity and cars to kickoff slots.
+    """
+    num_envs = 4
+    cars_per_env = 2
+    env = RocketSimBatchedEnv(num_envs=num_envs, cars_per_env=cars_per_env, tick_skip=1)
+    env.reset()
+
+    ball_obs = env.get_ball_observations()
+    # Env 0: Blue scores into Orange goal (Y = +5150)
+    ball_obs[0, 0] = 0.0
+    ball_obs[0, 1] = 5150.0
+    ball_obs[0, 2] = 200.0
+
+    # Env 1: Orange scores into Blue goal (Y = -5150)
+    ball_obs[1, 0] = 0.0
+    ball_obs[1, 1] = -5150.0
+    ball_obs[1, 2] = 200.0
+
+    # Env 2: Ball in midfield (no goal)
+    ball_obs[2, 0] = 0.0
+    ball_obs[2, 1] = 0.0
+    ball_obs[2, 2] = 93.0
+
+    obs, rewards, terminated, truncated, info = env.step()
+
+    # Env 0 checks
+    assert info["is_goal"][0] == 1
+    assert info["scoring_team"][0] == 0
+    assert terminated[0] == 1
+    assert rewards[0, 0] > 0.5  # Blue car rewarded
+    assert rewards[0, 1] < -0.5 # Orange car penalized
+
+    # Env 1 checks
+    assert info["is_goal"][1] == 1
+    assert info["scoring_team"][1] == 1
+    assert terminated[1] == 1
+    assert rewards[1, 1] > 0.5  # Orange car rewarded
+    assert rewards[1, 0] < -0.5 # Blue car penalized
+
+    # Env 2 checks
+    assert info["is_goal"][2] == 0
+    assert terminated[2] == 0
+
+    # Test selective reset on env 0 and 1
+    env.reset(env_ids=[0, 1])
+
+    # Env 0 and 1 ball must be at center resting height (93.15 UU) and zero velocity
+    ball_after = env.get_ball_observations()
+    assert abs(float(ball_after[0, 0])) < 1e-3
+    assert abs(float(ball_after[0, 1])) < 1e-3
+    assert abs(float(ball_after[0, 2]) - 93.15) < 0.5
+    assert abs(float(ball_after[0, 3])) < 1e-3
+    assert abs(float(ball_after[0, 4])) < 1e-3
+    assert abs(float(ball_after[0, 5])) < 1e-3
+
+    assert abs(float(ball_after[1, 0])) < 1e-3
+    assert abs(float(ball_after[1, 1])) < 1e-3
+    assert abs(float(ball_after[1, 2]) - 93.15) < 0.5
+
+    # Arena state for reset envs should be cleared
+    assert info["is_goal"][0] == 0
+    assert info["is_goal"][1] == 0
+
+    env.close()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
