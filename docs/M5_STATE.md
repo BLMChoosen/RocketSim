@@ -11,7 +11,7 @@
 
 | Module | Requirement | Status | Commit Hash | Key Metrics / Evidence |
 | :--- | :--- | :--- | :--- | :--- |
-| **M5.1** | Harness & Parity Baseline (R1) | **COMPLETED** | `b59a075` | 2048-env baseline recorded across 19 components and 5 snapshot ticks (1, 10, 60, 120, 600); all 35 Python tests green. |
+| **M5.1** | Harness & Parity Baseline (R1) | **COMPLETED** | `e883ba9` | 2048-env baseline recorded across 19 components and 5 snapshot ticks (1, 10, 60, 120, 600); all 35 Python tests green. |
 | **M5.2** | Ball Bounces Fidelity (R2) | Pending | - | Single-bounce 8 surfaces, chaos baseline, SDF restitution tuning. |
 | **M5.3** | Tire Friction & Contact Solver (R3) | Pending | - | Gauss-Seidel solver mirror, target $\le 0.1\%$ vel, $\le 1$ UU pos at 120 ticks. |
 | **M5.4** | Car-Ball Collision Fidelity (R4) | Pending | - | Target $\le 0.5\%$ vel, $\le 0.5^\circ$ deflection angle; resolve car Z height at impact. |
