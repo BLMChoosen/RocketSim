@@ -349,11 +349,14 @@ __device__ __forceinline__ void resolve_ball_arena_collision(
 
 /**
  * @brief Resolves chassis-arena and chassis-ground penetration and records world contact normals.
+ * Implements Bullet's btSequentialImpulseConstraintSolver for contact and friction resolution.
  */
 __device__ __forceinline__ void resolve_chassis_arena_collision(
     uint32_t car_idx,
     CarStateSoA& car_state,
-    Vec3& pos,
+    const Vec3& pos,
+    const Vec3& vel_pre,
+    const Vec3& omega_pre,
     Vec3& vel,
     Vec3& omega,
     const Mat3& basis,
@@ -361,9 +364,14 @@ __device__ __forceinline__ void resolve_chassis_arena_collision(
 {
     Vec3 hitbox_offset = get_octane_hitbox_offset();
     Vec3 hitbox_half = get_octane_hitbox_half();
+    constexpr float BOX_SAFE_MARGIN_INSET = 0.067045f; // (0.04f - 0.0386591f) * 50.0f UU
+    Vec3 hitbox_half_eff = hitbox_half - Vec3(BOX_SAFE_MARGIN_INSET, BOX_SAFE_MARGIN_INSET, BOX_SAFE_MARGIN_INSET);
+    constexpr float CHASSIS_MARGIN_UU = 1.932955f; // Margin of btBoxShape in UU
 
-    bool has_contact = false;
-    Vec3 sum_normal(0.0f, 0.0f, 0.0f);
+    float min_dist = 1e9f;
+    int best_corner = -1;
+    Vec3 best_normal(0.0f, 0.0f, 1.0f);
+    Vec3 best_world_corner(0.0f, 0.0f, 0.0f);
 
     // Check 8 corner vertices of oriented hitbox
     #pragma unroll
@@ -373,9 +381,9 @@ __device__ __forceinline__ void resolve_chassis_arena_collision(
         float sz = (i & 4) ? 1.0f : -1.0f;
 
         Vec3 local_corner = hitbox_offset + Vec3(
-            sx * hitbox_half.x,
-            sy * hitbox_half.y,
-            sz * hitbox_half.z
+            sx * hitbox_half_eff.x,
+            sy * hitbox_half_eff.y,
+            sz * hitbox_half_eff.z
         );
 
         Vec3 world_corner = pos + basis * local_corner;
@@ -383,38 +391,107 @@ __device__ __forceinline__ void resolve_chassis_arena_collision(
         Vec3 normal(0.0f, 0.0f, 1.0f);
         arena_sdf_and_normal(world_corner, dist, normal);
 
-        if (dist < 0.0f) {
-            has_contact = true;
-            sum_normal = sum_normal + normal;
-
-            float depth = -dist;
-            pos = pos + normal * (depth * 0.125f); // Distributed position correction
-
-            Vec3 rel_pos = world_corner - pos;
-            Vec3 pt_vel = vel + omega.cross(rel_pos);
-            float vn = normal.dot(pt_vel);
-
-            if (vn < 0.0f) {
-                float impulse_mag = -(1.1f * vn) + (0.2f * depth / dt);
-                Vec3 impulse = normal * (impulse_mag * CAR_MASS * 0.125f);
-                vel = vel + impulse * (1.0f / CAR_MASS);
-                omega = omega + rel_pos.cross(impulse) * (1.0f / (CAR_MASS * 1000.0f));
-            }
+        if (dist < min_dist) {
+            min_dist = dist;
+            best_corner = i;
+            best_normal = normal;
+            best_world_corner = world_corner;
         }
     }
 
-    if (has_contact) {
-        Vec3 avg_normal = (sum_normal.length_sq() > 1e-6f) ? sum_normal.normalized() : Vec3(0.0f, 0.0f, 1.0f);
-        car_state.world_contact_has_contact[car_idx] = 1;
-        car_state.world_contact_normal_x[car_idx]    = avg_normal.x;
-        car_state.world_contact_normal_y[car_idx]    = avg_normal.y;
-        car_state.world_contact_normal_z[car_idx]    = avg_normal.z;
-    } else {
-        car_state.world_contact_has_contact[car_idx] = 0;
-        car_state.world_contact_normal_x[car_idx]    = 0.0f;
-        car_state.world_contact_normal_y[car_idx]    = 0.0f;
-        car_state.world_contact_normal_z[car_idx]    = 0.0f;
+    if (min_dist <= CHASSIS_MARGIN_UU && best_corner >= 0) {
+        Vec3 rel_pos_bt = (best_world_corner - pos) * 0.02f;
+        Vec3 vel_bt = vel * 0.02f;
+        Vec3 pt_vel_bt = vel_bt + omega.cross(rel_pos_bt);
+        float vn_bt = best_normal.dot(pt_vel_bt);
+
+        if (vn_bt < 0.0f) {
+            car_state.world_contact_has_contact[car_idx] = 1;
+            car_state.world_contact_normal_x[car_idx]    = best_normal.x;
+            car_state.world_contact_normal_y[car_idx]    = best_normal.y;
+            car_state.world_contact_normal_z[car_idx]    = best_normal.z;
+
+            // Bullet sequential impulse constraint solver for static contact
+            Vec3 inv_I = get_octane_inv_inertia_bt();
+            constexpr float inv_m = 1.0f / CAR_MASS;
+
+            Vec3 c_n = rel_pos_bt.cross(best_normal);
+            Vec3 c_n_loc = basis.transpose() * c_n;
+            float denom_n = inv_m + (c_n_loc.x * c_n_loc.x * inv_I.x +
+                                     c_n_loc.y * c_n_loc.y * inv_I.y +
+                                     c_n_loc.z * c_n_loc.z * inv_I.z);
+            float jac_n = 1.0f / denom_n;
+            Vec3 ang_comp_n = basis * Vec3(c_n_loc.x * inv_I.x, c_n_loc.y * inv_I.y, c_n_loc.z * inv_I.z);
+
+            // Positional error if penetrated past margin core
+            float penetration_bt = min_dist * 0.02f;
+            float pos_err = (penetration_bt < 0.0f) ? (-penetration_bt * 0.8f / dt) : 0.0f;
+            Vec3 pt_vel_pre_bt = vel_pre * 0.02f + omega_pre.cross(rel_pos_bt);
+            float vn_pre_bt = best_normal.dot(pt_vel_pre_bt);
+            float rest = (vn_pre_bt < -0.2f) ? (0.3f * (-vn_pre_bt)) : 0.0f;
+            float rhs_n = (rest - vn_bt + pos_err) * jac_n;
+
+            // Friction setup (Coulomb friction mu = 0.3)
+            Vec3 v_tan_bt = pt_vel_bt - best_normal * vn_bt;
+            float v_tan_len = v_tan_bt.length();
+            Vec3 lat_dir = (v_tan_len > 1e-4f) ? (v_tan_bt * (1.0f / v_tan_len)) : Vec3(0.0f, 0.0f, 0.0f);
+            float vt_bt = v_tan_len;
+
+            Vec3 c_t = rel_pos_bt.cross(lat_dir);
+            Vec3 c_t_loc = basis.transpose() * c_t;
+            float denom_t = inv_m + (c_t_loc.x * c_t_loc.x * inv_I.x +
+                                     c_t_loc.y * c_t_loc.y * inv_I.y +
+                                     c_t_loc.z * c_t_loc.z * inv_I.z);
+            float jac_t = (denom_t > 1e-6f) ? (1.0f / denom_t) : 0.0f;
+            Vec3 ang_comp_t = basis * Vec3(c_t_loc.x * inv_I.x, c_t_loc.y * inv_I.y, c_t_loc.z * inv_I.z);
+            float rhs_t = -vt_bt * jac_t;
+
+            // 10 Gauss-Seidel sequential impulse iterations matching Bullet
+            float applied_n = 0.0f;
+            float applied_t = 0.0f;
+            Vec3 delta_lin_bt(0.0f, 0.0f, 0.0f);
+            Vec3 delta_ang(0.0f, 0.0f, 0.0f);
+
+            #pragma unroll
+            for (int iter = 0; iter < 10; ++iter) {
+                // Normal constraint row
+                float dv_n = best_normal.dot(delta_lin_bt) + c_n.dot(delta_ang);
+                float delta_n = rhs_n - dv_n * jac_n;
+                float new_n = fmaxf(0.0f, applied_n + delta_n);
+                delta_n = new_n - applied_n;
+                applied_n = new_n;
+                delta_lin_bt = delta_lin_bt + best_normal * (delta_n * inv_m);
+                delta_ang = delta_ang + ang_comp_n * delta_n;
+
+                // Friction constraint row
+                if (v_tan_len > 1e-4f) {
+                    float max_fric = 0.3f * applied_n;
+                    float dv_t = lat_dir.dot(delta_lin_bt) + c_t.dot(delta_ang);
+                    float delta_t = rhs_t - dv_t * jac_t;
+                    float new_t = fminf(fmaxf(applied_t + delta_t, -max_fric), max_fric);
+                    delta_t = new_t - applied_t;
+                    applied_t = new_t;
+                    delta_lin_bt = delta_lin_bt + lat_dir * (delta_t * inv_m);
+                    delta_ang = delta_ang + ang_comp_t * delta_t;
+                }
+            }
+
+            vel = vel + delta_lin_bt * 50.0f;
+            omega = omega + delta_ang;
+            if (car_idx == 0) {
+                printf("  [GPU CHASSIS SOLVER] vn=%f rhs_n=%f jac_n=%f applied_n=%f applied_t=%f rel_pos=(%f,%f,%f) pt_vel=(%f,%f,%f)\n",
+                       vn_bt, rhs_n, jac_n, applied_n, applied_t,
+                       rel_pos_bt.x, rel_pos_bt.y, rel_pos_bt.z,
+                       pt_vel_bt.x, pt_vel_bt.y, pt_vel_bt.z);
+            }
+            return;
+        }
     }
+
+    car_state.world_contact_has_contact[car_idx] = 0;
+    car_state.world_contact_normal_x[car_idx]    = 0.0f;
+    car_state.world_contact_normal_y[car_idx]    = 0.0f;
+    car_state.world_contact_normal_z[car_idx]    = 0.0f;
 }
 
 } // namespace rocketsim_cuda

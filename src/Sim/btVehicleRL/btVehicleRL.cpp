@@ -151,6 +151,16 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
 		float wheelTraceLenSq = (wheel.m_raycastInfo.m_hardPointWS - wheel.m_raycastInfo.m_contactPointWS).dot(getUpVector());
 		wheel.m_raycastInfo.m_suspensionLength = wheelTraceLenSq - wheel.m_wheelsRadius;
 
+		if (m_chassisBody->getWorldTransform().getOrigin().x() < -46.0f) {
+			int w_idx = (int)(&wheel - &m_wheelInfo[0]);
+			printf("  [CPU RAYCAST W%d] hardPt=(%f,%f,%f) contactPt=(%f,%f,%f) up=(%f,%f,%f) traceLen=%f suspLen=%f\n",
+				w_idx,
+				wheel.m_raycastInfo.m_hardPointWS.x(), wheel.m_raycastInfo.m_hardPointWS.y(), wheel.m_raycastInfo.m_hardPointWS.z(),
+				wheel.m_raycastInfo.m_contactPointWS.x(), wheel.m_raycastInfo.m_contactPointWS.y(), wheel.m_raycastInfo.m_contactPointWS.z(),
+				getUpVector().x(), getUpVector().y(), getUpVector().z(),
+				wheelTraceLenSq, wheel.m_raycastInfo.m_suspensionLength);
+		}
+
 		//clamp on max suspension travel
 		float minSuspensionLen = wheel.getSuspensionRestLength() - suspensionTravel;
 		float maxSuspensionLen = wheel.getSuspensionRestLength() + suspensionTravel;
@@ -194,6 +204,13 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
 				);
 
 				wheel.m_extraPushback = collisionResult / getNumWheels();
+				std::cout << "  [CPU WHEEL PUSHBACK] wheelTraceLenSq=" << wheelTraceLenSq
+				          << " thresh=" << rayPushbackThresh
+				          << " delta=" << wheelTraceDistDelta
+				          << " erp=" << m_dynamicsWorld->getSolverInfo().m_erp
+				          << " timeStep=" << m_dynamicsWorld->getSolverInfo().m_timeStep
+				          << " collRes=" << collisionResult
+				          << " extraPushback=" << wheel.m_extraPushback << std::endl;
 			}
 		}
 
@@ -297,6 +314,26 @@ void btVehicleRL::updateSuspension(float deltaTime) {
 			btVector3 contactPointOffset = wheel.m_raycastInfo.m_contactPointWS - getRigidBody()->getCenterOfMassPosition();
 			float baseForceScale = (wheel.m_wheelsSuspensionForce * deltaTime) + wheel.m_extraPushback;
 			btVector3 force = wheel.m_raycastInfo.m_contactNormalWS * baseForceScale;
+			if (m_chassisBody->getWorldTransform().getOrigin().x() < -46.0f) {
+				btVector3 angImp = contactPointOffset.cross(force);
+				btVector3 deltaOmega = m_chassisBody->getInvInertiaTensorWorld() * angImp;
+				std::cout << "  [CPU SUSP " << i << "] force=" << wheel.m_wheelsSuspensionForce
+				          << " imp=(" << force.x() << "," << force.y() << "," << force.z() << ")"
+				          << " offset=(" << contactPointOffset.x() << "," << contactPointOffset.y() << "," << contactPointOffset.z() << ")"
+				          << " angImp=(" << angImp.x() << "," << angImp.y() << "," << angImp.z() << ")"
+				          << " deltaOmega=(" << deltaOmega.x() << "," << deltaOmega.y() << "," << deltaOmega.z() << ")\n"
+				          << "  [CPU INERTIA] diagLocal=(" << m_chassisBody->getInvInertiaDiagLocal().x() << ","
+				          << m_chassisBody->getInvInertiaDiagLocal().y() << "," << m_chassisBody->getInvInertiaDiagLocal().z() << ")\n"
+				          << "  [CPU BASIS] col0=(" << m_chassisBody->getWorldTransform().getBasis().getColumn(0).x() << ","
+				          << m_chassisBody->getWorldTransform().getBasis().getColumn(0).y() << ","
+				          << m_chassisBody->getWorldTransform().getBasis().getColumn(0).z() << ")\n"
+				          << "  [CPU BASIS] col1=(" << m_chassisBody->getWorldTransform().getBasis().getColumn(1).x() << ","
+				          << m_chassisBody->getWorldTransform().getBasis().getColumn(1).y() << ","
+				          << m_chassisBody->getWorldTransform().getBasis().getColumn(1).z() << ")\n"
+				          << "  [CPU BASIS] col2=(" << m_chassisBody->getWorldTransform().getBasis().getColumn(2).x() << ","
+				          << m_chassisBody->getWorldTransform().getBasis().getColumn(2).y() << ","
+				          << m_chassisBody->getWorldTransform().getBasis().getColumn(2).z() << ")\n";
+			}
 			m_chassisBody->applyImpulse(force, contactPointOffset);
 		}
 	}

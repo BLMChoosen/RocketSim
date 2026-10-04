@@ -106,7 +106,7 @@ __device__ void StepCarDevice(
     WheelRaycastResult wheel_results[4];
 
     evaluate_car_wheels_raycast(
-        pos, vel, omega, basis, dt,
+        pos, pos_bt, vel, omega, basis, dt,
         wheels_contact, susp_lengths,
         wheel_results
     );
@@ -145,14 +145,17 @@ __device__ void StepCarDevice(
         num_wheels_contact, wheels_contact,
         contact_normals, basis,
         vel, omega, dt,
+        cached_steer_angle,
         total_force
     );
+
+    Vec3 total_torque(0.0f, 0.0f, 0.0f);
 
     // 6. Air control vs flipping reset
     float fwd_speed = vel.dot(basis.forward);
     if (num_wheels_contact < 3) {
         bool allow_air_torque = (num_wheels_contact == 0);
-        update_car_air_control(car_idx, car_state, ctrl, basis, dt, omega, total_force, allow_air_torque);
+        update_car_air_control(car_idx, car_state, ctrl, basis, dt, omega, total_force, total_torque, allow_air_torque);
     } else {
         car_state.is_flipping[car_idx] = 0;
     }
@@ -167,7 +170,7 @@ __device__ void StepCarDevice(
     if (ctrl.throttle != 0.0f && ((num_wheels_contact > 0 && num_wheels_contact < 4) || car_state.world_contact_has_contact[car_idx])) {
         update_car_auto_roll(
             car_idx, car_state, num_wheels_contact, wheels_contact,
-            contact_normals, basis, dt, total_force, omega
+            contact_normals, basis, dt, total_force, total_torque
         );
     }
 
@@ -182,26 +185,27 @@ __device__ void StepCarDevice(
         vel, omega
     );
 
+    Vec3 vel_pre = vel;
+    Vec3 omega_pre = omega;
+
+    // 10b. Integrate air control and autoroll torques (matches btRigidBody::integrateVelocities)
+    omega = omega + total_torque * dt;
+
     // 11. Boost update (persists minimum boost time and fuel)
     update_car_boost(car_idx, car_state, ctrl, is_on_ground, basis, dt, total_force);
 
     // 12. Gravity
     total_force.z += GRAVITY_Z * CAR_MASS;
 
-    // 13. Symplectic Euler linear integration (in Bullet units for exact rounding parity)
+    // 13. Gravity integration
     vel = vel + total_force * ((1.0f / CAR_MASS) * dt);
+
+    // 14. Chassis arena contact (Bullet constraint solver)
+    resolve_chassis_arena_collision(car_idx, car_state, pos, vel_pre, omega_pre, vel, omega, basis, dt);
+
+    // 15. Symplectic Euler linear integration (in Bullet units for exact rounding parity)
     pos_bt = pos_bt + (vel * 0.02f) * dt;
     pos = pos_bt * 50.0f;
-
-    // 14. Angular dynamics
-    Vec3 total_torque(0.0f, 0.0f, 0.0f);
-    bullet_angular_dynamics(omega, total_torque, get_octane_inv_inertia_local(), basis, dt);
-
-    // 15. Chassis arena contact
-    resolve_chassis_arena_collision(car_idx, car_state, pos, vel, omega, basis, dt);
-    if (car_state.world_contact_has_contact[car_idx]) {
-        pos_bt = pos * 0.02f;
-    }
 
     // 14. Quaternion integration
     quat = bullet_integrate_quaternion(quat, omega, dt);

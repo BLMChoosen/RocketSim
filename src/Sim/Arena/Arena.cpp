@@ -405,6 +405,16 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 }
 
 void Arena::_BtCallback_OnCarWorldCollision(Car* car, btCollisionObject* world, btManifoldPoint& manifoldPoint) {
+	std::cout << "  [CPU CHASSIS WORLD COLLISION] normal=(" << manifoldPoint.m_normalWorldOnB.x() << ","
+	          << manifoldPoint.m_normalWorldOnB.y() << "," << manifoldPoint.m_normalWorldOnB.z() << ")"
+	          << " dist=" << manifoldPoint.getDistance()
+	          << " ptA=(" << manifoldPoint.m_positionWorldOnA.x() * BT_TO_UU << "," << manifoldPoint.m_positionWorldOnA.y() * BT_TO_UU << "," << manifoldPoint.m_positionWorldOnA.z() * BT_TO_UU << ")"
+	          << " ptB=(" << manifoldPoint.m_positionWorldOnB.x() * BT_TO_UU << "," << manifoldPoint.m_positionWorldOnB.y() * BT_TO_UU << "," << manifoldPoint.m_positionWorldOnB.z() * BT_TO_UU << ")"
+	          << " localA=(" << manifoldPoint.m_localPointA.x() * BT_TO_UU << "," << manifoldPoint.m_localPointA.y() * BT_TO_UU << "," << manifoldPoint.m_localPointA.z() * BT_TO_UU << ")"
+	          << " marginCar=" << car->_childHitboxShape.getMargin() * BT_TO_UU
+	          << " marginComp=" << car->_compoundShape.getMargin() * BT_TO_UU
+	          << " pos=(" << car->GetState().pos.x << "," << car->GetState().pos.y << "," << car->GetState().pos.z << ")"
+	          << std::endl;
 	car->_internalState.worldContact.hasContact = true;
 	car->_internalState.worldContact.contactNormal = manifoldPoint.m_normalWorldOnB;
 
@@ -718,6 +728,24 @@ void Arena::Step(int ticksToSimulate) {
 		_bulletWorld.stepSimulation(tickTime, 0, tickTime);
 
 		for (Car* car : _cars) {
+			int numManifolds = _bulletWorld.getDispatcher()->getNumManifolds();
+			for (int m = 0; m < numManifolds; m++) {
+				btPersistentManifold* contactManifold = _bulletWorld.getDispatcher()->getManifoldByIndexInternal(m);
+				const btCollisionObject* obA = contactManifold->getBody0();
+				const btCollisionObject* obB = contactManifold->getBody1();
+				if (obA == &car->_rigidBody || obB == &car->_rigidBody) {
+					for (int p = 0; p < contactManifold->getNumContacts(); p++) {
+						btManifoldPoint& pt = contactManifold->getContactPoint(p);
+						std::cout << "  [CPU POST-STEP MANIFOLD] appliedImp=" << pt.m_appliedImpulse
+						          << " appliedLat1=" << pt.m_appliedImpulseLateral1
+						          << " appliedLat2=" << pt.m_appliedImpulseLateral2
+						          << " normal=(" << pt.m_normalWorldOnB.x() << "," << pt.m_normalWorldOnB.y() << "," << pt.m_normalWorldOnB.z() << ")"
+						          << " posA=(" << pt.m_positionWorldOnA.x() * BT_TO_UU << "," << pt.m_positionWorldOnA.y() * BT_TO_UU << "," << pt.m_positionWorldOnA.z() * BT_TO_UU << ")"
+						          << " dist=" << pt.getDistance()
+						          << std::endl;
+					}
+				}
+			}
 			car->_PostTickUpdate(gameMode, tickTime, _mutatorConfig);
 			car->_FinishPhysicsTick(_mutatorConfig);
 			if (hasArenaStuff) {

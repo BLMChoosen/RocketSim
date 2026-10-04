@@ -153,6 +153,7 @@ __device__ __forceinline__ void update_car_wheel_dynamics(
     const Vec3& vel,
     const Vec3& omega,
     float dt,
+    float cached_steer_angle,
     Vec3& total_force)
 {
     float fwd_speed = vel.dot(basis.forward);
@@ -217,20 +218,46 @@ __device__ __forceinline__ void update_car_wheel_dynamics(
         if (!wheels_contact[w]) continue;
 
         Vec3 hit_normal = contact_normals[w];
-        float steer = (w < 2) ? steer_angle : 0.0f;
-        Vec3 axle_dir_raw = basis.right * cosf(steer) - basis.forward * sinf(steer);
-        float proj_axle = axle_dir_raw.dot(hit_normal);
-        Vec3 axle_dir = (axle_dir_raw - hit_normal * proj_axle).normalized();
-        Vec3 forward_dir = hit_normal.cross(axle_dir).normalized();
+        float steer = (w < 2) ? cached_steer_angle : 0.0f;
+        Vec3 lat_dir = basis.right * cosf(steer) - basis.forward * sinf(steer);
+        Vec3 long_dir = lat_dir.cross(hit_normal);
 
         Vec3 wheel_offset = get_octane_wheel_offset(w);
         Vec3 wheel_delta = basis * wheel_offset;
         Vec3 cross_vec = omega.cross(wheel_delta) + vel;
 
-        float base_friction = fabsf(cross_vec.dot(axle_dir));
+        float base_friction = fabsf(cross_vec.dot(lat_dir));
         float friction_curve_input = 0.0f;
         if (base_friction > 5.0f) {
-            friction_curve_input = base_friction / (fabsf(cross_vec.dot(forward_dir)) + base_friction);
+            friction_curve_input = base_friction / (fabsf(cross_vec.dot(long_dir)) + base_friction);
+        }
+
+        if (w == 1 && car_state.pos_x[car_idx] < -2600.0f) {
+            printf("  [GPU WHEEL 1 DYNAMICS]\n"
+                   "    vel=(%f,%f,%f)\n"
+                   "    angVel=(%f,%f,%f)\n"
+                   "    wheel_delta=(%f,%f,%f)\n"
+                   "    cross_vec=(%f,%f,%f)\n"
+                   "    lat_dir=(%f,%f,%f)\n"
+                   "    contactNormalWS=(%f,%f,%f)\n"
+                   "    long_dir=(%f,%f,%f)\n"
+                   "    cross_vec.dot(lat_dir)=%f\n"
+                   "    cross_vec.dot(long_dir)=%f\n"
+                   "    base_friction=%f\n"
+                   "    frictionCurveInput=%f\n"
+                   "    steerAngle=%f\n",
+                   vel.x, vel.y, vel.z,
+                   omega.x, omega.y, omega.z,
+                   wheel_delta.x, wheel_delta.y, wheel_delta.z,
+                   cross_vec.x, cross_vec.y, cross_vec.z,
+                   lat_dir.x, lat_dir.y, lat_dir.z,
+                   hit_normal.x, hit_normal.y, hit_normal.z,
+                   long_dir.x, long_dir.y, long_dir.z,
+                   cross_vec.dot(lat_dir),
+                   cross_vec.dot(long_dir),
+                   base_friction,
+                   friction_curve_input,
+                   steer);
         }
 
         float lat_fric = get_lat_friction(friction_curve_input);
@@ -445,8 +472,9 @@ __device__ __forceinline__ void update_car_air_control(
     const CarControls& controls,
     const Mat3& basis,
     float dt,
-    Vec3& omega,
+    const Vec3& omega,
     Vec3& total_force,
+    Vec3& total_torque,
     bool allow_air_torque = true)
 {
     // Air throttle
@@ -457,9 +485,6 @@ __device__ __forceinline__ void update_car_air_control(
     Vec3 dir_pitch = basis.right * -1.0f;
     Vec3 dir_yaw = basis.up;
     Vec3 dir_roll = basis.forward * -1.0f;
-
-    Vec3 dodge_torque_delta(0.0f, 0.0f, 0.0f);
-    Vec3 initial_omega = omega;
 
     bool is_flipping = (car_state.is_flipping[car_idx] != 0);
     float flip_time = car_state.flip_time[car_idx];
@@ -493,7 +518,7 @@ __device__ __forceinline__ void update_car_air_control(
                 rel_dodge_torque.y * FLIP_TORQUE_Y,
                 0.0f
             );
-            dodge_torque_delta = basis * dodge_torque * dt;
+            total_torque = total_torque + basis * dodge_torque;
         } else {
             do_air_control = true;
         }
@@ -503,7 +528,6 @@ __device__ __forceinline__ void update_car_air_control(
 
     do_air_control = do_air_control && allow_air_torque && (car_state.is_auto_flipping[car_idx] == 0);
 
-    Vec3 air_control_delta(0.0f, 0.0f, 0.0f);
     if (do_air_control) {
         float pitch_torque_scale = 1.0f;
         if (is_flipping) {
@@ -516,15 +540,13 @@ __device__ __forceinline__ void update_car_air_control(
                         + dir_yaw * (controls.yaw * CAR_AIR_CONTROL_TORQUE_Y)
                         + dir_roll * (controls.roll * CAR_AIR_CONTROL_TORQUE_Z);
 
-        float damp_pitch = dir_pitch.dot(initial_omega) * CAR_AIR_CONTROL_DAMPING_X * (1.0f - fabsf(controls.pitch * pitch_torque_scale));
-        float damp_yaw = dir_yaw.dot(initial_omega) * CAR_AIR_CONTROL_DAMPING_Y * (1.0f - fabsf(controls.yaw));
-        float damp_roll = dir_roll.dot(initial_omega) * CAR_AIR_CONTROL_DAMPING_Z;
+        float damp_pitch = dir_pitch.dot(omega) * CAR_AIR_CONTROL_DAMPING_X * (1.0f - fabsf(controls.pitch * pitch_torque_scale));
+        float damp_yaw = dir_yaw.dot(omega) * CAR_AIR_CONTROL_DAMPING_Y * (1.0f - fabsf(controls.yaw));
+        float damp_roll = dir_roll.dot(omega) * CAR_AIR_CONTROL_DAMPING_Z;
 
         Vec3 air_damping = dir_yaw * damp_yaw + dir_pitch * damp_pitch + dir_roll * damp_roll;
-        air_control_delta = (air_torque - air_damping) * (CAR_TORQUE_SCALE * dt);
+        total_torque = total_torque + (air_torque - air_damping) * CAR_TORQUE_SCALE;
     }
-
-    omega = initial_omega + dodge_torque_delta + air_control_delta;
 }
 
 /**
@@ -595,7 +617,7 @@ __device__ __forceinline__ void update_car_auto_roll(
     const Mat3& basis,
     float dt,
     Vec3& total_force,
-    Vec3& omega)
+    Vec3& total_torque)
 {
     Vec3 ground_up_dir;
     if (num_wheels_in_contact > 0) {
@@ -637,7 +659,7 @@ __device__ __forceinline__ void update_car_auto_roll(
     Vec3 torque_forward = torque_dir_forward * forward_torque_factor;
 
     total_force = total_force + ground_down_dir * (CAR_AUTOROLL_FORCE * CAR_MASS);
-    omega = omega + (torque_forward + torque_right) * (CAR_AUTOROLL_TORQUE * dt);
+    total_torque = total_torque + (torque_forward + torque_right) * CAR_AUTOROLL_TORQUE;
 }
 
 /**
