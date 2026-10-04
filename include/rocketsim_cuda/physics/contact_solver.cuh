@@ -64,52 +64,88 @@ __device__ __forceinline__ bool test_car_ball_collision(
     Vec3 hitbox_half = get_octane_hitbox_half();
     Vec3 hitbox_center = car_pos + car_basis * hitbox_offset;
 
+    constexpr float BOX_MARGIN = 2.0f; // Bullet CONVEX_DISTANCE_MARGIN = 0.04 BT = 2.0 UU
+    Vec3 inner_half = hitbox_half - Vec3(BOX_MARGIN, BOX_MARGIN, BOX_MARGIN);
+
     // 1. Transform ball into car hitbox local frame
     Vec3 d_world = ball_pos - hitbox_center;
     Vec3 p_local = car_basis.transpose() * d_world;
 
-    // 2. Clamp to box half-extents to find closest point on OBB
-    Vec3 q_local(
-        fmaxf(-hitbox_half.x, fminf(hitbox_half.x, p_local.x)),
-        fmaxf(-hitbox_half.y, fminf(hitbox_half.y, p_local.y)),
-        fmaxf(-hitbox_half.z, fminf(hitbox_half.z, p_local.z))
+    // 2. Clamp to inner box half-extents (matching btSphereBoxCollisionAlgorithm)
+    Vec3 q_inner(
+        fmaxf(-inner_half.x, fminf(inner_half.x, p_local.x)),
+        fmaxf(-inner_half.y, fminf(inner_half.y, p_local.y)),
+        fmaxf(-inner_half.z, fminf(inner_half.z, p_local.z))
     );
 
-    Vec3 diff_local = p_local - q_local;
+    Vec3 diff_local = p_local - q_inner;
     float dist_sq = diff_local.length_sq();
+    float total_radius = ball_radius + BOX_MARGIN;
 
-    if (dist_sq > ball_radius * ball_radius) {
+    if (dist_sq > total_radius * total_radius) {
         return false;
     }
 
     Vec3 normal_local;
+    Vec3 q_box;
     if (dist_sq > 1e-8f) {
         float dist = sqrtf(dist_sq);
         normal_local = diff_local * (1.0f / dist);
-        out_penetration = ball_radius - dist;
+        out_penetration = total_radius - dist;
+        q_box = q_inner + normal_local * BOX_MARGIN;
     } else {
-        // Center is inside the box: project to the closest face
-        float dx = hitbox_half.x - fabsf(p_local.x);
-        float dy = hitbox_half.y - fabsf(p_local.y);
-        float dz = hitbox_half.z - fabsf(p_local.z);
+        // Center is inside inner box: project to closest face (mirroring btSphereBoxCollisionAlgorithm::getSpherePenetration)
+        float min_dist = inner_half.x - p_local.x;
+        normal_local = Vec3(1.0f, 0.0f, 0.0f);
+        Vec3 closest_pt = p_local;
+        closest_pt.x = inner_half.x;
 
-        if (dx <= dy && dx <= dz) {
-            normal_local = Vec3((p_local.x >= 0.0f) ? 1.0f : -1.0f, 0.0f, 0.0f);
-            out_penetration = ball_radius + dx;
-            q_local.x = (p_local.x >= 0.0f) ? hitbox_half.x : -hitbox_half.x;
-        } else if (dy <= dz) {
-            normal_local = Vec3(0.0f, (p_local.y >= 0.0f) ? 1.0f : -1.0f, 0.0f);
-            out_penetration = ball_radius + dy;
-            q_local.y = (p_local.y >= 0.0f) ? hitbox_half.y : -hitbox_half.y;
-        } else {
-            normal_local = Vec3(0.0f, 0.0f, (p_local.z >= 0.0f) ? 1.0f : -1.0f);
-            out_penetration = ball_radius + dz;
-            q_local.z = (p_local.z >= 0.0f) ? hitbox_half.z : -hitbox_half.z;
+        float face_dist = inner_half.x + p_local.x;
+        if (face_dist < min_dist) {
+            min_dist = face_dist;
+            closest_pt = p_local;
+            closest_pt.x = -inner_half.x;
+            normal_local = Vec3(-1.0f, 0.0f, 0.0f);
         }
+
+        face_dist = inner_half.y - p_local.y;
+        if (face_dist < min_dist) {
+            min_dist = face_dist;
+            closest_pt = p_local;
+            closest_pt.y = inner_half.y;
+            normal_local = Vec3(0.0f, 1.0f, 0.0f);
+        }
+
+        face_dist = inner_half.y + p_local.y;
+        if (face_dist < min_dist) {
+            min_dist = face_dist;
+            closest_pt = p_local;
+            closest_pt.y = -inner_half.y;
+            normal_local = Vec3(0.0f, -1.0f, 0.0f);
+        }
+
+        face_dist = inner_half.z - p_local.z;
+        if (face_dist < min_dist) {
+            min_dist = face_dist;
+            closest_pt = p_local;
+            closest_pt.z = inner_half.z;
+            normal_local = Vec3(0.0f, 0.0f, 1.0f);
+        }
+
+        face_dist = inner_half.z + p_local.z;
+        if (face_dist < min_dist) {
+            min_dist = face_dist;
+            closest_pt = p_local;
+            closest_pt.z = -inner_half.z;
+            normal_local = Vec3(0.0f, 0.0f, -1.0f);
+        }
+
+        out_penetration = total_radius + min_dist;
+        q_box = closest_pt + normal_local * BOX_MARGIN;
     }
 
     out_normal_world = car_basis * normal_local;
-    out_contact_pt_world = hitbox_center + car_basis * q_local;
+    out_contact_pt_world = hitbox_center + car_basis * q_box;
     return true;
 }
 
@@ -176,7 +212,7 @@ __device__ __forceinline__ bool resolve_car_ball_collision(
 
     // Contact point lever arms
     Vec3 r_c = contact_pt_world - car_pos;
-    Vec3 r_b = contact_pt_world - ball_pos;
+    Vec3 r_b = normal_world * (-BALL_RADIUS);
 
     // Contact point velocities
     Vec3 v_c_pt = car_vel + car_omega.cross(r_c);
@@ -246,9 +282,15 @@ __device__ __forceinline__ bool resolve_car_ball_collision(
     // Apply RocketSim extra hit impulse to ball
     ball_vel = ball_vel + added_vel;
 
-    // Resolve interpenetration: push ball along contact normal
+    // Resolve interpenetration: distribute split-impulse penetration push
     if (penetration > 0.0f) {
-        ball_pos = ball_pos + normal_world * penetration;
+        float p_push = penetration * 0.8f; // erp2 = 0.8f
+        float mass_sum = CAR_MASS + BALL_MASS; // 180 + 30 = 210
+        float ball_frac = CAR_MASS / mass_sum; // 180 / 210 = 6/7
+        float car_frac  = BALL_MASS / mass_sum; // 30 / 210 = 1/7
+
+        ball_pos = ball_pos + normal_world * (p_push * ball_frac);
+        car_pos  = car_pos  - normal_world * (p_push * car_frac);
     }
 
     // Velocity Clamping
@@ -300,6 +342,10 @@ __device__ __forceinline__ bool resolve_car_ball_collision(
     ball_state.ang_vel_z[env_idx] = ball_omega.z;
 
     // Write back updated car state
+    car_state.pos_x[car_idx] = car_pos.x;
+    car_state.pos_y[car_idx] = car_pos.y;
+    car_state.pos_z[car_idx] = car_pos.z;
+
     car_state.vel_x[car_idx] = car_vel.x;
     car_state.vel_y[car_idx] = car_vel.y;
     car_state.vel_z[car_idx] = car_vel.z;

@@ -704,7 +704,7 @@ bool RunScenarioDifferential(
                 }
             }
 
-            if (scenario_name == "kickoff_goalie" && e == 0) {
+            if ((scenario_name == "kickoff_goalie" || scenario_name == "car_ball_hit") && e == 0) {
                 if (report.goalie.touch_tick_cpu == -1 && cpu_balls[e].vel.length() > 50.0f) {
                     report.goalie.touch_tick_cpu = static_cast<int>(t);
                     report.goalie.car_pos_impact_cpu = cpu_cars[e].pos;
@@ -896,7 +896,7 @@ void PrintScenarioReportTable(const std::vector<ScenarioReport>& reports, std::o
             pitch_deg = std::atan2(v.z, horiz) * 57.29577951308232f;
         };
 
-        if (rep.name == "kickoff_goalie") {
+        if (rep.name == "kickoff_goalie" || rep.name == "car_ball_hit") {
             float yaw_cpu_1, pitch_cpu_1, yaw_gpu_1, pitch_gpu_1;
             compute_angle(rep.goalie.ball_vel_plus_1_cpu, yaw_cpu_1, pitch_cpu_1);
             compute_angle(rep.goalie.ball_vel_plus_1_gpu, yaw_gpu_1, pitch_gpu_1);
@@ -909,7 +909,7 @@ void PrintScenarioReportTable(const std::vector<ScenarioReport>& reports, std::o
             compute_angle(rep.goalie.ball_vel_plus_60_cpu, yaw_cpu_60, pitch_cpu_60);
             compute_angle(rep.goalie.ball_vel_plus_60_gpu, yaw_gpu_60, pitch_gpu_60);
 
-            os << "\n#### Kickoff Goalie Impact & Collision Gate Analysis\n"
+            os << "\n#### " << (rep.name == "kickoff_goalie" ? "Kickoff Goalie" : "Car-Ball Hit") << " Impact & Collision Gate Analysis\n"
                << "| Metric | CPU Reference | GPU Kernel | Delta |\n"
                << "| :--- | :--- | :--- | :--- |\n"
                << "| First Touch Tick | " << rep.goalie.touch_tick_cpu << " | " << rep.goalie.touch_tick_gpu

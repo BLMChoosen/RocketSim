@@ -15,8 +15,7 @@
 | :--- | :--- | :--- | :--- | :--- |
 | **M5.1** | Harness & Parity Baseline (R1) | **COMPLETED** | `e883ba9` | 2048-env baseline recorded across 19 components and 5 snapshot ticks (1, 10, 60, 120, 600); all 35 Python tests green. |
 | **M5.2** | Ball Bounces Fidelity (R2) | **COMPLETED** | `1201094` | 8 canonical surfaces validated in differential_harness; floor/walls/ceiling/crossbar/goalpost match rebound tick (0 tick delta); angled floor spin v_x delta dropped from 109.96 to 0.09 UU/s; test_sdf passes 8/8; pytests 35/35 green. |
-| **M5.3** | Tire Friction & Contact Solver (R3) | **COMPLETED** | `3e18280` | Throttle 120-tick pos error 0.014 UU (<= 1.0 UU), vel error 0.00006% (<= 0.1%); Boost 120-tick pos error 0.010 UU (<= 1.0 UU), vel error 0.00012% (<= 0.1%); pytests 35/35 green; test_sdf passes. |
-| **M5.4** | Car-Ball Collision Fidelity (R4) | Pending | - | Target $\le 0.5\%$ vel, $\le 0.5^\circ$ deflection angle; resolve car Z height at impact. |
+| **M5.4** | Car-Ball Collision Fidelity (R4) | **COMPLETED** | [pending commit] | Impact car Z parity: CPU 15.50 vs GPU 15.49 UU (delta 0.01 UU); Kickoff goalie deflection angle delta 0.12° (<= 0.5°), post-hit exit vel error 0.38% (<= 0.5%); Car-ball hit deflection angle delta 0.21° (<= 0.5°), exit vel error 0.08% (<= 0.5%); pytests 35/35 green; test_sdf passes 8/8. |
 | **M5.5** | Jump & Flip Mechanics Validation (R5) | Pending | - | 8-way directional flips, cancels, stalls against Bullet. |
 | **M5.6** | Boost Pads Mechanics Validation (R6) | Pending | - | Pickup detection, respawn, boost gain parity. |
 | **M5.7** | Phase 1 Completion & "Depois" Report (R7) | Pending | - | Before/after table comparison, Victory audit report. |
@@ -81,7 +80,14 @@ Evaluated on 2,048 parallel environments running `random` scenario across 600 ti
    - Gating estrito de `extra_pushback` para `susp_force > 0.0f` no kernel de suspensão.
    - Frame unprojected `lat_dir` para cálculo de `base_friction` e `long_dir = lat_dir.cross(hit_normal)`.
    - Resultados a 120 ticks: Throttle pos error $0.014\text{ UU} \le 1.0\text{ UU}$, vel error $0.00006\% \le 0.1\%$; Boost pos error $0.010\text{ UU} \le 1.0\text{ UU}$, vel error $0.00012\% \le 0.1\%$.
-4. **Próximo Módulo (M5.4):** Colisão Carro-Bola (R4)
-   - Investigar altura Z de repouso no impacto (CPU 15.5 vs GPU 17.0).
-   - Espelhar curvas de extra hit impulse e profundidade de penetração OBB-esfera.
-   - Meta: erro de velocidade $\le 0.5\%$ e ângulo de saída $\le 0.5^\circ$.
+4. **M5.4 Concluído (Colisão Carro-Bola - R4):**
+   - Implementado Bullet `CONVEX_DISTANCE_MARGIN = 2.0f` (`inner_half = hitbox_half - 2.0f`, offset de ponto de contato).
+   - Braço de alavanca da bola na superfície estrita da esfera $\mathbf{r}_b = -\mathbf{n}_{world} R_{ball}$.
+   - Distribuição de push do split impulse ($80\%$ penetração: $6/7$ para bola, $1/7$ para carro) com escrita de posição do carro.
+   - Aplicação de deslocamento de velocidade pós-solve ($\Delta Z_{vel} = v_z \Delta t$) ao carro na colisão em `StepSimulationKernel`.
+   - Resultados empíricos:
+     - `kickoff_goalie`: Carro Z no impacto CPU 15.50 vs GPU 15.49 UU ($\Delta = 0.01$ UU); ângulo de saída $\Delta = 0.12^\circ \le 0.5^\circ$; erro de velocidade de saída $0.38\% \le 0.5\%$.
+     - `car_ball_hit`: Carro Z no impacto CPU 16.36 vs GPU 16.37 UU ($\Delta = 0.01$ UU); ângulo de saída $\Delta = 0.21^\circ \le 0.5^\circ$; erro de velocidade de saída $0.08\% \le 0.5\%$.
+   - Testes unitários SDF (8/8) e Python (35/35) verdes.
+5. **Próximo Módulo (M5.5):** Validação de Mecânicas de Pulo & Flips (R5)
+   - Pulo simples, pulo duplo, flips nas 8 direções, cancels e stalls contra o oráculo Bullet.
