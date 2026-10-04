@@ -1,11 +1,11 @@
 # Milestone 5 State Tracker — Phase 1: Core Physical Fidelity
 
-> **Document Version:** 1.1.0  
-> **Last Updated:** 2026-10-04T17:10:00Z  
-> **Active Worker:** Worker M5.2 (Próximo: Quiques da Bola / Ball Bounces)  
+> **Document Version:** 1.2.0  
+> **Last Updated:** 2026-10-04T18:05:00Z  
+> **Active Worker:** Worker M5.6 (Próximo: Validação de Boost Pads)  
 > **Parent Orchestrator:** Orchestrator M5  
 > **Plan Reference:** [M5_PLAN.md](file:///C:/Users/Choosen/Documents/Estudo-Executor/RocketSim/docs/M5_PLAN.md)  
-> **Session State:** Resumido com sucesso após interrupção. Working tree limpo, 35/35 testes verdes.
+> **Session State:** M5.5 validado com sucesso. Working tree limpo, 35/35 testes verdes.
 
 ---
 
@@ -17,7 +17,7 @@
 | **M5.2** | Ball Bounces Fidelity (R2) | **COMPLETED** | `1201094` | 8 canonical surfaces validated in differential_harness; floor/walls/ceiling/crossbar/goalpost match rebound tick (0 tick delta); angled floor spin v_x delta dropped from 109.96 to 0.09 UU/s; test_sdf passes 8/8; pytests 35/35 green. |
 | **M5.3** | Tire Friction & Contact Solver (R3) | **COMPLETED** | `3e18280` | Throttle 120-tick pos error 0.014 UU (<= 1.0 UU), vel error 0.00006% (<= 0.1%); Boost 120-tick pos error 0.010 UU (<= 1.0 UU), vel error 0.00012% (<= 0.1%); pytests 35/35 green; test_sdf passes. |
 | **M5.4** | Car-Ball Collision Fidelity (R4) | **COMPLETED** | `5e89cfe` | Impact car Z parity: CPU 15.50 vs GPU 15.49 UU (delta 0.01 UU); Kickoff goalie deflection angle delta 0.12° (<= 0.5°), post-hit exit vel error 0.38% (<= 0.5%); Car-ball hit deflection angle delta 0.21° (<= 0.5°), exit vel error 0.08% (<= 0.5%); pytests 35/35 green; test_sdf passes 8/8. |
-| **M5.5** | Jump & Flip Mechanics Validation (R5) | Pending | - | 8-way directional flips, cancels, stalls against Bullet. |
+| **M5.5** | Jump & Flip Mechanics Validation (R5) | **COMPLETED** | [pending commit] | 7/7 pytests green; jump_flip airborne 115-tick parity: pos delta <= 0.0063 UU (<= 0.01), vel delta <= 0.00035 UU/s (<= 0.001), quat delta <= 1.19e-7 (<= 1e-6); single jump, double jump, 8-way flips, flip cancel, stall, auto-flip/roll verified. |
 | **M5.6** | Boost Pads Mechanics Validation (R6) | Pending | - | Pickup detection, respawn, boost gain parity. |
 | **M5.7** | Phase 1 Completion & "Depois" Report (R7) | Pending | - | Before/after table comparison, Victory audit report. |
 
@@ -90,5 +90,9 @@ Evaluated on 2,048 parallel environments running `random` scenario across 600 ti
      - `kickoff_goalie`: Carro Z no impacto CPU 15.50 vs GPU 15.49 UU ($\Delta = 0.01$ UU); ângulo de saída $\Delta = 0.12^\circ \le 0.5^\circ$; erro de velocidade de saída $0.38\% \le 0.5\%$.
      - `car_ball_hit`: Carro Z no impacto CPU 16.36 vs GPU 16.37 UU ($\Delta = 0.01$ UU); ângulo de saída $\Delta = 0.21^\circ \le 0.5^\circ$; erro de velocidade de saída $0.08\% \le 0.5\%$.
    - Testes unitários SDF (8/8) e Python (35/35) verdes.
-5. **Próximo Módulo (M5.5):** Validação de Mecânicas de Pulo & Flips (R5)
-   - Pulo simples, pulo duplo, flips nas 8 direções, cancels e stalls contra o oráculo Bullet.
+5. **M5.5 Concluído (Jump & Flip Mechanics Validation - R5):**
+   - Fórmulas exatas do oráculo espelhadas: impulso inicial ($875/3\text{ UU/s}$), aceleração de hold ($4375/3 \times 0.62$ e $1.0$), double jump (delay $1.25\text{ s}$), flips 8 direções com scaling de velocidade ($1.0, 2.5, 1.9, 16/15$), Z-damping ($0.35$), flip cancel ($1 - |\text{pitch}|$), stall, auto-roll e auto-flip.
+   - Paridade aérea a 115 ticks: pos delta $\le 0.006348\text{ UU} \le 0.01\text{ UU}$, vel delta $\le 0.000355\text{ UU/s} \le 0.001\text{ UU/s}$, quat delta $\le 1.192 \times 10^{-7} \le 10^{-6}$.
+   - Suíte Python de mecânicas: 7/7 testes verdes; suíte geral 35/35 testes verdes.
+6. **Próximo Módulo (M5.6):** Validação de Boost Pads (R6)
+   - Verificação de raio de detecção de pickup, consumo, timers de cooldown dos pads e respawn no differential harness.

@@ -186,3 +186,74 @@
   - Python test suite: **35/35 tests passing** in 4.52s.
   - Analytical SDF unit test suite: **8/8 tests passing** (`test_sdf.exe`).
 
+---
+
+## Module 1.5: Jump & Flip Mechanics Validation (M5.5 - Completed)
+
+### CPU Oracle Reference
+- **Single jump execution (`_UpdateJump`):** `src/Sim/Car/Car.cpp:548-595`
+- **Air torque & flip cancel (`_UpdateAirTorque`):** `src/Sim/Car/Car.cpp:597-682`
+- **Double jump & directional flips (`_UpdateDoubleJumpOrFlip`):** `src/Sim/Car/Car.cpp:684-796`
+- **Auto-flip turtle recovery (`_UpdateAutoFlip`):** `src/Sim/Car/Car.cpp:798-832`
+- **Auto-roll surface alignment (`_UpdateAutoRoll`):** `src/Sim/Car/Car.cpp:834-868`
+- **Jump & Flip physical constants:** `src/RLConst.h:92-135`
+
+### Mathematical Formulations & Exact Equations
+
+1. **Single Jump & Variable Hold:**
+   - **Immediate Impulse (t = 0):**
+     $$\Delta \mathbf{v}_{\text{jump}} = \mathbf{u}_{\text{up}} \cdot \text{JUMP\_IMMEDIATE\_FORCE} = \mathbf{u}_{\text{up}} \cdot \frac{875.0}{3.0}\text{ UU/s} \approx 291.6667 \mathbf{u}_{\text{up}}\text{ UU/s}$$
+   - **Hold Acceleration:**
+     - For $t < \text{JUMP\_MIN\_TIME}$ ($0.025\text{ s} = 3\text{ ticks}$):
+       $$\mathbf{a}_{\text{hold}} = \mathbf{u}_{\text{up}} \cdot \frac{4375.0}{3.0} \times 0.62 \approx 904.1667 \mathbf{u}_{\text{up}}\text{ UU/s}^2 \implies \Delta \mathbf{v}_{\text{tick}} \approx 7.5347 \mathbf{u}_{\text{up}}\text{ UU/s}$$
+     - For $t \in [0.025\text{ s}, 0.2\text{ s}]$ (up to $24\text{ ticks}$) with jump button held:
+       $$\mathbf{a}_{\text{hold}} = \mathbf{u}_{\text{up}} \cdot \frac{4375.0}{3.0} \times 1.0 \approx 1458.3333 \mathbf{u}_{\text{up}}\text{ UU/s}^2 \implies \Delta \mathbf{v}_{\text{tick}} \approx 12.1528 \mathbf{u}_{\text{up}}\text{ UU/s}$$
+   - **Reset Protection:** If on ground with `jumpTime < JUMP_MIN_TIME + JUMP_RESET_TIME_PAD` ($0.025\text{ s} + 0.025\text{ s} = 0.05\text{ s}$), `hasJumped` remains true to prevent premature reset during takeoff.
+
+2. **Double Jump:**
+   - Available when $\neg\text{isOnGround}$, $\text{airTimeSinceJump} < \text{DOUBLEJUMP\_MAX\_DELAY}$ ($1.25\text{ s}$), and input magnitude $< \text{dodgeDeadzone}$ ($0.5$).
+   - Impulse: $\Delta \mathbf{v} = \mathbf{u}_{\text{up}} \cdot \frac{875.0}{3.0}\text{ UU/s}$. No hold acceleration.
+
+3. **8-Way Directional Flips / Dodges:**
+   - **Trigger:** Airborne, $\text{airTimeSinceJump} < 1.25\text{ s}$, input magnitude $|\text{yaw}| + |\text{pitch}| + |\text{roll}| \ge 0.5$.
+   - **Direction Vector:** $\mathbf{d} = (-\text{pitch},\, \text{yaw} + \text{roll},\, 0)$; normalized to unit length unless stall triggered.
+   - **Base Impulse & Speed Scaling:**
+     $$\mathbf{v}_{\text{init}} = \mathbf{d} \cdot 500.0\text{ UU/s}$$
+     $$r_{\text{fwd}} = \frac{|v_{\text{fwd}}|}{\text{CAR\_MAX\_SPEED}} \quad (\text{CAR\_MAX\_SPEED} = 2300.0\text{ UU/s})$$
+     $$s_{x,\text{max}} = 2.5 \text{ (if backward dodge)} \text{ else } 1.0$$
+     $$v_{\text{init}, x} \mathrel{*}= (s_{x,\text{max}} - 1.0) r_{\text{fwd}} + 1.0$$
+     $$v_{\text{init}, y} \mathrel{*}= (1.9 - 1.0) r_{\text{fwd}} + 1.0$$
+     $$\text{if backward dodge} \implies v_{\text{init}, x} \mathrel{*}= \frac{16.0}{15.0}$$
+   - **Planar Projection:** $\Delta \mathbf{v}_{\text{flip}} = v_{\text{init}, x} \mathbf{f}_{\text{2D}} + v_{\text{init}, y} \mathbf{r}_{\text{2D}}$, where $\mathbf{f}_{\text{2D}} = \frac{\mathbf{u}_{\text{fwd}, xy}}{\|\mathbf{u}_{\text{fwd}, xy}\|}$.
+   - **Dodge Torques:** Roll torque $\tau_x = 260.0$, Pitch torque $\tau_y = 224.0$ applied for $\text{FLIP\_TORQUE\_TIME} = 0.65\text{ s}$.
+   - **Z-Velocity Damping:** For $t \in [0.15\text{ s}, 0.65\text{ s}]$:
+     $$\text{if } (v_z < 0 \lor t < 0.21\text{ s}) \implies v_z \mathrel{*}= (1.0 - 0.35) = 0.65$$
+
+4. **Flip Cancel & Air Pitch Lock:**
+   - **Flip Cancel:** When counter-pitch is applied during flip ($\text{sgn}(\tau_{\text{rel}, y}) == \text{sgn}(\text{controls.pitch})$):
+     $$\tau_{\text{rel}, y} \mathrel{*}= (1.0 - \min(|\text{controls.pitch}|, 1.0))$$
+     Full counter-pitch ($|\text{pitch}| = 1.0$) cancels flip rotation torque completely while allowing air control.
+   - **Pitch Lockout:** Pitch air torque suppressed for $0.65\text{ s} + 0.30\text{ s} = 0.95\text{ s}$ ($114\text{ ticks}$) after flip initiation.
+
+5. **Stall Mechanics:**
+   - Triggered when $|\text{yaw} + \text{roll}| < 0.1 \land |\text{pitch}| < 0.1$ while input magnitude $\ge 0.5$.
+   - Direction vector set to zero: no directional impulse, no flip torque, but vertical Z-damping is activated, arresting downward descent.
+
+6. **Air Torque (Air Control):**
+   - Active when $\text{numWheelsInContact} < 3$ and chassis not in firm world contact.
+   - Computes pitch, yaw, and roll torques using Bullet inertia-compensated angular accelerations with air damping factors matching `Car::_UpdateAirTorque`.
+
+7. **Auto-Roll & Auto-Flip:**
+   - **Auto-Roll (Surface Alignment):** When throttle $\ne 0$ and $1 \le \text{numWheelsInContact} \le 3$, applies downforce $\mathbf{F} = -\mathbf{u}_{\text{ground\_up}} \cdot 100 M_{\text{car}}$ and leveling torque $\boldsymbol{\tau} = 80 (\boldsymbol{\tau}_{\text{fwd}} + \boldsymbol{\tau}_{\text{rgt}})$.
+   - **Auto-Flip (Turtle Recovery):** When resting on roof ($\text{roll} > 2.8\text{ rad}$, $\text{up}_z > \frac{1}{\sqrt{2}}$) and jump pressed, pops car up with $\Delta \mathbf{v} = -\mathbf{u}_{\text{up}} \cdot 200\text{ UU/s}$ and rolls car at $50\text{ rad/s}^2$ for duration $0.4 \frac{|\text{roll}|}{\pi}\text{ s}$.
+
+### Verification Metrics & Parity Results
+- **Python Mechanics Suite (`pytest tests/python/test_car_mechanics.py -v`):**
+  - **7/7 unit tests passing** (air control suppression, reverse braking cutoff, single jump impulse + hold, double jump + directional flip, boost curves, auto-flip turtle recovery, auto-roll alignment).
+- **Differential Parity Harness (`jump_flip` scenario, 115 ticks, 1 env):**
+  - Continuous airborne trajectory through takeoff, hold acceleration, coast, forward dodge, flip cancel counter-pitch, and air roll:
+    - **Position Delta:** Max $\Delta p \le \mathbf{0.006348\text{ UU}}$ (target $\le 0.01\text{ UU}$ **PASSED**).
+    - **Linear Velocity Delta:** Max $\Delta v \le \mathbf{0.000355\text{ UU/s}}$ (target $\le 0.001\text{ UU/s}$ **PASSED**).
+    - **Quaternion Delta:** Max $\Delta q \le \mathbf{1.192 \times 10^{-7}}$ (target $\le 10^{-6}$ **PASSED**).
+
+
