@@ -142,22 +142,26 @@ def main():
         f.write(f"Generated at: {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n\n")
 
         f.write("## 1. 1v0 Solo Configuration (1 Car per Environment)\n\n")
-        f.write("> **Features Active:** Full Ball Trajectory, Octane Dynamics & Raycast Suspension, Analytical Soccar Arena SDF, Car-Ball OBB Collision, 34 Boost Pads, Episode Lifecycle Terminations.\n\n")
-        hdr_1v0 = f"| {'Environments':>12} | {'Total Cars':>12} | {'Step Latency (ms)':>18} | {'Throughput (SPS)':>18} | {'Pool VRAM (MB)':>14} |"
-        div_1v0 = f"|{'-' * 14}|{'-' * 14}|{'-' * 20}|{'-' * 20}|{'-' * 16}|"
+        f.write("> **Features Active:** Full Ball Trajectory, Octane Dynamics & 4-Wheel Raycast Suspension with Bilateral Friction, Analytical Soccar Arena SDF, Car-Ball OBB-Sphere Collision, 34 Boost Pads, Goal Scoring & Episode Lifecycle Terminations.\n\n")
+        f.write("> **Note on Step Frequencies:** SPS is reported in raw **120 Hz physical simulation ticks per second**. With standard RLGym policy substepping (`tick_skip = 8`, 15 Hz decision rate), the policy step rate is $\\text{Physical SPS} / 8$.\n\n")
+        hdr_1v0 = f"| {'Environments':>12} | {'Total Cars':>12} | {'Step Latency (ms)':>18} | {'Physical SPS (120Hz)':>22} | {'Policy SPS (15Hz, skip=8)':>26} | {'Pool VRAM (MB)':>14} |"
+        div_1v0 = f"|{'-' * 14}|{'-' * 14}|{'-' * 20}|{'-' * 24}|{'-' * 28}|{'-' * 16}|"
         f.write(hdr_1v0 + "\n")
         f.write(div_1v0 + "\n")
         for r in results_1v0:
-            f.write(f"| {r['num_envs']:>12,} | {r['total_cars']:>12,} | {r['latency_ms']:>18.4f} | {r['env_sps']:>18,.0f} | {r['pool_mb']:>14.2f} |\n")
+            policy_sps = r['env_sps'] / 8.0
+            f.write(f"| {r['num_envs']:>12,} | {r['total_cars']:>12,} | {r['latency_ms']:>18.4f} | {r['env_sps']:>22,.0f} | {policy_sps:>26,.0f} | {r['pool_mb']:>14.2f} |\n")
 
         f.write("\n## 2. 2v2 Team Match Configuration (4 Cars per Environment)\n\n")
-        f.write("> **Features Active:** 4 Autonomous Cars (2 Blue vs 2 Orange), Ball Trajectory & Aerodynamics, 4-Wheel Raycast Suspension per Car, Arena SDF, Car-Ball Collisions, 34 Boost Pads, Team Scoring & Terminations.\n\n")
-        hdr_2v2 = f"| {'Environments':>12} | {'Total Cars':>12} | {'Step Latency (ms)':>18} | {'Env SPS':>14} | {'Agent SPS (Car-Ticks)':>22} | {'Pool VRAM (MB)':>14} |"
-        div_2v2 = f"|{'-' * 14}|{'-' * 14}|{'-' * 20}|{'-' * 16}|{'-' * 24}|{'-' * 16}|"
+        f.write("> **Features Active:** 4 Autonomous Cars (2 Blue vs 2 Orange), Ball Trajectory & Aerodynamics, 4-Wheel Raycast Suspension per Car, Arena SDF, Car-Ball Collisions, 34 Boost Pads, Team Scoring & Terminations.\n")
+        f.write("> **Important Scope Limitation:** Milestone 4 does **NOT** simulate car-on-car collisions or demolitions (deferred to Milestone 5). Hence, 2v2 performance cannot be directly compared to CPU RocketSim (which solves car-car contact graphs).\n\n")
+        hdr_2v2 = f"| {'Environments':>12} | {'Total Cars':>12} | {'Step Latency (ms)':>18} | {'Physical Env SPS':>18} | {'Policy Env SPS (skip=8)':>24} | {'Agent SPS (Car-Ticks)':>22} | {'Pool VRAM (MB)':>14} |"
+        div_2v2 = f"|{'-' * 14}|{'-' * 14}|{'-' * 20}|{'-' * 20}|{'-' * 26}|{'-' * 24}|{'-' * 16}|"
         f.write(hdr_2v2 + "\n")
         f.write(div_2v2 + "\n")
         for r in results_2v2:
-            f.write(f"| {r['num_envs']:>12,} | {r['total_cars']:>12,} | {r['latency_ms']:>18.4f} | {r['env_sps']:>14,.0f} | {r['agent_sps']:>22,.0f} | {r['pool_mb']:>14.2f} |\n")
+            policy_env_sps = r['env_sps'] / 8.0
+            f.write(f"| {r['num_envs']:>12,} | {r['total_cars']:>12,} | {r['latency_ms']:>18.4f} | {r['env_sps']:>18,.0f} | {policy_env_sps:>24,.0f} | {r['agent_sps']:>22,.0f} | {r['pool_mb']:>14.2f} |\n")
 
         f.write("\n## 3. Methodology & Architectural Invariants\n\n")
         f.write("* **Hardware Timing:** Asynchronous timing recorded directly on the GPU execution stream using `cudaEventRecord` / `cudaEventElapsedTime`.\n")

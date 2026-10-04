@@ -63,14 +63,16 @@ Simulating complete physics (Car dynamics, 4-wheel suspension, Arena SDF, Car-ba
 
 ### 2v2 Full Match Simulation (4 Cars per Arena)
 
+> **Important Scope Limitation:** In Milestone 4, 2v2 arenas simulate 4 autonomous cars with independent raycast suspensions, analytical arena collisions, car-ball impacts, and boost consumption. Car-on-car collisions and demolitions are scheduled for Milestone 5; hence throughput does not include inter-car contact graph solving and cannot be directly compared to CPU RocketSim.
+
 | Environments | Total Cars | Step Latency (ms) | Environment SPS | Agent SPS (Car-Ticks/s) | VRAM Pool (MB) |
 | :---: | :---: | :---: | :---: | :---: | :---: |
-| **1,024** | 4,096 | 0.0910 ms | 11,255,306 SPS | **45,021,226 Car-SPS** | 2.19 MB |
-| **4,096** | 16,384 | 0.0947 ms | 43,231,560 SPS | **172,926,240 Car-SPS** | 8.75 MB |
-| **8,192** | 32,768 | 0.1046 ms | 78,299,036 SPS | **313,196,144 Car-SPS** | 17.50 MB |
-| **16,384** | 65,536 | 0.2065 ms | 79,323,726 SPS | **317,294,905 Car-SPS** | 35.00 MB |
+| **1,024** | 4,096 | 0.0904 ms | 11,331,097 SPS | **45,324,387 Car-SPS** | 2.19 MB |
+| **4,096** | 16,384 | 0.0933 ms | 43,889,777 SPS | **175,559,109 Car-SPS** | 8.75 MB |
+| **8,192** | 32,768 | 0.1037 ms | 78,988,858 SPS | **315,955,433 Car-SPS** | 17.50 MB |
+| **16,384** | 65,536 | 0.2070 ms | 79,131,206 SPS | **316,524,825 Car-SPS** | 35.00 MB |
 
-*All measurements recorded via asynchronous GPU hardware events (`cudaEventRecord` / `cudaEventElapsedTime`). See [BENCHMARKS.md](BENCHMARKS.md) for methodology details.*
+*All measurements recorded via asynchronous GPU hardware events (`cudaEventRecord` / `cudaEventElapsedTime`). Raw SPS corresponds to 120 Hz physical ticks; policy decisions at `tick_skip = 8` correspond to $\text{SPS} / 8$. See [BENCHMARKS.md](BENCHMARKS.md) for full report.*
 
 ---
 
@@ -133,13 +135,23 @@ Parity is validated against **RocketSim CPU** (Bullet Physics 3.24 reference ora
 
 ### Parity Highlights
 * **Short-Horizon Micro-Parity ($t \le 10\text{ ticks}$, $\le 83\text{ ms}$):**
-  - Car idle on ground: $\Vert\Delta\mathbf{p}\Vert_\infty \le 7.63 \times 10^{-6}\text{ UU}$, velocity delta $\le 7.63 \times 10^{-6}\text{ UU/s}$, quaternion delta $\le 5.96 \times 10^{-8}$.
+  - Car idle on ground: $\Vert\Delta\mathbf{p}\Vert_\infty \le 7.63 \times 10^{-6}\text{ UU}$, velocity delta $\le 3.82 \times 10^{-6}\text{ UU/s}$, quaternion delta $\le 5.96 \times 10^{-8}$.
   - Ground throttle: $\Vert\Delta\mathbf{p}\Vert_\infty \le 9.77 \times 10^{-4}\text{ UU}$ (exact 2-ULP precision limit at $|Y| > 4600\text{ UU}$).
   - Free ball flight: $\Vert\Delta\mathbf{p}\Vert_\infty \le 3.05 \times 10^{-5}\text{ UU}$, velocity delta $\le 2.44 \times 10^{-4}\text{ UU/s}$.
+* **Kickoff Goalie Collision Gate ($4608\text{ UU}$ Supersonic Drive):**
+  - First touch tick: **Tick 314 on GPU vs Tick 315 on CPU** ($1\text{ tick}$ delta across 315 ticks = 99.7% temporal parity).
+  - Impact speed: $2018\text{ UU/s}$ GPU vs $2033\text{ UU/s}$ CPU ($0.7\%$ delta).
+  - Rebound ball speed: $2907\text{ UU/s}$ GPU vs $2863\text{ UU/s}$ CPU ($1.5\%$ impulse fidelity).
 * **Long-Horizon Multi-Second Dynamics ($t > 120\text{ ticks}$, $> 1\text{ s}$):**
-  - Rigid body collisions against curved arena surfaces have positive Lyapunov exponents ($\lambda > 0$). In single-precision float32, microscopic rounding differences naturally separate macroscopic trajectories after multiple wall bounces.
-  - Car suspension resting height reaches an exact equilibrium ($18.56\text{ UU}$) that remains stable without drift across 10,000 continuous ticks.
-* Full empirical measurements, error growth tables, and mathematical analysis are documented in [docs/PARITY_REPORT.md](docs/PARITY_REPORT.md).
+  - Car suspension resting height reaches an exact analytical equilibrium ($Z \approx 17.03\text{ UU}$) with delta $\le 0.00488\text{ UU}$ ($< 5\text{ mm}$) that remains strictly bounded without drift across 10,000 continuous ticks ($83.3\text{ s}$).
+  - Rigid body collisions against curved arena surfaces and ball impacts have positive Lyapunov exponents ($\lambda > 0$). In single-precision float32, microscopic rounding differences naturally separate macroscopic trajectories after multiple wall bounces.
+* Full empirical measurements, component-wise delta tables, and CPU-vs-CPU perturbation analysis are documented in [docs/PARITY_REPORT.md](docs/PARITY_REPORT.md).
+
+---
+
+## Roadmap & Scope
+* **Milestone 4 (Current):** Complete 1v0 physics pipeline for single-agent RL training (full Octane suspension and dynamics, ball flight and aerodynamics, closed-form SDF arena collisions, 3D OBB-sphere car-ball contact impulses, 34 boost pads, 5 Soccar kickoff spawns, goal scoring thresholds, zero-copy PyTorch/DLPack tensors).
+* **Milestone 5 (Upcoming):** Car-on-car OBB-OBB collisions, demolitions, supersonic demo timers, and multi-agent 2v2/3v3 self-play.
 
 ---
 
