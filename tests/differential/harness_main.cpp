@@ -20,6 +20,7 @@ struct HarnessArgs {
     std::string scenario = "random";
     bool report_mode = false;
     std::string out_report = "";
+    bool cpu_perturb = false;
 };
 
 void PrintUsage(const char* prog) {
@@ -30,9 +31,10 @@ void PrintUsage(const char* prog) {
               << "  --seed <N>         Pseudorandom seed for PCG32 controls (default: 42)\n"
               << "  --tol <F>          Chebyshev position tolerance (default: 1e-4)\n"
               << "  --record <path>    Output path for .rsgold recording (default: milestone1_golden.rsgold)\n"
-              << "  --scenario <name>  Scenario to run: random, idle, freefall, throttle, boost, jump_flip, ball_flight, car_ball_hit, all (default: random)\n"
+              << "  --scenario <name>  Scenario to run: random, idle, freefall, throttle, boost, jump_flip, ball_flight, car_ball_hit, kickoff_goalie, all (default: random)\n"
               << "  --report           Enable windowed differential report mode (no early abort, records windows 1, 10, 120, 600, 10k)\n"
               << "  --out-report <path>Save report table in Markdown format to file\n"
+              << "  --cpu-perturb      Run CPU vs CPU simulation with 1e-3 perturbation to measure divergence rate\n"
               << "  --help             Display this help message\n";
 }
 
@@ -56,6 +58,8 @@ HarnessArgs ParseArgs(int argc, char** argv) {
             args.report_mode = true;
         } else if (arg == "--out-report" && i + 1 < argc) {
             args.out_report = argv[++i];
+        } else if (arg == "--cpu-perturb") {
+            args.cpu_perturb = true;
         } else if (arg == "--help") {
             PrintUsage(argv[0]);
             std::exit(0);
@@ -87,7 +91,7 @@ CarControls GetScenarioControl(const std::string& scenario, uint32_t tick, uint3
             c.roll = 0.5f;
         }
         return c;
-    } else if (scenario == "car_ball_hit") {
+    } else if (scenario == "car_ball_hit" || scenario == "kickoff_goalie") {
         c.throttle = 1.0f;
         c.boost = 1;
         return c;
@@ -122,9 +126,11 @@ void ApplyScenarioInitialState(const std::string& scenario, CPURefSim& env, uint
     } else if (scenario == "car_ball_hit") {
         CarStatePOD c;
         env.GetCarState(0, c);
-        c.pos = Vec3(0.0f, -1000.0f, 17.0f);
+        c.pos = Vec3(0.0f, -1000.0f, 17.03f);
         c.vel = Vec3(0.0f, 0.0f, 0.0f);
-        c.quat = Quat::identity();
+        c.ang_vel = Vec3(0.0f, 0.0f, 0.0f);
+        c.quat = Quat(0.7071068f, 0.0f, 0.0f, 0.7071068f);
+        c.boost = 100.0f;
         env.SetCarState(0, c);
 
         BallStatePOD b;
@@ -132,28 +138,63 @@ void ApplyScenarioInitialState(const std::string& scenario, CPURefSim& env, uint
         b.pos = Vec3(0.0f, 0.0f, 93.15f);
         b.vel = Vec3(0.0f, 0.0f, 0.0f);
         b.ang_vel = Vec3(0.0f, 0.0f, 0.0f);
+        b.quat = Quat::identity();
+        env.SetBallState(b);
+    } else if (scenario == "kickoff_goalie") {
+        CarStatePOD c;
+        env.GetCarState(0, c);
+        c.pos = Vec3(0.0f, -4608.0f, 17.03f);
+        c.vel = Vec3(0.0f, 0.0f, 0.0f);
+        c.ang_vel = Vec3(0.0f, 0.0f, 0.0f);
+        c.quat = Quat(0.7071068f, 0.0f, 0.0f, 0.7071068f);
+        c.boost = 100.0f;
+        env.SetCarState(0, c);
+
+        BallStatePOD b;
+        env.GetBallState(b);
+        b.pos = Vec3(0.0f, 0.0f, 93.15f);
+        b.vel = Vec3(0.0f, 0.0f, 0.0f);
+        b.ang_vel = Vec3(0.0f, 0.0f, 0.0f);
+        b.quat = Quat::identity();
         env.SetBallState(b);
     }
 }
 
 struct WindowMetrics {
-    float max_pos_uu = 0.0f;
-    float max_vel_uus = 0.0f;
-    float max_quat = 0.0f;
-    float max_ang_vel_rads = 0.0f;
+    float max_car_pos = 0.0f;
+    float max_car_vel = 0.0f;
+    float max_car_quat = 0.0f;
+    float max_ball_pos = 0.0f;
+    float max_ball_vel = 0.0f;
     float max_susp_uu = 0.0f;
     float max_boost = 0.0f;
     bool passed = true;
 
-    void Update(float pos, float vel, float quat, float ang, float susp, float boost, bool ok) {
-        max_pos_uu = std::max(max_pos_uu, pos);
-        max_vel_uus = std::max(max_vel_uus, vel);
-        max_quat = std::max(max_quat, quat);
-        max_ang_vel_rads = std::max(max_ang_vel_rads, ang);
+    void Update(float c_pos, float c_vel, float c_quat, float b_pos, float b_vel, float susp, float boost, bool ok) {
+        max_car_pos = std::max(max_car_pos, c_pos);
+        max_car_vel = std::max(max_car_vel, c_vel);
+        max_car_quat = std::max(max_car_quat, c_quat);
+        max_ball_pos = std::max(max_ball_pos, b_pos);
+        max_ball_vel = std::max(max_ball_vel, b_vel);
         max_susp_uu = std::max(max_susp_uu, susp);
         max_boost = std::max(max_boost, boost);
         if (!ok) passed = false;
     }
+};
+
+struct KickoffGoalieMetrics {
+    int touch_tick_cpu = -1;
+    int touch_tick_gpu = -1;
+    Vec3 car_pos_impact_cpu{0.0f, 0.0f, 0.0f};
+    Vec3 car_pos_impact_gpu{0.0f, 0.0f, 0.0f};
+    Vec3 car_vel_impact_cpu{0.0f, 0.0f, 0.0f};
+    Vec3 car_vel_impact_gpu{0.0f, 0.0f, 0.0f};
+    Vec3 ball_vel_plus_1_cpu{0.0f, 0.0f, 0.0f};
+    Vec3 ball_vel_plus_1_gpu{0.0f, 0.0f, 0.0f};
+    Vec3 ball_vel_plus_10_cpu{0.0f, 0.0f, 0.0f};
+    Vec3 ball_vel_plus_10_gpu{0.0f, 0.0f, 0.0f};
+    Vec3 ball_vel_plus_60_cpu{0.0f, 0.0f, 0.0f};
+    Vec3 ball_vel_plus_60_gpu{0.0f, 0.0f, 0.0f};
 };
 
 struct ScenarioReport {
@@ -169,6 +210,8 @@ struct ScenarioReport {
     WindowMetrics w120;
     WindowMetrics w600;
     WindowMetrics w10000;
+
+    KickoffGoalieMetrics goalie;
 };
 
 bool RunScenarioDifferential(
@@ -223,29 +266,13 @@ bool RunScenarioDifferential(
         gpu_sim.CopyCarStateToHost(gpu_cars.data(), 0, args.envs);
 
         for (uint32_t e = 0; e < args.envs; e++) {
-            if (e == 0 && t <= 2) {
-                std::cout << "    [DEBUG " << scenario_name << " t=" << t << "]\n"
-                          << "      CPU Car Pos: " << cpu_cars[e].pos << " Vel: " << cpu_cars[e].vel << "\n"
-                          << "      GPU Car Pos: " << gpu_cars[e].pos << " Vel: " << gpu_cars[e].vel << "\n"
-                          << "      CPU Ball Pos: " << cpu_balls[e].pos << " Vel: " << cpu_balls[e].vel << "\n"
-                          << "      GPU Ball Pos: " << gpu_balls[e].pos << " Vel: " << gpu_balls[e].vel << "\n";
-            }
-
             float d_c_pos = cpu_cars[e].pos.chebyshev_dist(gpu_cars[e].pos);
             float d_b_pos = cpu_balls[e].pos.chebyshev_dist(gpu_balls[e].pos);
-            float max_d_pos = std::max(d_c_pos, d_b_pos);
 
             float d_c_vel = cpu_cars[e].vel.chebyshev_dist(gpu_cars[e].vel);
             float d_b_vel = cpu_balls[e].vel.chebyshev_dist(gpu_balls[e].vel);
-            float max_d_vel = std::max(d_c_vel, d_b_vel);
 
             float d_c_quat = cpu_cars[e].quat.chebyshev_dist(gpu_cars[e].quat);
-            float d_b_quat = cpu_balls[e].quat.chebyshev_dist(gpu_balls[e].quat);
-            float max_d_quat = std::max(d_c_quat, d_b_quat);
-
-            float d_c_ang = cpu_cars[e].ang_vel.chebyshev_dist(gpu_cars[e].ang_vel);
-            float d_b_ang = cpu_balls[e].ang_vel.chebyshev_dist(gpu_balls[e].ang_vel);
-            float max_d_ang = std::max(d_c_ang, d_b_ang);
 
             float d_susp = 0.0f;
             for (int w = 0; w < 4; w++) {
@@ -258,11 +285,36 @@ bool RunScenarioDifferential(
             bool car_ok = comparator.CompareCar(t, e, 0, cpu_cars[e], gpu_cars[e], car_fail);
             bool step_ok = ball_ok && car_ok;
 
-            if (t < 1) report.w1.Update(max_d_pos, max_d_vel, max_d_quat, max_d_ang, d_susp, d_boost, step_ok);
-            if (t < 10) report.w10.Update(max_d_pos, max_d_vel, max_d_quat, max_d_ang, d_susp, d_boost, step_ok);
-            if (t < 120) report.w120.Update(max_d_pos, max_d_vel, max_d_quat, max_d_ang, d_susp, d_boost, step_ok);
-            if (t < 600) report.w600.Update(max_d_pos, max_d_vel, max_d_quat, max_d_ang, d_susp, d_boost, step_ok);
-            if (t < 10000) report.w10000.Update(max_d_pos, max_d_vel, max_d_quat, max_d_ang, d_susp, d_boost, step_ok);
+            if (t < 1) report.w1.Update(d_c_pos, d_c_vel, d_c_quat, d_b_pos, d_b_vel, d_susp, d_boost, step_ok);
+            if (t < 10) report.w10.Update(d_c_pos, d_c_vel, d_c_quat, d_b_pos, d_b_vel, d_susp, d_boost, step_ok);
+            if (t < 120) report.w120.Update(d_c_pos, d_c_vel, d_c_quat, d_b_pos, d_b_vel, d_susp, d_boost, step_ok);
+            if (t < 600) report.w600.Update(d_c_pos, d_c_vel, d_c_quat, d_b_pos, d_b_vel, d_susp, d_boost, step_ok);
+            if (t < 10000) report.w10000.Update(d_c_pos, d_c_vel, d_c_quat, d_b_pos, d_b_vel, d_susp, d_boost, step_ok);
+
+            if (scenario_name == "kickoff_goalie" && e == 0) {
+                if (report.goalie.touch_tick_cpu == -1 && cpu_balls[e].vel.length() > 50.0f) {
+                    report.goalie.touch_tick_cpu = static_cast<int>(t);
+                    report.goalie.car_pos_impact_cpu = cpu_cars[e].pos;
+                    report.goalie.car_vel_impact_cpu = cpu_cars[e].vel;
+                }
+                if (report.goalie.touch_tick_gpu == -1 && gpu_balls[e].vel.length() > 50.0f) {
+                    report.goalie.touch_tick_gpu = static_cast<int>(t);
+                    report.goalie.car_pos_impact_gpu = gpu_cars[e].pos;
+                    report.goalie.car_vel_impact_gpu = gpu_cars[e].vel;
+                }
+                if (report.goalie.touch_tick_cpu != -1) {
+                    int dt = static_cast<int>(t) - report.goalie.touch_tick_cpu;
+                    if (dt == 1) report.goalie.ball_vel_plus_1_cpu = cpu_balls[e].vel;
+                    if (dt == 10) report.goalie.ball_vel_plus_10_cpu = cpu_balls[e].vel;
+                    if (dt == 60) report.goalie.ball_vel_plus_60_cpu = cpu_balls[e].vel;
+                }
+                if (report.goalie.touch_tick_gpu != -1) {
+                    int dt = static_cast<int>(t) - report.goalie.touch_tick_gpu;
+                    if (dt == 1) report.goalie.ball_vel_plus_1_gpu = gpu_balls[e].vel;
+                    if (dt == 10) report.goalie.ball_vel_plus_10_gpu = gpu_balls[e].vel;
+                    if (dt == 60) report.goalie.ball_vel_plus_60_gpu = gpu_balls[e].vel;
+                }
+            }
 
             if (!step_ok && report.first_breach_tick == -1) {
                 report.first_breach_tick = static_cast<int>(t);
@@ -295,16 +347,17 @@ bool RunScenarioDifferential(
 }
 
 void PrintScenarioReportTable(const std::vector<ScenarioReport>& reports, std::ostream& os) {
-    os << "\n| Scenario | Window (Ticks) | Max Pos Delta (UU) | Max Vel Delta (UU/s) | Max Quat Delta | Max AngVel (rad/s) | First Breach Tick | Status |\n";
-    os << "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n";
+    os << "\n| Scenario | Window (Ticks) | Car Pos (UU) | Car Vel (UU/s) | Car Quat | Ball Pos (UU) | Ball Vel (UU/s) | First Breach Tick | Status |\n";
+    os << "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n";
     for (const auto& rep : reports) {
         auto print_row = [&](const std::string& win_name, const WindowMetrics& m) {
-            os << "| " << std::setw(14) << std::left << rep.name
+            os << "| " << std::setw(15) << std::left << rep.name
                << " | " << std::setw(14) << win_name
-               << " | " << std::scientific << std::setprecision(3) << m.max_pos_uu
-               << " | " << std::scientific << std::setprecision(3) << m.max_vel_uus
-               << " | " << std::scientific << std::setprecision(3) << m.max_quat
-               << " | " << std::scientific << std::setprecision(3) << m.max_ang_vel_rads
+               << " | " << std::scientific << std::setprecision(3) << m.max_car_pos
+               << " | " << std::scientific << std::setprecision(3) << m.max_car_vel
+               << " | " << std::scientific << std::setprecision(3) << m.max_car_quat
+               << " | " << std::scientific << std::setprecision(3) << m.max_ball_pos
+               << " | " << std::scientific << std::setprecision(3) << m.max_ball_vel
                << " | " << (rep.first_breach_tick >= 0 ? std::to_string(rep.first_breach_tick) : "None")
                << " | " << (m.passed ? "PASS" : "DRIFT") << " |\n";
         };
@@ -313,12 +366,99 @@ void PrintScenarioReportTable(const std::vector<ScenarioReport>& reports, std::o
         if (rep.ticks_simulated >= 120) print_row("120 (1.0s)", rep.w120);
         if (rep.ticks_simulated >= 600) print_row("600 (5.0s)", rep.w600);
         if (rep.ticks_simulated >= 10000) print_row("10000 (83s)", rep.w10000);
+
+        if (rep.name == "kickoff_goalie") {
+            os << "\n#### Kickoff Goalie Impact & Collision Gate Analysis\n"
+               << "| Metric | CPU Reference | GPU Kernel | Delta |\n"
+               << "| :--- | :--- | :--- | :--- |\n"
+               << "| First Touch Tick | " << rep.goalie.touch_tick_cpu << " | " << rep.goalie.touch_tick_gpu
+               << " | " << std::abs(rep.goalie.touch_tick_cpu - rep.goalie.touch_tick_gpu) << " ticks |\n"
+               << "| Car Pos at Impact (UU) | " << rep.goalie.car_pos_impact_cpu << " | " << rep.goalie.car_pos_impact_gpu
+               << " | " << std::scientific << std::setprecision(3) << rep.goalie.car_pos_impact_cpu.chebyshev_dist(rep.goalie.car_pos_impact_gpu) << " UU |\n"
+               << "| Car Vel at Impact (UU/s) | " << rep.goalie.car_vel_impact_cpu << " | " << rep.goalie.car_vel_impact_gpu
+               << " | " << std::scientific << std::setprecision(3) << rep.goalie.car_vel_impact_cpu.chebyshev_dist(rep.goalie.car_vel_impact_gpu) << " UU/s |\n"
+               << "| Ball Vel +1 Tick (UU/s) | " << rep.goalie.ball_vel_plus_1_cpu << " | " << rep.goalie.ball_vel_plus_1_gpu
+               << " | " << std::scientific << std::setprecision(3) << rep.goalie.ball_vel_plus_1_cpu.chebyshev_dist(rep.goalie.ball_vel_plus_1_gpu) << " UU/s |\n"
+               << "| Ball Vel +10 Ticks (UU/s) | " << rep.goalie.ball_vel_plus_10_cpu << " | " << rep.goalie.ball_vel_plus_10_gpu
+               << " | " << std::scientific << std::setprecision(3) << rep.goalie.ball_vel_plus_10_cpu.chebyshev_dist(rep.goalie.ball_vel_plus_10_gpu) << " UU/s |\n"
+               << "| Ball Vel +60 Ticks (UU/s) | " << rep.goalie.ball_vel_plus_60_cpu << " | " << rep.goalie.ball_vel_plus_60_gpu
+               << " | " << std::scientific << std::setprecision(3) << rep.goalie.ball_vel_plus_60_cpu.chebyshev_dist(rep.goalie.ball_vel_plus_60_gpu) << " UU/s |\n\n";
+        }
     }
     os << "\n";
 }
 
+void RunCpuVsCpuPerturbation(const std::string& scenario, uint32_t ticks, uint32_t seed) {
+    CPURefSim cpu1(1, true, TICK_RATE, 0);
+    CPURefSim cpu2(1, true, TICK_RATE, 0);
+    ApplyScenarioInitialState(scenario, cpu1, 0);
+    ApplyScenarioInitialState(scenario, cpu2, 0);
+
+    CarStatePOD c;
+    cpu2.GetCarState(0, c);
+    // Perturb position by 1e-3 UU
+    c.pos.x += 1e-3f;
+    c.pos.y += 1e-3f;
+    // Perturb velocity by 1e-3 UU/s
+    c.vel.x += 1e-3f;
+    c.vel.y += 1e-3f;
+    // Perturb yaw angle by 1e-3 radians
+    float half_d_yaw = 0.5e-3f;
+    c.quat = (c.quat * Quat(std::cos(half_d_yaw), 0.0f, 0.0f, std::sin(half_d_yaw))).normalized();
+    cpu2.SetCarState(0, c);
+
+    BallStatePOD b;
+    cpu2.GetBallState(b);
+    b.pos.x += 1e-3f;
+    b.pos.y += 1e-3f;
+    b.vel.x += 1e-3f;
+    b.vel.y += 1e-3f;
+    cpu2.SetBallState(b);
+
+    DeterministicInputGenerator gen(seed);
+    std::cout << "\n[CPU vs CPU Perturbation Analysis (1e-3 UU pos, 1e-3 UU/s vel, 1e-3 rad yaw)] Scenario: " << scenario << "\n";
+    std::cout << "| Window (Ticks) | Car Pos Delta (UU) | Car Vel Delta (UU/s) | Car Quat Delta | Ball Pos Delta (UU) | Ball Vel Delta (UU/s) |\n";
+    std::cout << "| :--- | :--- | :--- | :--- | :--- | :--- |\n";
+
+    CarStatePOD c1, c2;
+    BallStatePOD b1, b2;
+    for (uint32_t t = 0; t < ticks; t++) {
+        CarControls ctrl = GetScenarioControl(scenario, t, 0, gen);
+        cpu1.Step(&ctrl, 1);
+        cpu2.Step(&ctrl, 1);
+        cpu1.GetCarState(0, c1);
+        cpu2.GetCarState(0, c2);
+        cpu1.GetBallState(b1);
+        cpu2.GetBallState(b2);
+
+        if (t == 0 || t == 9 || t == 119 || t == 599 || t == ticks - 1) {
+            float d_c_pos = c1.pos.chebyshev_dist(c2.pos);
+            float d_c_vel = c1.vel.chebyshev_dist(c2.vel);
+            float d_c_quat = c1.quat.chebyshev_dist(c2.quat);
+            float d_b_pos = b1.pos.chebyshev_dist(b2.pos);
+            float d_b_vel = b1.vel.chebyshev_dist(b2.vel);
+            std::cout << "| " << std::setw(14) << std::left << (std::to_string(t + 1) + " ticks")
+                      << " | " << std::scientific << std::setprecision(3) << d_c_pos
+                      << " | " << std::scientific << std::setprecision(3) << d_c_vel
+                      << " | " << std::scientific << std::setprecision(3) << d_c_quat
+                      << " | " << std::scientific << std::setprecision(3) << d_b_pos
+                      << " | " << std::scientific << std::setprecision(3) << d_b_vel << " |\n";
+        }
+    }
+}
+
 int main(int argc, char** argv) {
     HarnessArgs args = ParseArgs(argc, argv);
+
+    if (args.cpu_perturb) {
+        std::vector<std::string> scns = (args.scenario == "all")
+            ? std::vector<std::string>{"idle", "freefall", "throttle", "boost", "jump_flip", "ball_flight", "car_ball_hit", "kickoff_goalie", "random"}
+            : std::vector<std::string>{args.scenario};
+        for (const auto& scn : scns) {
+            RunCpuVsCpuPerturbation(scn, args.ticks, args.seed);
+        }
+        return 0;
+    }
 
     std::cout << "======================================================================\n"
               << "                   ROCKETSIM-CUDA DIFFERENTIAL HARNESS                \n"
@@ -469,7 +609,9 @@ int main(int argc, char** argv) {
     // ------------------------------------------------------------------
     std::cout << "[Test 4/4] Verifying Comparator Sensitivity (Rejection of Injected Perturbation)...\n";
     BallStatePOD perturbed_ball = current_balls[0];
-    perturbed_ball.pos.x += args.tol * 2.0f;
+    float max_b = std::max({std::abs(perturbed_ball.pos.x), std::abs(perturbed_ball.pos.y), std::abs(perturbed_ball.pos.z)});
+    float b_ulp = (max_b >= 4096.0f) ? 0.00048828125f : ((max_b >= 2048.0f) ? 0.000244140625f : 0.0f);
+    perturbed_ball.pos.x += std::max(args.tol, b_ulp) * 2.0f;
     if (comparator.CompareBall(0, 0, current_balls[0], perturbed_ball, fail)) {
         std::cerr << "[-] Error: Comparator failed to catch injected position perturbation!\n";
         return 1;
@@ -495,7 +637,7 @@ int main(int argc, char** argv) {
 
     std::vector<std::string> scenarios_to_run;
     if (args.scenario == "all") {
-        scenarios_to_run = {"idle", "freefall", "throttle", "boost", "jump_flip", "ball_flight", "car_ball_hit", "random"};
+        scenarios_to_run = {"idle", "freefall", "throttle", "boost", "jump_flip", "ball_flight", "car_ball_hit", "kickoff_goalie", "random"};
     } else {
         scenarios_to_run = {args.scenario};
     }
