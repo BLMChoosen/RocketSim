@@ -132,12 +132,14 @@ __device__ void StepCarDevice(
     };
 
     // 5. Apply suspension & bilateral tire friction impulses
+    Vec3 vel_bt = vel * 0.02f;
     apply_suspension_and_friction(
         pos, basis, wheel_results, dt,
         cached_engine_force, cached_brake, cached_steer_angle,
         cached_lat_frictions, cached_long_frictions,
-        vel, omega
+        vel_bt, omega
     );
+    vel = vel_bt * 50.0f;
 
     // 6. Update wheel dynamics (throttle, brake, steer, friction curves, sticky downforce) for NEXT tick
     Vec3 total_force(0.0f, 0.0f, 0.0f);

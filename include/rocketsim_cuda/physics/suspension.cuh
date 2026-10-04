@@ -106,7 +106,7 @@ __device__ __forceinline__ void evaluate_car_wheels_raycast(
         Vec3 hardpoint = car_pos + basis * get_octane_wheel_offset(w);
         float config_rest = get_octane_susp_rest(w);
         float radius = get_octane_wheel_rad(w);
-        float real_ray_len = config_rest + radius - SUSP_SUBTRACTION;
+        float real_ray_len = config_rest + SUSP_MAX_TRAVEL + radius - SUSP_SUBTRACTION;
 
         float hit_dist = 0.0f;
         Vec3 hit_normal = Vec3(0.0f, 0.0f, 1.0f);
@@ -119,9 +119,8 @@ __device__ __forceinline__ void evaluate_car_wheels_raycast(
 
         if (hit) {
             wheels_in_contact[w] = 1;
-            float cur_susp_len = fminf(fmaxf(hit_dist - radius, config_rest - 2.0f * SUSP_MAX_TRAVEL), config_rest);
-            float rest_len_bullet = config_rest - SUSP_MAX_TRAVEL;
-            suspension_lengths[w] = rest_len_bullet - cur_susp_len; // Compression in UU
+            float cur_susp_len = fminf(fmaxf(hit_dist - radius, config_rest - SUSP_MAX_TRAVEL), config_rest + SUSP_MAX_TRAVEL);
+            suspension_lengths[w] = config_rest - cur_susp_len; // Compression in UU
         } else {
             wheels_in_contact[w] = 0;
             suspension_lengths[w] = -SUSP_MAX_TRAVEL;
@@ -156,9 +155,8 @@ __device__ __forceinline__ void apply_suspension_and_friction(
 
         float config_rest = get_octane_susp_rest(w);
         float radius = get_octane_wheel_rad(w);
-        float rest_len_bullet = config_rest - SUSP_MAX_TRAVEL;
         float hit_dist = wheel_results[w].hit_dist;
-        float cur_susp_len = fminf(fmaxf(hit_dist - radius, config_rest - 2.0f * SUSP_MAX_TRAVEL), config_rest);
+        float cur_susp_len = fminf(fmaxf(hit_dist - radius, config_rest - SUSP_MAX_TRAVEL), config_rest + SUSP_MAX_TRAVEL);
 
         Vec3 contact_pt_uu = wheel_results[w].contact_pt;
         Vec3 hit_normal = wheel_results[w].contact_normal;
@@ -172,7 +170,7 @@ __device__ __forceinline__ void apply_suspension_and_friction(
         float proj_vel_bt = hit_normal.dot(vel_at_pt_bt);
         float v_rel_bt = (denominator > 0.1f) ? (proj_vel_bt * inv_dot) : 0.0f;
 
-        float compression_bt = (rest_len_bullet - cur_susp_len) * 0.02f;
+        float compression_bt = (config_rest - cur_susp_len) * 0.02f;
         float spring_force = compression_bt * SUSP_STIFFNESS * inv_dot;
         float damping_scale = (v_rel_bt < 0.0f) ? SUSP_DAMPING_COMPRESSION : SUSP_DAMPING_RELAXATION;
         float susp_force = spring_force - (damping_scale * v_rel_bt);
@@ -181,7 +179,7 @@ __device__ __forceinline__ void apply_suspension_and_friction(
 
         // 2. Extra Pushback (resolveSingleCollision)
         float extra_pushback = 0.0f;
-        float pushback_thresh_bt = (rest_len_bullet + radius - SUSP_SUBTRACTION) * 0.02f;
+        float pushback_thresh_bt = (config_rest + radius - SUSP_SUBTRACTION) * 0.02f;
         float wheel_trace_len_bt = hit_dist * 0.02f;
         if (wheel_trace_len_bt < pushback_thresh_bt) {
             float dist_delta = wheel_trace_len_bt - pushback_thresh_bt;

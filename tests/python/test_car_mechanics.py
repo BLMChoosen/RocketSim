@@ -372,13 +372,13 @@ def test_auto_roll_surface_alignment():
 
     car_obs = env.get_car_observations()
 
-    # Place cars slightly tilted at z=14.0 so 2 wheels touch the ground (num_wheels_contact == 2)
-    # Tilt 20 degrees around X: q = (cos(10 deg), sin(10 deg), 0, 0)
-    angle_rad = math.radians(20.0)
+    # Place cars tilted at z=16.0 so only the 2 lower wheels touch the ground (num_wheels_contact == 2)
+    # With full raycast length (48.75 UU), a 45-degree roll around X ensures only bottom wheels contact
+    angle_rad = math.radians(45.0)
     for e in range(2):
         car_obs[e, 0, 0] = 0.0
         car_obs[e, 0, 1] = 0.0
-        car_obs[e, 0, 2] = 14.0
+        car_obs[e, 0, 2] = 16.0
         car_obs[e, 0, 3] = 0.0
         car_obs[e, 0, 4] = 0.0
         car_obs[e, 0, 5] = 0.0
