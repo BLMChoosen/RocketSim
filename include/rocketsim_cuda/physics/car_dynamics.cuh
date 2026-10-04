@@ -218,19 +218,17 @@ __device__ __forceinline__ void update_car_wheel_dynamics(
 
         Vec3 hit_normal = contact_normals[w];
         float steer = (w < 2) ? steer_angle : 0.0f;
-        Vec3 axle_dir_raw = basis.right * cosf(steer) - basis.forward * sinf(steer);
-        float proj_axle = axle_dir_raw.dot(hit_normal);
-        Vec3 axle_dir = (axle_dir_raw - hit_normal * proj_axle).normalized();
-        Vec3 forward_dir = hit_normal.cross(axle_dir).normalized();
+        Vec3 lat_dir = basis.right * cosf(steer) - basis.forward * sinf(steer);
+        Vec3 long_dir = lat_dir.cross(hit_normal);
 
         Vec3 wheel_offset = get_octane_wheel_offset(w);
         Vec3 wheel_delta = basis * wheel_offset;
         Vec3 cross_vec = omega.cross(wheel_delta) + vel;
 
-        float base_friction = fabsf(cross_vec.dot(axle_dir));
+        float base_friction = fabsf(cross_vec.dot(lat_dir));
         float friction_curve_input = 0.0f;
         if (base_friction > 5.0f) {
-            friction_curve_input = base_friction / (fabsf(cross_vec.dot(forward_dir)) + base_friction);
+            friction_curve_input = base_friction / (fabsf(cross_vec.dot(long_dir)) + base_friction);
         }
 
         float lat_fric = get_lat_friction(friction_curve_input);

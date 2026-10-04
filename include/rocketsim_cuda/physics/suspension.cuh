@@ -193,9 +193,13 @@ __device__ __forceinline__ void apply_suspension_and_friction(
             extra_pushback = fmaxf(0.0f, (pos_error + vel_error) / denom) * 0.25f;
         }
 
-        float base_scale_bt = (susp_force * dt) + extra_pushback;
-        Vec3 susp_imp_bt = hit_normal * base_scale_bt;
-        Vec3 susp_torque_bt = rel_pos_bt.cross(susp_imp_bt);
+        Vec3 susp_imp_bt(0.0f, 0.0f, 0.0f);
+        Vec3 susp_torque_bt(0.0f, 0.0f, 0.0f);
+        if (susp_force > 0.0f) {
+            float base_scale_bt = (susp_force * dt) + extra_pushback;
+            susp_imp_bt = hit_normal * base_scale_bt;
+            susp_torque_bt = rel_pos_bt.cross(susp_imp_bt);
+        }
 
         // 3. Bilateral Tire Friction (btVehicleRL::calcFrictionImpulses)
         float steer = (w < 2) ? cached_steer_angle : 0.0f;

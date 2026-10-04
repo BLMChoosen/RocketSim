@@ -131,17 +131,8 @@ __device__ void StepCarDevice(
         car_state.wheel_long_friction_3[car_idx]
     };
 
-    // 5. Apply suspension & bilateral tire friction impulses
-    Vec3 vel_bt = vel * 0.02f;
-    apply_suspension_and_friction(
-        pos, basis, wheel_results, dt,
-        cached_engine_force, cached_brake, cached_steer_angle,
-        cached_lat_frictions, cached_long_frictions,
-        vel_bt, omega
-    );
-    vel = vel_bt * 50.0f;
-
-    // 6. Update wheel dynamics (throttle, brake, steer, friction curves, sticky downforce) for NEXT tick
+    // 5. Update wheel dynamics (throttle, brake, steer, friction curves, sticky downforce) for NEXT tick
+    // In CPU RocketSim (Car::_UpdateWheels), this runs before updateVehicleSecond and reads pre-impulse velocity
     Vec3 total_force(0.0f, 0.0f, 0.0f);
     Vec3 contact_normals[4] = {
         wheel_results[0].contact_normal,
@@ -158,7 +149,7 @@ __device__ void StepCarDevice(
         total_force
     );
 
-    // 7. Air control vs flipping reset
+    // 6. Air control vs flipping reset
     float fwd_speed = vel.dot(basis.forward);
     if (num_wheels_contact < 3) {
         bool allow_air_torque = (num_wheels_contact == 0);
@@ -167,13 +158,13 @@ __device__ void StepCarDevice(
         car_state.is_flipping[car_idx] = 0;
     }
 
-    // 8. Turtle recovery (auto-flip)
+    // 7. Turtle recovery (auto-flip)
     update_car_auto_flip(car_idx, car_state, ctrl, basis, dt, vel, omega);
 
-    // 9. Jump, double jump, flip/dodge
+    // 8. Jump, double jump, flip/dodge
     update_car_jump(car_idx, car_state, ctrl, is_on_ground, basis, fwd_speed, dt, vel, total_force);
 
-    // 10. Surface alignment (auto-roll)
+    // 9. Surface alignment (auto-roll)
     if (ctrl.throttle != 0.0f && ((num_wheels_contact > 0 && num_wheels_contact < 4) || car_state.world_contact_has_contact[car_idx])) {
         update_car_auto_roll(
             car_idx, car_state, num_wheels_contact, wheels_contact,
@@ -184,8 +175,19 @@ __device__ void StepCarDevice(
     // Clear world contact has contact flag after auto-roll / auto-flip have consumed it
     car_state.world_contact_has_contact[car_idx] = 0;
 
-    // 11. Boost update (persists minimum boost time and fuel)
+    // 10. Boost update (persists minimum boost time and fuel)
     update_car_boost(car_idx, car_state, ctrl, is_on_ground, basis, dt, total_force);
+
+    // 11. Apply suspension & bilateral tire friction impulses (btVehicleRL::updateVehicleSecond)
+    // Matches CPU: updateVehicleSecond is called after _UpdateWheels, jumps, and air controls, but before world step.
+    Vec3 vel_bt = vel * 0.02f;
+    apply_suspension_and_friction(
+        pos, basis, wheel_results, dt,
+        cached_engine_force, cached_brake, cached_steer_angle,
+        cached_lat_frictions, cached_long_frictions,
+        vel_bt, omega
+    );
+    vel = vel_bt * 50.0f;
 
     // 12. Gravity
     total_force.z += GRAVITY_Z * CAR_MASS;
