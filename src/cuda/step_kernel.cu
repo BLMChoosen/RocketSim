@@ -308,10 +308,10 @@ __global__ void StepSimulationKernel(
         uint8_t goal_flag = 0;
         uint8_t score_team = 0;
         if (fabsf(bx) < GOAL_WIDTH * 0.5f && bz < GOAL_HEIGHT) {
-            if (by > ARENA_EXTENT_Y) {
+            if (by > GOAL_SCORE_THRESHOLD_Y) {
                 goal_flag = 1;
                 score_team = 0;
-            } else if (by < -ARENA_EXTENT_Y) {
+            } else if (by < -GOAL_SCORE_THRESHOLD_Y) {
                 goal_flag = 1;
                 score_team = 1;
             }

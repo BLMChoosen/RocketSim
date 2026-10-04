@@ -80,10 +80,10 @@ def test_env_reward_goal_signal():
     env = RocketSimBatchedEnv(num_envs=num_envs, cars_per_env=2, tick_skip=1)
     env.reset()
 
-    # Move ball into Orange goal (Blue scores)
+    # Move ball into Orange goal (Y = 5220 > GOAL_SCORE_THRESHOLD_Y 5215.5)
     ball_obs = env.get_ball_observations()
     ball_obs[0, 0] = 0.0
-    ball_obs[0, 1] = 5150.0  # inside goal
+    ball_obs[0, 1] = 5220.0  # inside goal past goal line (5215.5)
     ball_obs[0, 2] = 200.0
 
     obs, rewards, terminated, truncated, info = env.step()
@@ -114,40 +114,49 @@ def test_env_goal_and_selective_reset_lifecycle():
     env.reset()
 
     ball_obs = env.get_ball_observations()
-    # Env 0: Blue scores into Orange goal (Y = +5150)
+    # Env 0: Blue scores into Orange goal (Y = +5220, past threshold 5215.5)
     ball_obs[0, 0] = 0.0
-    ball_obs[0, 1] = 5150.0
+    ball_obs[0, 1] = 5220.0
     ball_obs[0, 2] = 200.0
 
-    # Env 1: Orange scores into Blue goal (Y = -5150)
+    # Env 1: Orange scores into Blue goal (Y = -5220, past threshold -5215.5)
     ball_obs[1, 0] = 0.0
-    ball_obs[1, 1] = -5150.0
+    ball_obs[1, 1] = -5220.0
     ball_obs[1, 2] = 200.0
 
-    # Env 2: Ball in midfield (no goal)
+    # Env 2: Ball at Y = +5200 (inside goal cavity but before threshold 5215.5 -> no goal yet)
     ball_obs[2, 0] = 0.0
-    ball_obs[2, 1] = 0.0
-    ball_obs[2, 2] = 93.0
+    ball_obs[2, 1] = 5200.0
+    ball_obs[2, 2] = 200.0
+
+    # Env 3: Ball at Y = -5200 (before threshold -5215.5 -> no goal yet)
+    ball_obs[3, 0] = 0.0
+    ball_obs[3, 1] = -5200.0
+    ball_obs[3, 2] = 200.0
 
     obs, rewards, terminated, truncated, info = env.step()
 
-    # Env 0 checks
+    # Env 0 checks (Goal for Blue)
     assert info["is_goal"][0] == 1
     assert info["scoring_team"][0] == 0
     assert terminated[0] == 1
     assert rewards[0, 0] > 0.5  # Blue car rewarded
     assert rewards[0, 1] < -0.5 # Orange car penalized
 
-    # Env 1 checks
+    # Env 1 checks (Goal for Orange)
     assert info["is_goal"][1] == 1
     assert info["scoring_team"][1] == 1
     assert terminated[1] == 1
     assert rewards[1, 1] > 0.5  # Orange car rewarded
     assert rewards[1, 0] < -0.5 # Blue car penalized
 
-    # Env 2 checks
+    # Env 2 checks (Y = +5200 -> no goal)
     assert info["is_goal"][2] == 0
     assert terminated[2] == 0
+
+    # Env 3 checks (Y = -5200 -> no goal)
+    assert info["is_goal"][3] == 0
+    assert terminated[3] == 0
 
     # Test selective reset on env 0 and 1
     env.reset(env_ids=[0, 1])

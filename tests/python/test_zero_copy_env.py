@@ -212,10 +212,10 @@ def test_physical_consistency():
     assert vel_z < -200.0, f"Ball vel_z did not accelerate under gravity: {vel_z}"
     assert pos_z < 1000.0, f"Ball pos_z did not drop under gravity: {pos_z}"
 
-    # Goal detection test: place ball inside Orange goal (Y > 5120)
+    # Goal detection test: place ball inside Orange goal past threshold (Y > 5215.5)
     goal_env = 1
     ball_obs[goal_env, 0] = 0.0     # X center
-    ball_obs[goal_env, 1] = 5150.0  # Y in Orange goal
+    ball_obs[goal_env, 1] = 5220.0  # Y in Orange goal cavity past goal line
     ball_obs[goal_env, 2] = 200.0   # Z below crossbar
 
     # Step 1 tick

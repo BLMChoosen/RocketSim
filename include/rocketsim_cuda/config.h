@@ -48,6 +48,8 @@ constexpr float ARENA_RAMP_RADIUS = 260.0f;
 constexpr float GOAL_WIDTH = 1785.6f;
 constexpr float GOAL_HEIGHT = 642.7f;
 constexpr float GOAL_DEPTH = 880.0f;
+constexpr float SOCCAR_GOAL_SCORE_BASE_THRESHOLD_Y = 5124.25f;
+constexpr float GOAL_SCORE_THRESHOLD_Y = SOCCAR_GOAL_SCORE_BASE_THRESHOLD_Y + BALL_RADIUS; // 5215.5f
 
 // Differential Parity Tolerances (Chebyshev Norm ||Delta||_inf per GEMINI.md Section 3.1)
 constexpr float TOL_POS = 1e-4f;          // <= 10^-4 UU per tick
