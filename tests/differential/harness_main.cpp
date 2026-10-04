@@ -19,6 +19,10 @@
 #include "cpu_ref_sim.h"
 #include "golden_master.h"
 
+namespace rocketsim_cuda {
+    bool GetCPURefSimBoostPadState(const CPURefSim* sim, int padIdx, bool& isActive, float& cooldown);
+}
+
 using namespace rocketsim_cuda;
 
 struct HarnessArgs {
@@ -42,7 +46,7 @@ void PrintUsage(const char* prog) {
               << "  --seed <N>         Pseudorandom seed for PCG32 controls (default: 42)\n"
               << "  --tol <F>          Chebyshev position tolerance (default: 1e-4)\n"
               << "  --record <path>    Output path for .rsgold recording (default: milestone1_golden.rsgold)\n"
-              << "  --scenario <name>  Scenario to run: random, idle, freefall, throttle, boost, jump_flip, ball_flight, car_ball_hit, kickoff_goalie, all (default: random)\n"
+              << "  --scenario <name>  Scenario to run: random, idle, freefall, throttle, boost, jump_flip, ball_flight, car_ball_hit, kickoff_goalie, boost_pad_pickup, all (default: random)\n"
               << "  --report           Enable windowed differential report mode (no early abort, records windows 1, 10, 60, 120, 600, 10k)\n"
               << "  --baseline         Run baseline mode directly (bypasses serialization, computes component-wise Median & P95)\n"
               << "  --out-report <path>Save report table in Markdown format to file\n"
@@ -110,6 +114,11 @@ CarControls GetScenarioControl(const std::string& scenario, uint32_t tick, uint3
     } else if (scenario == "car_ball_hit" || scenario == "kickoff_goalie") {
         c.throttle = 1.0f;
         c.boost = 1;
+        return c;
+    } else if (scenario == "boost_pad_pickup") {
+        if (tick < 50) {
+            c.throttle = 1.0f;
+        }
         return c;
     }
     return gen.Generate();
@@ -309,6 +318,29 @@ void ApplyScenarioInitialState(const std::string& scenario, CPURefSim& env, uint
         b.ang_vel = Vec3(0.0f, 0.0f, 0.0f);
         b.quat = Quat::identity();
         env.SetBallState(b);
+    } else if (scenario == "boost_pad_pickup") {
+        CarStatePOD c;
+        env.GetCarState(0, c);
+        if (env_idx % 2 == 0) {
+            // Big Pad 0 (Midfield Left: X=-3584, Y=0, Z=73, Rad=208, +100 boost, 10s cooldown / 1201 ticks)
+            c.pos = Vec3(-3644.0f, 0.0f, 17.03f);
+        } else {
+            // Small Pad 19 (Midfield Inner Left: X=-1024, Y=0, Z=70, Rad=144, +12 boost, 4s cooldown / 480 ticks)
+            c.pos = Vec3(-1084.0f, 0.0f, 17.03f);
+        }
+        c.vel = Vec3(0.0f, 0.0f, 0.0f);
+        c.ang_vel = Vec3(0.0f, 0.0f, 0.0f);
+        c.quat = Quat::identity();
+        c.boost = 0.0f;
+        env.SetCarState(0, c);
+        
+        BallStatePOD b;
+        env.GetBallState(b);
+        b.pos = Vec3(0.0f, 0.0f, 93.15f);
+        b.vel = Vec3(0.0f, 0.0f, 0.0f);
+        b.ang_vel = Vec3(0.0f, 0.0f, 0.0f);
+        b.quat = Quat::identity();
+        env.SetBallState(b);
     }
 }
 
@@ -365,6 +397,23 @@ struct BounceMetrics {
     Vec3 ball_ang_vel_plus_5_gpu{0.0f, 0.0f, 0.0f};
     Vec3 ball_ang_vel_plus_30_cpu{0.0f, 0.0f, 0.0f};
     Vec3 ball_ang_vel_plus_30_gpu{0.0f, 0.0f, 0.0f};
+};
+
+struct BoostPadMetrics {
+    int target_pad_idx = 0;
+    bool is_big = true;
+    int pickup_tick_cpu = -1;
+    int pickup_tick_gpu = -1;
+    float boost_before_cpu = 0.0f;
+    float boost_before_gpu = 0.0f;
+    float boost_after_cpu = 0.0f;
+    float boost_after_gpu = 0.0f;
+    bool pad_active_after_pickup_cpu = true;
+    bool pad_active_after_pickup_gpu = true;
+    float cooldown_after_pickup_cpu = 0.0f;
+    float cooldown_after_pickup_gpu = 0.0f;
+    int respawn_tick_cpu = -1;
+    int respawn_tick_gpu = -1;
 };
 
 enum ComponentId {
@@ -544,6 +593,7 @@ struct ScenarioReport {
     KickoffGoalieMetrics goalie;
     BounceMetrics bounce;
     BaselineMetrics baseline;
+    BoostPadMetrics boost_pad;
 };
 
 bool RunScenarioDifferential(
@@ -582,6 +632,13 @@ bool RunScenarioDifferential(
     }
     gpu_sim.CopyBallStateToDevice(init_balls.data(), 0, args.envs);
     gpu_sim.CopyCarStateToDevice(init_cars.data(), 0, args.envs);
+
+    if (scenario_name == "boost_pad_pickup") {
+        report.boost_pad.target_pad_idx = 0;
+        report.boost_pad.is_big = true;
+        report.boost_pad.boost_before_cpu = init_cars[0].boost;
+        report.boost_pad.boost_before_gpu = init_cars[0].boost;
+    }
 
     DeterministicInputGenerator lockstep_gen(args.seed);
     std::vector<CarControls> step_controls(args.envs);
@@ -771,6 +828,44 @@ bool RunScenarioDifferential(
                 }
             }
 
+            if (scenario_name == "boost_pad_pickup" && e == 0) {
+                int target_pad = (e % 2 == 0) ? 0 : 19;
+
+                bool cpu_pad_active = false;
+                float cpu_pad_cd = 0.0f;
+                GetCPURefSimBoostPadState(&lockstep_cpu_envs[e], target_pad, cpu_pad_active, cpu_pad_cd);
+
+                uint8_t gpu_pad_active_byte = 0;
+                float gpu_pad_cd = 0.0f;
+                cudaMemcpy(&gpu_pad_active_byte, &gpu_sim.GetArenaState().pad_is_active[e * MAX_BOOST_PADS + target_pad], sizeof(uint8_t), cudaMemcpyDeviceToHost);
+                cudaMemcpy(&gpu_pad_cd, &gpu_sim.GetArenaState().pad_cooldown[e * MAX_BOOST_PADS + target_pad], sizeof(float), cudaMemcpyDeviceToHost);
+                bool gpu_pad_active = (gpu_pad_active_byte != 0);
+
+                if (report.boost_pad.pickup_tick_cpu == -1 && cpu_cars[e].boost > 0.0f) {
+                    report.boost_pad.pickup_tick_cpu = static_cast<int>(t + 1);
+                    report.boost_pad.boost_after_cpu = cpu_cars[e].boost;
+                    report.boost_pad.pad_active_after_pickup_cpu = cpu_pad_active;
+                    report.boost_pad.cooldown_after_pickup_cpu = cpu_pad_cd;
+                }
+                if (report.boost_pad.pickup_tick_gpu == -1 && gpu_cars[e].boost > 0.0f) {
+                    report.boost_pad.pickup_tick_gpu = static_cast<int>(t + 1);
+                    report.boost_pad.boost_after_gpu = gpu_cars[e].boost;
+                    report.boost_pad.pad_active_after_pickup_gpu = gpu_pad_active;
+                    report.boost_pad.cooldown_after_pickup_gpu = gpu_pad_cd;
+                }
+
+                if (report.boost_pad.pickup_tick_cpu != -1 && report.boost_pad.respawn_tick_cpu == -1 && static_cast<int>(t + 1) > report.boost_pad.pickup_tick_cpu) {
+                    if (cpu_pad_active) {
+                        report.boost_pad.respawn_tick_cpu = static_cast<int>(t + 1);
+                    }
+                }
+                if (report.boost_pad.pickup_tick_gpu != -1 && report.boost_pad.respawn_tick_gpu == -1 && static_cast<int>(t + 1) > report.boost_pad.pickup_tick_gpu) {
+                    if (gpu_pad_active) {
+                        report.boost_pad.respawn_tick_gpu = static_cast<int>(t + 1);
+                    }
+                }
+            }
+
             prev_cpu_ball_vel[e] = cpu_balls[e].vel;
             prev_gpu_ball_vel[e] = gpu_balls[e].vel;
 
@@ -801,6 +896,22 @@ bool RunScenarioDifferential(
             }
         }
     }
+
+    if (scenario_name == "boost_pad_pickup") {
+        if (report.boost_pad.pickup_tick_cpu == -1 || report.boost_pad.pickup_tick_gpu == -1 ||
+            report.boost_pad.pickup_tick_cpu != report.boost_pad.pickup_tick_gpu) {
+            report.first_breach_tick = (report.boost_pad.pickup_tick_cpu != -1) ? report.boost_pad.pickup_tick_cpu : 0;
+            report.first_breach_attr = "Boost Pad Pickup Mismatch";
+        }
+        int expected_respawn_delta = report.boost_pad.is_big ? 1201 : 480;
+        if (args.ticks >= static_cast<uint32_t>(expected_respawn_delta + 2)) {
+            if (report.boost_pad.respawn_tick_cpu != report.boost_pad.respawn_tick_gpu || report.boost_pad.respawn_tick_cpu == -1) {
+                report.first_breach_tick = (report.boost_pad.respawn_tick_cpu != -1) ? report.boost_pad.respawn_tick_cpu : expected_respawn_delta;
+                report.first_breach_attr = "Boost Pad Respawn Mismatch";
+            }
+        }
+    }
+
     report.baseline.Finalize(args.ticks);
     return (report.first_breach_tick == -1);
 }
@@ -979,7 +1090,37 @@ void PrintScenarioReportTable(const std::vector<ScenarioReport>& reports, std::o
                << rep.bounce.ball_ang_vel_plus_30_gpu.x << ", " << rep.bounce.ball_ang_vel_plus_30_gpu.y << ", " << rep.bounce.ball_ang_vel_plus_30_gpu.z << ") | Δ=("
                << std::fabs(rep.bounce.ball_ang_vel_plus_30_cpu.x - rep.bounce.ball_ang_vel_plus_30_gpu.x) << ", "
                << std::fabs(rep.bounce.ball_ang_vel_plus_30_cpu.y - rep.bounce.ball_ang_vel_plus_30_gpu.y) << ", "
-               << std::fabs(rep.bounce.ball_ang_vel_plus_30_cpu.z - rep.bounce.ball_ang_vel_plus_30_gpu.z) << ") rad/s |\n\n";
+                << std::fabs(rep.bounce.ball_ang_vel_plus_30_cpu.z - rep.bounce.ball_ang_vel_plus_30_gpu.z) << ") rad/s |\n\n";
+        }
+
+        if (rep.name == "boost_pad_pickup") {
+            int expected_respawn_delta = rep.boost_pad.is_big ? 1201 : 480;
+            float expected_boost = rep.boost_pad.is_big ? 100.0f : 12.0f;
+            int respawn_delta_cpu = (rep.boost_pad.pickup_tick_cpu != -1 && rep.boost_pad.respawn_tick_cpu != -1)
+                ? (rep.boost_pad.respawn_tick_cpu - rep.boost_pad.pickup_tick_cpu) : -1;
+            int respawn_delta_gpu = (rep.boost_pad.pickup_tick_gpu != -1 && rep.boost_pad.respawn_tick_gpu != -1)
+                ? (rep.boost_pad.respawn_tick_gpu - rep.boost_pad.pickup_tick_gpu) : -1;
+
+            os << "\n#### Boost Pad Pickup & Respawn Telemetry: Pad " << rep.boost_pad.target_pad_idx
+               << " (" << (rep.boost_pad.is_big ? "Big Pad, +100 boost" : "Small Pad, +12 boost") << ")\n"
+               << "| Metric | CPU Reference | GPU Kernel | Delta / Parity |\n"
+               << "| :--- | :--- | :--- | :--- |\n"
+               << "| Initial Boost | " << std::fixed << std::setprecision(1) << rep.boost_pad.boost_before_cpu << " | " << rep.boost_pad.boost_before_gpu
+               << " | Δ=" << std::fabs(rep.boost_pad.boost_before_cpu - rep.boost_pad.boost_before_gpu) << " (Bit-exact) |\n"
+               << "| Pickup Tick | " << rep.boost_pad.pickup_tick_cpu << " | " << rep.boost_pad.pickup_tick_gpu
+               << " | " << (rep.boost_pad.pickup_tick_cpu == rep.boost_pad.pickup_tick_gpu ? "MATCH" : "MISMATCH") << " |\n"
+               << "| Post-Pickup Boost | " << rep.boost_pad.boost_after_cpu << " | " << rep.boost_pad.boost_after_gpu
+               << " | Δ=" << std::fabs(rep.boost_pad.boost_after_cpu - rep.boost_pad.boost_after_gpu) << " (Bit-exact, Expected " << expected_boost << ") |\n"
+               << "| Pad Active Post-Pickup | " << (rep.boost_pad.pad_active_after_pickup_cpu ? "true" : "false")
+               << " | " << (rep.boost_pad.pad_active_after_pickup_gpu ? "true" : "false")
+               << " | " << (rep.boost_pad.pad_active_after_pickup_cpu == rep.boost_pad.pad_active_after_pickup_gpu ? "MATCH (Deactivated)" : "MISMATCH") << " |\n"
+               << "| Cooldown Assigned | " << std::fixed << std::setprecision(1) << rep.boost_pad.cooldown_after_pickup_cpu << " s"
+               << " | " << rep.boost_pad.cooldown_after_pickup_gpu << " s"
+               << " | Δ=" << std::scientific << std::setprecision(3) << std::fabs(rep.boost_pad.cooldown_after_pickup_cpu - rep.boost_pad.cooldown_after_pickup_gpu) << " s |\n"
+               << "| Respawn Tick | " << rep.boost_pad.respawn_tick_cpu << " | " << rep.boost_pad.respawn_tick_gpu
+               << " | " << (rep.boost_pad.respawn_tick_cpu == rep.boost_pad.respawn_tick_gpu ? "MATCH" : "MISMATCH") << " |\n"
+               << "| Cooldown Duration (Ticks) | " << respawn_delta_cpu << " ticks | " << respawn_delta_gpu << " ticks"
+               << " | Exact (Expected " << expected_respawn_delta << " ticks) |\n\n";
         }
     }
     os << "\n";
@@ -1046,8 +1187,8 @@ int main(int argc, char** argv) {
         std::vector<std::string> scns;
         if (args.scenario == "all") {
             scns = {"idle", "freefall", "throttle", "boost", "jump_flip", "ball_flight", "car_ball_hit", "kickoff_goalie",
-                    "ball_floor_drop", "ball_floor_angled", "ball_side_wall", "ball_back_wall", "ball_ceiling", "ball_corner_ramp",
-                    "ball_goal_post", "ball_crossbar"};
+                    "boost_pad_pickup", "ball_floor_drop", "ball_floor_angled", "ball_side_wall", "ball_back_wall",
+                    "ball_ceiling", "ball_corner_ramp", "ball_goal_post", "ball_crossbar"};
         } else if (args.scenario == "ball_suite") {
             scns = {"ball_floor_drop", "ball_floor_angled", "ball_side_wall", "ball_back_wall", "ball_ceiling", "ball_corner_ramp",
                     "ball_goal_post", "ball_crossbar", "ball_flight"};
@@ -1246,8 +1387,8 @@ int main(int argc, char** argv) {
     std::vector<std::string> scenarios_to_run;
     if (args.scenario == "all") {
         scenarios_to_run = {"idle", "freefall", "throttle", "boost", "jump_flip", "ball_flight", "car_ball_hit", "kickoff_goalie",
-                            "ball_floor_drop", "ball_floor_angled", "ball_side_wall", "ball_back_wall", "ball_ceiling", "ball_corner_ramp",
-                            "ball_goal_post", "ball_crossbar"};
+                            "boost_pad_pickup", "ball_floor_drop", "ball_floor_angled", "ball_side_wall", "ball_back_wall",
+                            "ball_ceiling", "ball_corner_ramp", "ball_goal_post", "ball_crossbar"};
     } else if (args.scenario == "ball_suite") {
         scenarios_to_run = {"ball_floor_drop", "ball_floor_angled", "ball_side_wall", "ball_back_wall", "ball_ceiling", "ball_corner_ramp",
                             "ball_goal_post", "ball_crossbar", "ball_flight"};

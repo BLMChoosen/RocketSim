@@ -256,4 +256,66 @@
     - **Linear Velocity Delta:** Max $\Delta v \le \mathbf{0.000355\text{ UU/s}}$ (target $\le 0.001\text{ UU/s}$ **PASSED**).
     - **Quaternion Delta:** Max $\Delta q \le \mathbf{1.192 \times 10^{-7}}$ (target $\le 10^{-6}$ **PASSED**).
 
+---
+
+## Module 1.6: Boost Pads Mechanics Validation (M5.6 - Completed)
+
+### CPU Oracle Reference
+- **BoostPad lifecycle & pickup logic:** `src/Sim/BoostPad/BoostPad.cpp:53-101`
+  - `BoostPad::Step(tickTime, ...)`: verifies `curTimer > 0`; if cooldown active, decrements `curTimer -= tickTime`. If `curTimer <= 0`, resets `isActive = true` and `curTimer = 0.0f`.
+  - Cylinder distance query: evaluates `pos.Dist2D(carPos) <= (isBig ? 208.0f : 144.0f)` and `abs(carPos.z - pos.z) <= (isBig ? 95.0f : 70.0f)`.
+  - Boost grant: `car->boost = min(100.0f, car->boost + (isBig ? 100.0f : 12.0f))`.
+  - Deactivation: sets `isActive = false`, assigns `curTimer = (isBig ? 10.0f : 4.0f)`.
+- **Arena boost pad registration & execution loop:** `src/Sim/Arena/Arena.cpp:704-715`
+  - `Arena::Step(1)` steps boost pads when `gameMode == GameMode::SOCCAR` via `_boostPadGrid` queries or `_boostPads` iterations.
+- **Soccar pad layout & constants:** `src/Sim/RLConst.h:254-268`
+  - `LOCS_AMOUNT_BIG = 6`, `LOCS_AMOUNT_SMALL_SOCCAR = 28` (total 34 pads).
+  - `BOOST_PAD_BIG_BOOST_AMOUNT = 100.0f`, `BOOST_PAD_SMALL_BOOST_AMOUNT = 12.0f`.
+  - `BOOST_PAD_COOLDOWN_BIG = 10.0f` s, `BOOST_PAD_COOLDOWN_SMALL = 4.0f` s.
+  - `BOOST_PAD_RADIUS_BIG = 208.0f` UU, `BOOST_PAD_RADIUS_SMALL = 144.0f` UU.
+  - `BOOST_PAD_HEIGHT = 95.0f` UU.
+
+### Mathematical Formulation & Exact Dynamics
+
+1. **Cylindrical Proximity Test:**
+   $$\Delta x = x_{\text{car}} - x_{\text{pad}}, \quad \Delta y = y_{\text{car}} - y_{\text{pad}}, \quad \Delta z = z_{\text{car}} - z_{\text{pad}}$$
+   $$\text{in\_range} = (\Delta x^2 + \Delta y^2 \le R_{\text{pad}}^2) \land (|\Delta z| \le H_{\text{pad}})$$
+   where $R_{\text{big}} = 208.0\text{ UU}$, $R_{\text{small}} = 144.0\text{ UU}$, and $H_{\text{pad}} = 95.0\text{ UU}$.
+
+2. **Pickup & Capacity Saturation:**
+   When $\text{isActive} \land \text{in\_range} \land (\text{boost}_{\text{car}} < 100.0f)$:
+   $$\text{boost}_{t+1} = \min(100.0f, \text{boost}_t + \Delta\text{boost})$$
+   $$\text{isActive}_{t+1} = \text{false}$$
+   $$\text{cooldown}_{t+1} = T_{\text{cooldown}} \quad (10.0\text{ s for Big}, 4.0\text{ s for Small})$$
+
+3. **IEEE-754 Single-Precision Cooldown Countdown Dynamics:**
+   With simulation tick interval $\Delta t = \frac{1.0}{120.0}\text{ s} \approx 0.00833333355\text{ s}$:
+   $$\text{cooldown}_{k+1} = \text{cooldown}_k - \Delta t$$
+   - **Big Pad ($T_0 = 10.0\text{ s}$):**
+     Under IEEE-754 float32 subtraction:
+     - At $k = 1200\text{ ticks}$: $\text{cooldown}_{1200} \approx +6.642 \times 10^{-5} > 0.0$ (remains inactive).
+     - At $k = 1201\text{ ticks}$: $\text{cooldown}_{1201} \approx -8.267 \times 10^{-3} \le 0.0$ (triggers respawn).
+     - Exact respawn delay from consumption: **1,201 ticks** ($10.00833\text{ s}$).
+   - **Small Pad ($T_0 = 4.0\text{ s}$):**
+     Under IEEE-754 float32 subtraction:
+     - At $k = 480\text{ ticks}$: $\text{cooldown}_{480} \le 0.0$ (triggers respawn).
+     - Exact respawn delay from consumption: **480 ticks** ($4.00000\text{ s}$).
+
+### Verification Metrics & Parity Results
+- **CPURefSim Soccar Pad Initialization:**
+  - 34 Soccar pads instantiated via `BoostPad::_AllocBoostPad()`, `_Setup()`, registered in `_boostPads` and `_boostPadGrid`.
+  - `m_arena->gameMode = RocketSim::GameMode::SOCCAR` activated in `CPURefSim::InitArena()`.
+  - Added thread-safe `GetCPURefSimBoostPadState` export for lockstep pad inspection.
+- **Differential Harness Scenario (`boost_pad_pickup`, 1205 ticks, 1 env):**
+  - **Initial Boost:** CPU 0.0 vs GPU 0.0 ($\Delta = 0.0$, bit-exact).
+  - **Pickup Tick:** CPU tick 1 vs GPU tick 1 (MATCH).
+  - **Post-Pickup Boost:** CPU 100.0 vs GPU 100.0 ($\Delta = 0.0$, bit-exact saturation).
+  - **Pad Deactivation:** CPU `isActive = false` vs GPU `isActive = false` (MATCH).
+  - **Cooldown Assigned:** CPU 10.0s vs GPU 10.0s ($\Delta = 0.000\text{s}$).
+  - **Respawn Tick:** CPU tick 1202 vs GPU tick 1202 (MATCH, exactly 1201 ticks elapsed from tick 1).
+  - **Cooldown Duration:** Exactly 1201 ticks matching single-precision float32 countdown.
+- **Python Unit Tests (`pytest tests/python/ -k boost -v`):** 2/2 tests passed.
+- **Full Python Zero-Copy Suite:** 35/35 tests passing in 5.35s.
+
+
 

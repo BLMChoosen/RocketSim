@@ -14,9 +14,12 @@
 #include "BulletCollision/CollisionShapes/btStaticPlaneShape.h"
 #include "LinearMath/btQuaternion.h"
 #include "LinearMath/btMatrix3x3.h"
+#include "Sim/BoostPad/BoostPad.h"
 
 #include <stdexcept>
 #include <algorithm>
+#include <unordered_map>
+#include <mutex>
 
 namespace rocketsim_cuda {
 
@@ -29,6 +32,24 @@ namespace {
             s_rocketSimInitialized = true;
         }
     }
+
+    static std::unordered_map<const CPURefSim*, RocketSim::Arena*> s_simArenaMap;
+    static std::mutex s_simArenaMapMutex;
+}
+
+bool GetCPURefSimBoostPadState(const CPURefSim* sim, int padIdx, bool& isActive, float& cooldown) {
+    std::lock_guard<std::mutex> lock(s_simArenaMapMutex);
+    auto it = s_simArenaMap.find(sim);
+    if (it != s_simArenaMap.end() && it->second) {
+        auto arena = it->second;
+        if (padIdx >= 0 && padIdx < static_cast<int>(arena->_boostPads.size())) {
+            auto state = arena->_boostPads[padIdx]->GetState();
+            isActive = state.isActive;
+            cooldown = state.cooldown;
+            return true;
+        }
+    }
+    return false;
 }
 
 CPURefSim::CPURefSim(int numCars, bool addFloor, float tickRate, int spawnSeed)
@@ -48,6 +69,11 @@ CPURefSim::CPURefSim(CPURefSim&& other) noexcept
       m_addFloor(other.m_addFloor),
       m_tickRate(other.m_tickRate),
       m_spawnSeed(other.m_spawnSeed) {
+    {
+        std::lock_guard<std::mutex> lock(s_simArenaMapMutex);
+        s_simArenaMap.erase(&other);
+        s_simArenaMap[this] = m_arena;
+    }
     other.m_arena = nullptr;
     other.m_cars.clear();
 }
@@ -61,6 +87,11 @@ CPURefSim& CPURefSim::operator=(CPURefSim&& other) noexcept {
         m_addFloor = other.m_addFloor;
         m_tickRate = other.m_tickRate;
         m_spawnSeed = other.m_spawnSeed;
+        {
+            std::lock_guard<std::mutex> lock(s_simArenaMapMutex);
+            s_simArenaMap.erase(&other);
+            s_simArenaMap[this] = m_arena;
+        }
         other.m_arena = nullptr;
         other.m_cars.clear();
     }
@@ -107,6 +138,32 @@ void CPURefSim::InitArena() {
         fnAddStaticPlane(btVector3(invSqrt2, invSqrt2, 0), btVector3(-3520.0f * UU_TO_BT, -4544.0f * UU_TO_BT, 0));
     }
 
+    // Enable arena boost pad simulation without loading collision meshes
+    m_arena->gameMode = RocketSim::GameMode::SOCCAR;
+
+    // Populate standard 34 Soccar boost pads
+    using namespace RocketSim::RLConst::BoostPads;
+    m_arena->_boostPads.reserve(LOCS_AMOUNT_BIG + LOCS_AMOUNT_SMALL_SOCCAR);
+
+    for (int i = 0; i < (LOCS_AMOUNT_BIG + LOCS_AMOUNT_SMALL_SOCCAR); i++) {
+        RocketSim::BoostPadConfig padConfig;
+        padConfig.isBig = (i < LOCS_AMOUNT_BIG);
+        padConfig.pos = padConfig.isBig
+            ? LOCS_BIG_SOCCAR[i]
+            : LOCS_SMALL_SOCCAR[i - LOCS_AMOUNT_BIG];
+
+        RocketSim::BoostPad* pad = RocketSim::BoostPad::_AllocBoostPad();
+        pad->_Setup(padConfig);
+
+        m_arena->_boostPads.push_back(pad);
+        m_arena->_boostPadGrid.Add(pad);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(s_simArenaMapMutex);
+        s_simArenaMap[this] = m_arena;
+    }
+
     m_cars.clear();
     for (int i = 0; i < m_numCars; i++) {
         RocketSim::Car* car = m_arena->AddCar(RocketSim::Team::BLUE, RocketSim::CAR_CONFIG_OCTANE);
@@ -120,6 +177,10 @@ void CPURefSim::InitArena() {
 }
 
 void CPURefSim::CleanupArena() {
+    {
+        std::lock_guard<std::mutex> lock(s_simArenaMapMutex);
+        s_simArenaMap.erase(this);
+    }
     if (m_arena) {
         delete m_arena;
         m_arena = nullptr;
