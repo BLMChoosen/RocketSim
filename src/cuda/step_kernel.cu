@@ -23,19 +23,19 @@ __device__ void StepBallDevice(
         return;
     }
 
-    // Damping
+    // 1. Damping
     apply_rigid_body_damping(vel, ang_vel, BALL_DRAG, 0.0f, dt);
 
-    // Gravity
+    // 2. Gravity
     vel.z += GRAVITY_Z * dt;
 
-    // Linear pos (in Bullet units for exact rounding parity)
-    pos = (pos * 0.02f + vel * (0.02f * dt)) * 50.0f;
-
-    // Arena / Ground collision
+    // 3. Arena / Ground collision resolution (updates velocities and pushes out penetration)
     resolve_ball_arena_collision(pos, vel, ang_vel);
 
-    // Rotation integration
+    // 4. Linear pos integration with post-collision velocity (in Bullet units for exact rounding parity)
+    pos = (pos * 0.02f + vel * (0.02f * dt)) * 50.0f;
+
+    // 5. Rotation integration with post-collision angular velocity
     quat = bullet_integrate_quaternion(quat, ang_vel, dt);
 
     // Write back coalesced

@@ -39,51 +39,22 @@ __device__ __forceinline__ float arena_sdf_2d_wall(
     float x, float y,
     float* __restrict__ out_nx, float* __restrict__ out_ny)
 {
-    // Parameter along chamfer segment: A = (2944, 5120), B = (4096, 3968)
-    // Vector AB = (1152, -1152). (P - A) . AB = 1152 * ((x - 2944) - (y - 5120))
-    // |AB|^2 = 2 * 1152^2 = 2654208 = 1152 * 2304
-    // Normalized parameter t = ((x - 2944) - (y - 5120)) / 2304
-    float t = ((x - SDF_CORNER_X0) - (y - SDF_CORNER_Y0)) * (1.0f / 2304.0f);
+    float d_side = SDF_ARENA_EXTENT_X - x;
+    float d_back = SDF_ARENA_EXTENT_Y - y;
+    float d_chamfer = (SDF_CORNER_SUM - (x + y)) * SDF_INV_SQRT2;
 
-    if (t <= 0.0f) {
-        // Closest feature is Back Wall (y = 5120, x in [0, 2944])
-        if (x <= SDF_CORNER_X0) {
-            *out_nx = 0.0f;
-            *out_ny = -1.0f;
-            return SDF_ARENA_EXTENT_Y - y;
-        } else {
-            // Corner A singularity
-            float dx = SDF_CORNER_X0 - x;
-            float dy = SDF_CORNER_Y0 - y;
-            float len = sqrtf(dx * dx + dy * dy);
-            float inv = (len > 1e-6f) ? (1.0f / len) : 1.0f;
-            *out_nx = dx * inv;
-            *out_ny = dy * inv;
-            bool inside = (x <= SDF_ARENA_EXTENT_X && y <= SDF_ARENA_EXTENT_Y && (x + y) <= SDF_CORNER_SUM);
-            return inside ? len : -len;
-        }
-    } else if (t >= 1.0f) {
-        // Closest feature is Side Wall (x = 4096, y in [0, 3968])
-        if (y <= SDF_CORNER_Y1) {
-            *out_nx = -1.0f;
-            *out_ny = 0.0f;
-            return SDF_ARENA_EXTENT_X - x;
-        } else {
-            // Corner B singularity
-            float dx = SDF_CORNER_X1 - x;
-            float dy = SDF_CORNER_Y1 - y;
-            float len = sqrtf(dx * dx + dy * dy);
-            float inv = (len > 1e-6f) ? (1.0f / len) : 1.0f;
-            *out_nx = dx * inv;
-            *out_ny = dy * inv;
-            bool inside = (x <= SDF_ARENA_EXTENT_X && y <= SDF_ARENA_EXTENT_Y && (x + y) <= SDF_CORNER_SUM);
-            return inside ? len : -len;
-        }
+    if (d_side <= d_back && d_side <= d_chamfer) {
+        *out_nx = -1.0f;
+        *out_ny = 0.0f;
+        return d_side;
+    } else if (d_back <= d_chamfer) {
+        *out_nx = 0.0f;
+        *out_ny = -1.0f;
+        return d_back;
     } else {
-        // Chamfer line segment: x + y = 8064
         *out_nx = -SDF_INV_SQRT2;
         *out_ny = -SDF_INV_SQRT2;
-        return (SDF_CORNER_SUM - (x + y)) * SDF_INV_SQRT2;
+        return d_chamfer;
     }
 }
 

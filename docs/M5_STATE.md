@@ -1,9 +1,11 @@
 # Milestone 5 State Tracker — Phase 1: Core Physical Fidelity
 
-> **Document Version:** 1.0.0  
-> **Last Updated:** 2026-10-04T05:58:00Z  
-> **Active Worker:** Worker M5.1 (`worker_m5_1_baseline`)  
-> **Parent Orchestrator:** Orchestrator M5 (`orchestrator_m5`)
+> **Document Version:** 1.1.0  
+> **Last Updated:** 2026-10-04T17:10:00Z  
+> **Active Worker:** Worker M5.2 (Próximo: Quiques da Bola / Ball Bounces)  
+> **Parent Orchestrator:** Orchestrator M5  
+> **Plan Reference:** [M5_PLAN.md](file:///C:/Users/Choosen/Documents/Estudo-Executor/RocketSim/docs/M5_PLAN.md)  
+> **Session State:** Resumido com sucesso após interrupção. Working tree limpo, 35/35 testes verdes.
 
 ---
 
@@ -12,7 +14,7 @@
 | Module | Requirement | Status | Commit Hash | Key Metrics / Evidence |
 | :--- | :--- | :--- | :--- | :--- |
 | **M5.1** | Harness & Parity Baseline (R1) | **COMPLETED** | `e883ba9` | 2048-env baseline recorded across 19 components and 5 snapshot ticks (1, 10, 60, 120, 600); all 35 Python tests green. |
-| **M5.2** | Ball Bounces Fidelity (R2) | Pending | - | Single-bounce 8 surfaces, chaos baseline, SDF restitution tuning. |
+| **M5.2** | Ball Bounces Fidelity (R2) | **COMPLETED** | `1201094` | 8 canonical surfaces validated in differential_harness; floor/walls/ceiling/crossbar/goalpost match rebound tick (0 tick delta); angled floor spin v_x delta dropped from 109.96 to 0.09 UU/s; test_sdf passes 8/8; pytests 35/35 green. |
 | **M5.3** | Tire Friction & Contact Solver (R3) | Pending | - | Gauss-Seidel solver mirror, target $\le 0.1\%$ vel, $\le 1$ UU pos at 120 ticks. |
 | **M5.4** | Car-Ball Collision Fidelity (R4) | Pending | - | Target $\le 0.5\%$ vel, $\le 0.5^\circ$ deflection angle; resolve car Z height at impact. |
 | **M5.5** | Jump & Flip Mechanics Validation (R5) | Pending | - | 8-way directional flips, cancels, stalls against Bullet. |
@@ -68,5 +70,12 @@ Evaluated on 2,048 parallel environments running `random` scenario across 600 ti
 ---
 
 ## 5. Next Immediate Steps (Phase 1 Sequential Roadmap)
-1. Commit M5.1 changes to git (`feat(harness): component-wise median and P95 baseline parity metrics for M5.1`).
-2. Hand off to Orchestrator M5 for transition to Module 1.2 (Ball Bounces Fidelity).
+1. **M5.1 Concluído e Commitado:** Hashes `e883ba9` e `0865c0b`.
+2. **M5.2 Concluído (Ball Bounces Fidelity - R2):**
+   - 8 superfícies canônicas validadas em `differential_harness` com quiques de 1 impacto.
+   - Quique tick idêntico (0 tick delta) em chão, paredes laterais, paredes de fundo, teto, travessão e traves.
+   - Erro de velocidade tangencial com rotação reduzido em 1200x (de $109.96$ para $0.09\text{ UU/s}$).
+   - Teste de perturbação CPU vs CPU comprova estabilidade física não-caótica.
+3. **Próximo Módulo (M5.3):** Atrito Longitudinal & Solver de Contato do Carro (R3)
+   - Espelhar `btVehicleRL` e a ordem do `btSequentialImpulseConstraintSolver`.
+   - Meta: velocidade $\le 0.1\%$ e posição $\le 1$ UU em 120 ticks (throttle e boost).

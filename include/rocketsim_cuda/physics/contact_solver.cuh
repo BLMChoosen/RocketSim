@@ -332,17 +332,35 @@ __device__ __forceinline__ void resolve_ball_arena_collision(
 
         float vn = normal.dot(vel);
         if (vn < 0.0f) {
-            float impulse_n = -(1.0f + restitution) * vn;
-            Vec3 normal_impulse = normal * impulse_n;
+            // Low-speed restitution threshold matching Bullet (0.2 BT units = 10.0 UU/s)
+            float e = (fabsf(vn) < 10.0f) ? 0.0f : restitution;
+            float delta_vn = -(1.0f + e) * vn;
+            Vec3 normal_impulse = normal * delta_vn;
 
-            Vec3 v_tan = vel - normal * vn;
-            Vec3 tangent_impulse = v_tan * (-friction);
+            // Surface contact slip velocity (contact point r = -radius * normal)
+            // v_contact = vel + ang_vel x r = vel - (ang_vel x normal) * radius
+            Vec3 v_contact = vel - ang_vel.cross(normal) * radius;
+            Vec3 v_slip = v_contact - normal * normal.dot(v_contact);
+            float slip_speed = v_slip.length();
+
+            Vec3 tangent_impulse(0.0f, 0.0f, 0.0f);
+            if (slip_speed > 1e-4f) {
+                // Effective tangential mass ratio for rolling solid sphere: 2/7
+                float j_slip_per_m = (2.0f / 7.0f) * slip_speed;
+                float j_coulomb_max_per_m = friction * delta_vn;
+
+                float j_fric_mag = fminf(j_slip_per_m, j_coulomb_max_per_m);
+                Vec3 t_dir = v_slip * (1.0f / slip_speed);
+                tangent_impulse = t_dir * (-j_fric_mag);
+
+                // Rotational torque coupling:
+                // Delta omega = (r x J_t) / I = (-radius * normal x J_t) / (0.4 * M * radius^2)
+                //             = (2.5 / radius) * (tangent_impulse x normal)
+                Vec3 delta_omega = tangent_impulse.cross(normal) * (2.5f / radius);
+                ang_vel = ang_vel + delta_omega;
+            }
 
             vel = vel + normal_impulse + tangent_impulse;
-
-            // Rolling friction rotational coupling
-            Vec3 ang_impulse = normal.cross(v_tan) * (1.0f / radius);
-            ang_vel = ang_vel + ang_impulse * friction;
         }
     }
 }

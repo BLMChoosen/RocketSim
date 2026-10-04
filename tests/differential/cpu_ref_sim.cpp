@@ -75,13 +75,36 @@ void CPURefSim::InitArena() {
     }
 
     if (m_addFloor) {
-        btCollisionShape* groundShape = new btStaticPlaneShape(btVector3(0, 0, 1), 0);
-        btRigidBody* floorRb = m_arena->_AddStaticCollisionShape(groundShape, btVector3(0, 0, 0));
-        if (floorRb) {
-            floorRb->setRestitution(RocketSim::RLConst::ARENA_COLLISION_BASE_RESTITUTION);
-            floorRb->setFriction(RocketSim::RLConst::ARENA_COLLISION_BASE_FRICTION);
-            floorRb->setRollingFriction(0.0f);
-        }
+        auto fnAddStaticPlane = [&](const btVector3& normal, const btVector3& posBT) {
+            btCollisionShape* planeShape = new btStaticPlaneShape(normal, 0);
+            btRigidBody* rb = m_arena->_AddStaticCollisionShape(planeShape, posBT);
+            if (rb) {
+                rb->setRestitution(RocketSim::RLConst::ARENA_COLLISION_BASE_RESTITUTION);
+                rb->setFriction(RocketSim::RLConst::ARENA_COLLISION_BASE_FRICTION);
+                rb->setRollingFriction(0.0f);
+            }
+        };
+
+        // Floor (z = 0)
+        fnAddStaticPlane(btVector3(0, 0, 1), btVector3(0, 0, 0));
+
+        // Ceiling (z = 2048 UU)
+        fnAddStaticPlane(btVector3(0, 0, -1), btVector3(0, 0, RocketSim::RLConst::ARENA_HEIGHT * UU_TO_BT));
+
+        // Side walls (x = +/- 4096 UU)
+        fnAddStaticPlane(btVector3(1, 0, 0), btVector3(-RocketSim::RLConst::ARENA_EXTENT_X * UU_TO_BT, 0, 0));
+        fnAddStaticPlane(btVector3(-1, 0, 0), btVector3(RocketSim::RLConst::ARENA_EXTENT_X * UU_TO_BT, 0, 0));
+
+        // Back walls (y = +/- 5120 UU)
+        fnAddStaticPlane(btVector3(0, 1, 0), btVector3(0, -RocketSim::RLConst::ARENA_EXTENT_Y * UU_TO_BT, 0));
+        fnAddStaticPlane(btVector3(0, -1, 0), btVector3(0, RocketSim::RLConst::ARENA_EXTENT_Y * UU_TO_BT, 0));
+
+        // Corner chamfers (x + y = 8064 UU)
+        constexpr float invSqrt2 = 0.7071067811865475f;
+        fnAddStaticPlane(btVector3(-invSqrt2, -invSqrt2, 0), btVector3(3520.0f * UU_TO_BT, 4544.0f * UU_TO_BT, 0));
+        fnAddStaticPlane(btVector3(invSqrt2, -invSqrt2, 0), btVector3(-3520.0f * UU_TO_BT, 4544.0f * UU_TO_BT, 0));
+        fnAddStaticPlane(btVector3(-invSqrt2, invSqrt2, 0), btVector3(3520.0f * UU_TO_BT, -4544.0f * UU_TO_BT, 0));
+        fnAddStaticPlane(btVector3(invSqrt2, invSqrt2, 0), btVector3(-3520.0f * UU_TO_BT, -4544.0f * UU_TO_BT, 0));
     }
 
     m_cars.clear();
@@ -192,7 +215,14 @@ void CPURefSim::SetBallState(const BallStatePOD& in) {
     btMatrix3x3 basis(btQuaternion(in.quat.x, in.quat.y, in.quat.z, in.quat.w));
     bs.rotMat = RocketSim::RotMat(basis);
 
+    // If ball is spawned in mid-air with zero velocity, impart microscopic vel so Arena::Step won't force ISLAND_SLEEPING
+    if (bs.pos.z > 95.0f && bs.vel.LengthSq() == 0.0f && bs.angVel.LengthSq() == 0.0f) {
+        bs.vel.z = -1e-6f;
+    }
+
     m_arena->ball->SetState(bs);
+    m_arena->ball->_rigidBody.activate(true);
+    m_arena->ball->_rigidBody.setActivationState(ACTIVE_TAG);
 }
 
 void CPURefSim::SetCarState(int carIdx, const CarStatePOD& in) {
@@ -209,6 +239,8 @@ void CPURefSim::SetCarState(int carIdx, const CarStatePOD& in) {
     cs.isOnGround = (in.is_on_ground != 0);
 
     car->SetState(cs);
+    car->_rigidBody.activate(true);
+    car->_rigidBody.setActivationState(ACTIVE_TAG);
 }
 
 } // namespace rocketsim_cuda

@@ -275,6 +275,40 @@ void ApplyScenarioInitialState(const std::string& scenario, CPURefSim& env, uint
         b.ang_vel = Vec3(0.0f, 0.0f, 0.0f);
         b.quat = Quat::identity();
         env.SetBallState(b);
+    } else if (scenario == "ball_goal_post") {
+        CarStatePOD c;
+        env.GetCarState(0, c);
+        c.pos = Vec3(0.0f, -4608.0f, 17.03f);
+        c.vel = Vec3(0.0f, 0.0f, 0.0f);
+        c.ang_vel = Vec3(0.0f, 0.0f, 0.0f);
+        c.quat = Quat::identity();
+        c.boost = 0.0f;
+        env.SetCarState(0, c);
+
+        BallStatePOD b;
+        env.GetBallState(b);
+        b.pos = Vec3(892.8f, 4500.0f, 300.0f);
+        b.vel = Vec3(0.0f, 1500.0f, 0.0f);
+        b.ang_vel = Vec3(0.0f, 0.0f, 0.0f);
+        b.quat = Quat::identity();
+        env.SetBallState(b);
+    } else if (scenario == "ball_crossbar") {
+        CarStatePOD c;
+        env.GetCarState(0, c);
+        c.pos = Vec3(0.0f, -4608.0f, 17.03f);
+        c.vel = Vec3(0.0f, 0.0f, 0.0f);
+        c.ang_vel = Vec3(0.0f, 0.0f, 0.0f);
+        c.quat = Quat::identity();
+        c.boost = 0.0f;
+        env.SetCarState(0, c);
+
+        BallStatePOD b;
+        env.GetBallState(b);
+        b.pos = Vec3(0.0f, 4500.0f, 642.7f);
+        b.vel = Vec3(0.0f, 1500.0f, 0.0f);
+        b.ang_vel = Vec3(0.0f, 0.0f, 0.0f);
+        b.quat = Quat::identity();
+        env.SetBallState(b);
     }
 }
 
@@ -1012,9 +1046,11 @@ int main(int argc, char** argv) {
         std::vector<std::string> scns;
         if (args.scenario == "all") {
             scns = {"idle", "freefall", "throttle", "boost", "jump_flip", "ball_flight", "car_ball_hit", "kickoff_goalie",
-                    "ball_floor_drop", "ball_floor_angled", "ball_side_wall", "ball_back_wall", "ball_ceiling", "ball_corner_ramp"};
+                    "ball_floor_drop", "ball_floor_angled", "ball_side_wall", "ball_back_wall", "ball_ceiling", "ball_corner_ramp",
+                    "ball_goal_post", "ball_crossbar"};
         } else if (args.scenario == "ball_suite") {
-            scns = {"ball_floor_drop", "ball_floor_angled", "ball_side_wall", "ball_back_wall", "ball_ceiling", "ball_corner_ramp", "ball_flight"};
+            scns = {"ball_floor_drop", "ball_floor_angled", "ball_side_wall", "ball_back_wall", "ball_ceiling", "ball_corner_ramp",
+                    "ball_goal_post", "ball_crossbar", "ball_flight"};
         } else {
             scns = {args.scenario};
         }
@@ -1210,9 +1246,11 @@ int main(int argc, char** argv) {
     std::vector<std::string> scenarios_to_run;
     if (args.scenario == "all") {
         scenarios_to_run = {"idle", "freefall", "throttle", "boost", "jump_flip", "ball_flight", "car_ball_hit", "kickoff_goalie",
-                            "ball_floor_drop", "ball_floor_angled", "ball_side_wall", "ball_back_wall", "ball_ceiling", "ball_corner_ramp"};
+                            "ball_floor_drop", "ball_floor_angled", "ball_side_wall", "ball_back_wall", "ball_ceiling", "ball_corner_ramp",
+                            "ball_goal_post", "ball_crossbar"};
     } else if (args.scenario == "ball_suite") {
-        scenarios_to_run = {"ball_floor_drop", "ball_floor_angled", "ball_side_wall", "ball_back_wall", "ball_ceiling", "ball_corner_ramp", "ball_flight"};
+        scenarios_to_run = {"ball_floor_drop", "ball_floor_angled", "ball_side_wall", "ball_back_wall", "ball_ceiling", "ball_corner_ramp",
+                            "ball_goal_post", "ball_crossbar", "ball_flight"};
     } else {
         scenarios_to_run = {args.scenario};
     }
