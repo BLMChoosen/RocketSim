@@ -185,6 +185,7 @@ class RocketSimBatchedEnv:
             "tick_count": self.get_tick_count(),
             "pad_is_active": self.get_pad_is_active(),
             "pad_cooldown": self.get_pad_cooldown(),
+            "ball_hit_is_valid": self.get_ball_hit_is_valid(),
         }
 
     def step(

@@ -317,6 +317,31 @@ NB_MODULE(rocketsim_cuda, m) {
         .def("__setitem__", &GpuTensorView::setitem)
         .def("zero_", &GpuTensorView::zero_)
         .def("clone", &GpuTensorView::clone)
+        .def("sum", [](const GpuTensorView& v) -> double {
+            size_t total_elements = 1;
+            for (auto s : v.shape) total_elements *= s;
+            if (total_elements == 0) return 0.0;
+            if (v.dtype == "uint8") {
+                std::vector<uint8_t> h_buf(total_elements);
+                cudaMemcpy(h_buf.data(), v.data, total_elements * sizeof(uint8_t), cudaMemcpyDeviceToHost);
+                double sum = 0.0;
+                for (auto x : h_buf) sum += x;
+                return sum;
+            } else if (v.dtype == "float32") {
+                std::vector<float> h_buf(total_elements);
+                cudaMemcpy(h_buf.data(), v.data, total_elements * sizeof(float), cudaMemcpyDeviceToHost);
+                double sum = 0.0;
+                for (auto x : h_buf) sum += x;
+                return sum;
+            } else if (v.dtype == "int32") {
+                std::vector<int32_t> h_buf(total_elements);
+                cudaMemcpy(h_buf.data(), v.data, total_elements * sizeof(int32_t), cudaMemcpyDeviceToHost);
+                double sum = 0.0;
+                for (auto x : h_buf) sum += x;
+                return sum;
+            }
+            return 0.0;
+        })
         .def("__dlpack__", &GpuTensorView::to_dlpack, nb::arg("stream") = nb::none())
         .def("__dlpack_device__", [](const GpuTensorView& v) {
             return std::make_pair(v.device_type, v.device_id);

@@ -15,7 +15,7 @@
 <img src="https://user-images.githubusercontent.com/36944229/219303954-7267bce1-b7c5-4f15-881c-b9545512e65b.png" alt="RocketSim-CUDA Banner" width="800"/>
 
 <p align="center">
-  A ground-up C++/CUDA rewrite of <a href="https://github.com/ZealanL/RocketSim">ZealanL's RocketSim</a> designed to simulate tens of thousands of Rocket League matches concurrently on GPU with <b>strict 1:1 physical parity</b> and <b>zero-copy PyTorch tensor integration</b>.
+  A ground-up C++/CUDA reimplementation of <a href="https://github.com/ZealanL/RocketSim">ZealanL's RocketSim</a> designed to simulate tens of thousands of Rocket League matches concurrently on GPU with <b>zero-copy PyTorch/DLPack tensor integration</b>.
 </p>
 
 </div>
@@ -25,159 +25,175 @@
 ## Why RocketSim-CUDA?
 
 While the original [RocketSim](https://github.com/ZealanL/RocketSim) is exceptionally optimized for multi-core CPUs, scaling reinforcement learning workloads across dozens of CPU threads encounters severe bottlenecks:
-1. **CPU Saturation:** Simulating 40+ CPU workers pins host processors at 100%, starving data loaders and neural network inference.
-2. **PCIe Latency Wall:** Continuously shipping rollout observations and actions between Host RAM and GPU VRAM throttles modern accelerators.
-3. **Uneven Scaling:** High-end GPUs (e.g., RTX 40/50 series, A100/H100) sit mostly idle waiting for physics rollouts.
+1. **CPU Saturation:** Simulating 40+ CPU workers pins host processors at 100%, starving data loaders and policy neural network training.
+2. **PCIe Latency Wall:** Continuously shipping rollout observations, rewards, and actions between Host RAM and GPU VRAM throttles modern accelerators.
+3. **Uneven Scaling:** High-end GPUs (e.g., RTX 4090, RTX 50 series, A100, H100) sit mostly idle waiting for physics rollouts.
 
-**RocketSim-CUDA eliminates the CPU completely from the simulation loop.** The engine runs physics, suspension raycasts, arena collisions, and reward/observation transforms natively in GPU VRAM, allowing a single workstation GPU to outperform massive CPU compute clusters.
+**RocketSim-CUDA eliminates the CPU from the simulation loop.** The engine runs physics, suspension raycasts, analytical arena collisions, car dynamics, car-ball contact resolution, and boost pad tracking natively in GPU VRAM with zero host copies (`cudaMemcpy`).
+
+> **Note on RL Ecosystem Boundaries:**  
+> `RocketSim-CUDA` provides the core GPU physics backend and zero-copy state tensors (`car_obs`, `ball_obs`, `terminated`, `scoring_team`, `boost_pads`, `ball_hit_is_valid`). High-level reinforcement learning abstractions (custom reward functions, complex observation parsers, action parsers, and policy wrappers) are provided by the companion **`rlgym-cuda`** ecosystem.
 
 ---
 
 ## Key Features
 
-* **Massive Concurrency:** Simulate **16,384 to 65,536+ arenas in parallel** on a single consumer or data-center GPU.
-* **Zero-Copy PyTorch Loop (DLPack):** Observation and action buffers live directly in VRAM. Step the entire batch of environments without a single `cudaMemcpy` round-trip across PCIe.
-* **Bitwise Differential Parity:** Verified tick-by-tick against the CPU reference engine (Bullet Physics / RocketSim) using an automated Chebyshev norm harness ($\Vert{}\Delta_{\mathbf{p}}\Vert{}_\infty \le 10^{-4}\text{ UU}$, Quaternions $\le 10^{-5}$).
-* **Analytic $O(1)$ Arena SDF:** Replaces polygon mesh raycasts and dynamic BVH structures with exact analytical Signed Distance Fields for walls, corners, curves, ramps, and goals.
-* **Hardware-Optimal Memory (SoA):** Pure Structure of Arrays layout (`alignas(16)`) providing 100% coalesced 128-byte memory transactions across active warps.
-* **Deterministic Execution:** Built with `--fmad=false`, `--prec-div=true`, and strict IEEE-754 floating-point constraints for deterministic replayability.
+* **Massive Concurrency:** Simulate **16,384 to 65,536+ environments concurrently** on a single consumer or data-center GPU.
+* **Zero-Copy PyTorch / DLPack Pipeline:** Observation, action, and termination tensors live exclusively in VRAM. Step tens of thousands of environments without PCIe transfers.
+* **Closed-Form Analytic Arena SDF:** Replaces mesh raycasts and dynamic BVH tree traversals with closed-form $O(1)$ Signed Distance Fields for walls, corners, curved ramps, and goal cavities.
+* **Faithful Suspension & Dynamics:** Port of RocketSim's `btVehicleRL` 4-wheel suspension raycaster, bilateral friction model, aerial torque, jumps, dodges/flips, auto-roll, and auto-flip.
+* **3D Car-Ball Contact Solver:** Continuous OBB vs. Sphere contact detection with impulse exchange, surface friction, restitution, and RocketSim piecewise extra hit impulse.
+* **Hardware-Optimal Memory (SoA):** Pure Structure of Arrays layout (`alignas(16)`) ensuring contiguous, coalesced 128-byte transactions across warps.
+* **Deterministic IEEE-754 Precision:** Built with `--fmad=false`, `--prec-div=true`, `--prec-sqrt=true`, and `-ftz=false`.
 
 ---
 
-## Performance Benchmark
+## Performance Benchmarks
 
-Simulating **Soccar (2v2 - 4 cars per arena)** with pseudo-random agent actions across 120 Hz physical ticks (exact match to ZealanL's RocketSim benchmark conditions):
+Simulating complete physics (Car dynamics, 4-wheel suspension, Arena SDF, Car-ball collisions, 34 Boost pads, and Goal detection) across 120 Hz physical ticks on an **NVIDIA GeForce RTX 5060 (8 GB VRAM)**:
 
-### Hardware Specifications
-* **CPU:** AMD Ryzen 5 5500 (6 Cores / 12 Threads @ 3.60GHz base / 4.20GHz boost)
-* **GPU:** NVIDIA GeForce RTX 5060 (8 GB GDDR7 @ 14,001 MHz)
-* **Host RAM:** 16 GB Dual-Channel DDR4 @ 3800 MT/s (3800 MHz)
-* **VRAM Bandwidth:** ~448 GB/s (100% on-device simulation, 0 PCIe traffic)
+### 1v0 Solo Baseline (1 Car per Arena)
 
-### Benchmark Results (2v2 Match Simulation)
+| Environments | Total Cars | Step Latency (ms) | Physical Throughput (SPS) | VRAM Pool (MB) |
+| :---: | :---: | :---: | :---: | :---: |
+| **4,096** | 4,096 | 0.0289 ms | **141,955,657 SPS** | 3.11 MB |
+| **16,384** | 16,384 | 0.0628 ms | **260,889,499 SPS** | 12.45 MB |
+| **32,768** | 32,768 | 0.0895 ms | **365,956,080 SPS** | 24.91 MB |
+| **65,536** | 65,536 | 0.2042 ms | **320,888,630 SPS** | 49.81 MB |
 
-| Engine | Execution Device | Parallel Envs | Total Cars | Step Latency (ms) | Throughput (SPS / TPS) | Speedup vs CPU |
-| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **RocketSim Original** | CPU (1 Thread) | 1 | 4 | 0.0433 ms | **23,083 TPS** | 1.0x (Baseline) |
-| **RocketSim Original** | CPU (12 Threads - Max) | 12 | 48 | 0.2737 ms | **43,849 TPS** | 1.9x |
-| **RocketSim-CUDA** | NVIDIA RTX 5060 | 4,096 | 16,384 | 0.0703 ms | **58,304,524 SPS** | **2,525x** |
-| **RocketSim-CUDA** | NVIDIA RTX 5060 | 16,384 | 65,536 | 0.1491 ms | **109,875,251 SPS** | **4,759x** |
-| **RocketSim-CUDA** | NVIDIA RTX 5060 | 32,768 | 131,072 | 0.3106 ms | **105,500,691 SPS** | **4,570x** |
-| **RocketSim-CUDA** | NVIDIA RTX 5060 | 65,536 | 262,144 | 0.5608 ms | **116,869,693 SPS** | **5,063x** |
+### 2v2 Full Match Simulation (4 Cars per Arena)
 
-> *Note: In 1v0 / 1-car RL rollout mode, RocketSim-CUDA reaches up to **482,761,983 SPS** (0.0679 ms latency at 32,768 environments) in active VRAM.*
+| Environments | Total Cars | Step Latency (ms) | Environment SPS | Agent SPS (Car-Ticks/s) | VRAM Pool (MB) |
+| :---: | :---: | :---: | :---: | :---: | :---: |
+| **1,024** | 4,096 | 0.0910 ms | 11,255,306 SPS | **45,021,226 Car-SPS** | 2.19 MB |
+| **4,096** | 16,384 | 0.0947 ms | 43,231,560 SPS | **172,926,240 Car-SPS** | 8.75 MB |
+| **8,192** | 32,768 | 0.1046 ms | 78,299,036 SPS | **313,196,144 Car-SPS** | 17.50 MB |
+| **16,384** | 65,536 | 0.2065 ms | 79,323,726 SPS | **317,294,905 Car-SPS** | 35.00 MB |
+
+*All measurements recorded via asynchronous GPU hardware events (`cudaEventRecord` / `cudaEventElapsedTime`). See [BENCHMARKS.md](BENCHMARKS.md) for methodology details.*
+
+---
+
+## Quick Start (Python & Zero-Copy RL)
+
+```python
+import rocketsim_cuda as rsc
+from gym_env import RocketSimBatchedEnv
+
+# 1. Initialize 16,384 environments concurrently on GPU (1v0 mode, 30 Hz action frequency)
+num_envs = 16384
+env = RocketSimBatchedEnv(
+    num_envs=num_envs,
+    cars_per_env=1,
+    tick_skip=4  # 4 physical ticks (120Hz) per environment step
+)
+
+# 2. Reset environments to kickoff poses
+obs = env.reset()
+
+# 3. Pre-allocate actions tensor directly in GPU VRAM (shape: [total_cars, 8])
+# Columns: [throttle, steer, pitch, yaw, roll, jump, boost, handbrake]
+actions = rsc.zeros([env.total_cars, 8], dtype="float32")
+
+# Apply full forward throttle & boost
+for c in range(env.total_cars):
+    actions[c, 0] = 1.0  # Throttle
+    actions[c, 6] = 1.0  # Boost
+
+# 4. Simulation Step Loop (Zero host-device copies)
+for step in range(100):
+    obs, rewards, terminated, truncated, info = env.step(actions)
+
+    # Read contact and game state tensors directly from GPU VRAM
+    ball_hits = info["ball_hit_is_valid"]
+    is_goal = info["is_goal"]
+
+    # Selective GPU reset for terminated arenas without CPU barriers
+    if terminated.any():
+        env.reset_masked(terminated)
+
+env.close()
+```
+
+Run the touch-ball example directly:
+```bash
+python examples/smoke_touch_ball.py
+```
+
+---
+
+## Differential Parity & Golden Master Validation
+
+Parity is validated against **RocketSim CPU** (Bullet Physics 3.24 reference oracle) through lockstep differential testing:
+
+```bash
+# Run the differential harness across all scenarios with windowed reporting:
+./build/differential_harness --scenario all --ticks 10000 --envs 1 --report
+```
+
+### Parity Highlights
+* **Short-Horizon Micro-Parity ($t \le 10\text{ ticks}$, $\le 83\text{ ms}$):**
+  - Car idle on ground: $\Vert\Delta\mathbf{p}\Vert_\infty \le 7.63 \times 10^{-6}\text{ UU}$, velocity delta $\le 7.63 \times 10^{-6}\text{ UU/s}$, quaternion delta $\le 5.96 \times 10^{-8}$.
+  - Ground throttle: $\Vert\Delta\mathbf{p}\Vert_\infty \le 9.77 \times 10^{-4}\text{ UU}$ (exact 2-ULP precision limit at $|Y| > 4600\text{ UU}$).
+  - Free ball flight: $\Vert\Delta\mathbf{p}\Vert_\infty \le 3.05 \times 10^{-5}\text{ UU}$, velocity delta $\le 2.44 \times 10^{-4}\text{ UU/s}$.
+* **Long-Horizon Multi-Second Dynamics ($t > 120\text{ ticks}$, $> 1\text{ s}$):**
+  - Rigid body collisions against curved arena surfaces have positive Lyapunov exponents ($\lambda > 0$). In single-precision float32, microscopic rounding differences naturally separate macroscopic trajectories after multiple wall bounces.
+  - Car suspension resting height reaches an exact equilibrium ($18.56\text{ UU}$) that remains stable without drift across 10,000 continuous ticks.
+* Full empirical measurements, error growth tables, and mathematical analysis are documented in [docs/PARITY_REPORT.md](docs/PARITY_REPORT.md).
 
 ---
 
 ## Architecture Overview
 
-
 ```
-
 ┌──────────────────────────────────────────────────────────────┐
 │                      GPU VRAM (cuda:0)                       │
 │                                                              │
 │   ┌─────────────────────┐          ┌─────────────────────┐   │
-│   │   RocketSim-CUDA    │ ◄──────► │ PyTorch Rollout Buf │   │
-│   │   SimContext SoA    │  DLPack  │   (Zero-Copy View)  │   │
-│   └──────────┬──────────┘  Pointers└──────────┬──────────┘   │
+│   │   RocketSim-CUDA    │ ◄──────► │ PyTorch / DLPack    │   │
+│   │   SimContext SoA    │  Zero    │ Rollout Buffers     │   │
+│   └──────────┬──────────┘  Copy    └──────────┬──────────┘   │
 │              │                                │              │
 │   ┌──────────▼──────────┐          ┌──────────▼──────────┐   │
 │   │ CUDA Physics Kernel │          │  PPO Neural Network │   │
-│   │ (SDF + Suspension)  │          │ (Forward/Backward)  │   │
+│   │ (SDF, Car, Ball)    │          │ (Forward/Backward)  │   │
 │   └─────────────────────┘          └─────────────────────┘   │
 └──────────────────────────────────────────────────────────────┘
 ▲
-No PCIe Traffic
+No Host PCIe Traffic (0 bytes transferred during step loop)
 ▼
 ┌──────────────────────────────────────────────────────────────┐
 │                      Host CPU (1 Thread)                     │
 │               Dispatches async CUDA streams only             │
 └──────────────────────────────────────────────────────────────┘
-
 ```
 
 ---
 
-## Installation
+## Installation & Building
 
 ### Prerequisites
 * **NVIDIA GPU:** Compute Capability $\ge 7.5$ (Turing, Ampere, Ada Lovelace, Blackwell).
 * **CUDA Toolkit:** Version 12.0 or higher.
 * **Compiler:** C++20 compliant compiler (GCC 11+, Clang 14+, or MSVC 2022 v17.4+).
-* **CMake:** $\ge 3.24$ and **Ninja** build system.
-* **Python:** 3.10+ with PyTorch (CUDA build enabled).
+* **Build System:** CMake $\ge 3.24$ and **Ninja**.
+* **Python:** Python 3.9 through 3.14 with `nanobind`.
 
-### Build from Source (Python Package)
-
+### Build Native C++/CUDA Targets
 ```bash
-# Clone the repository with submodules
-git clone --recursive https://github.com/BLMChoosen/RocketSim-CUDA.git
-cd RocketSim-CUDA
+# Configure with Release optimization
+cmake -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CUDA_ARCHITECTURES="80;86;89;90"
 
-# Build and install in editable mode via scikit-build-core & nanobind
-pip install -e .
-
+# Build all binaries
+cmake --build build --config Release -j
 ```
 
----
-
-## Quick Start (Python / PyTorch)
-
-```python
-import torch
-import rocketsim_cuda as rsc
-
-# 1. Initialize 32,768 environments concurrently on GPU
-num_envs = 32768
-sim = rsc.RocketSimBatchedEnv(num_envs=num_envs, device="cuda:0")
-
-# 2. Acquire zero-copy tensor views directly from VRAM (DLPack)
-# Shape: [num_envs, num_cars, obs_dim]
-car_obs = sim.get_car_observations() 
-ball_obs = sim.get_ball_observations()
-
-print(f"Allocated {num_envs} environments directly in VRAM.")
-print(f"Obs Tensor Pointer: {hex(car_obs.data_ptr())} (Zero-copy verified)")
-
-# 3. Simulation Step Loop (Zero PCIe Overhead)
-for step in range(1000):
-    # Sample random actions on GPU: [throttle, steer, pitch, yaw, roll, jump, boost, handbrake]
-    actions = torch.rand((num_envs, 1, 8), device="cuda:0", dtype=torch.float32) * 2.0 - 1.0
-
-    # Step physics (sub-stepped at 120 Hz internally)
-    sim.step(actions)
-
-    # Selective reset for environments that scored or timed out
-    dones = sim.get_dones()
-    if dones.any():
-        sim.reset(torch.nonzero(dones).squeeze(-1))
-
-```
-
----
-
-## Differential Validation (Golden Master)
-
-To guarantee that RL policies trained in `RocketSim-CUDA` transfer seamlessly to standard Rocket League engines without simulation drift:
-
+### Run Python Test Suite
 ```bash
-# Run the lockstep differential harness against CPU reference (10,000 ticks)
-./build/bin/differential_harness --ticks 10000 --batch 4096
-
+python -m pytest tests/python/ -v
 ```
-
-The harness records `.rsgold` state snapshots and enforces strict Chebyshev distance constraints:
-
-* **Position Error:** $\Vert{}\Delta_{\mathbf{p}}\Vert{}_\infty \le 10^{-4}\text{ UU}$
-* **Quaternion Distance:** $\min(\lVert q_{\text{cpu}} - q_{\text{gpu}} \rVert_\infty, \lVert q_{\text{cpu}} + q_{\text{gpu}} \rVert_\infty) \le 10^{-5}$
-
----
-
-## Ecosystem Integrations
-
-* **[rlgym-cuda] (COMING SOON):** GPU-batched observation builders and vectorized reward functions for Rocket League.
-* **[GigaLearn-CUDA](COMING SOON):** High-throughput C++/LibTorch reinforcement learning framework designed for 100% GPU-resident rollouts.
 
 ---
 
@@ -186,12 +202,12 @@ The harness records `.rsgold` state snapshots and enforces strict Chebyshev dist
 `RocketSim-CUDA` is an independent, clean-room physical recreation based on the open-source [RocketSim](https://github.com/ZealanL/RocketSim) project and Bullet Physics. It **does not contain any proprietary code or extracted assets** from Rocket League, Psyonix, or Epic Games.
 
 * This library is intended exclusively for research in deep reinforcement learning, trajectory optimization, and simulation analysis.
-* **Anti-Cheating Policy:** I strongly condemn the use of this software or models trained with it to deploy unauthorized bots or cheats in online competitive matchmaking.
+* **Anti-Cheating Policy:** The authors strongly condemn the use of this software or models trained with it to deploy unauthorized bots or cheats in online competitive matchmaking.
 
 ---
 
 ## Acknowledgements
 
-* **[ZealanL](https://github.com/ZealanL):** Creator of the original [RocketSim](https://github.com/ZealanL/RocketSim) and pioneer of the open Rocket League simulation stack.
-* **Bullet Physics:** Underlying numerical kinematics foundations.
-* **Nanobind:** Lightweight and ultra-fast C++/Python bindings.
+* **[ZealanL](https://github.com/ZealanL):** Creator of the original [RocketSim](https://github.com/ZealanL/RocketSim) and pioneer of open Rocket League physics simulation.
+* **Bullet Physics:** Underlying kinematics and constraint formulation.
+* **Nanobind:** Blazing-fast, lightweight C++/Python bindings.
