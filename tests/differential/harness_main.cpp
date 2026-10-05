@@ -41,6 +41,7 @@ struct HarnessArgs {
     bool baseline_mode = false;
     bool check_mode = false;
     std::string check_file = "docs/parity_thresholds.json";
+    uint32_t cars = 1;
 };
 
 void PrintUsage(const char* prog) {
@@ -48,6 +49,7 @@ void PrintUsage(const char* prog) {
               << "Options:\n"
               << "  --ticks <N>        Number of ticks to simulate (default: 500)\n"
               << "  --envs <N>         Number of concurrent environments (default: 4)\n"
+              << "  --cars <N>         Number of cars per environment (default: 1, up to 6 for 1v1, 2v2, 3v3)\n"
               << "  --seed <N>         Pseudorandom seed for PCG32 controls (default: 42)\n"
               << "  --tol <F>          Chebyshev position tolerance (default: 1e-4)\n"
               << "  --record <path>    Output path for .rsgold recording (default: milestone1_golden.rsgold)\n"
@@ -68,6 +70,8 @@ HarnessArgs ParseArgs(int argc, char** argv) {
             args.ticks = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
         } else if (arg == "--envs" && i + 1 < argc) {
             args.envs = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
+        } else if (arg == "--cars" && i + 1 < argc) {
+            args.cars = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
         } else if (arg == "--seed" && i + 1 < argc) {
             args.seed = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
         } else if (arg == "--tol" && i + 1 < argc) {
@@ -187,6 +191,12 @@ CarControls GetScenarioControl(const std::string& scenario, uint32_t tick, uint3
         c.throttle = 1.0f;
         c.boost = 1;
         return c;
+    } else if (scenario == "kickoff_multicar") {
+        c.throttle = 1.0f;
+        if (tick >= 10 && tick < 40) {
+            c.boost = 1;
+        }
+        return c;
     } else if (scenario == "boost_pad_pickup") {
         if (tick < 50) {
             c.throttle = 1.0f;
@@ -237,6 +247,8 @@ void ApplyScenarioInitialState(const std::string& scenario, CPURefSim& env, uint
         b.ang_vel = Vec3(0.0f, 0.0f, 0.0f);
         b.quat = Quat::identity();
         env.SetBallState(b);
+    } else if (scenario == "kickoff_multicar") {
+        env.ResetToRandomKickoff(static_cast<int>(env_idx));
     } else if (scenario == "kickoff_goalie") {
         CarStatePOD c;
         env.GetCarState(0, c);
@@ -687,23 +699,26 @@ bool RunScenarioDifferential(
     if (args.envs < num_threads) num_threads = args.envs;
     ThreadPool thread_pool(num_threads);
 
-    SimContext gpu_sim(args.envs, 1);
+    uint32_t cars_per_env = (scenario_name == "kickoff_multicar" && args.cars == 1) ? 6 : args.cars;
+    SimContext gpu_sim(args.envs, cars_per_env);
 
     std::vector<CPURefSim> lockstep_cpu_envs;
     lockstep_cpu_envs.reserve(args.envs);
     for (uint32_t e = 0; e < args.envs; e++) {
-        lockstep_cpu_envs.emplace_back(1, true, TICK_RATE, static_cast<int>(e));
+        lockstep_cpu_envs.emplace_back(cars_per_env, true, TICK_RATE, static_cast<int>(e));
         ApplyScenarioInitialState(scenario_name, lockstep_cpu_envs[e], e);
     }
 
     std::vector<BallStatePOD> init_balls(args.envs);
-    std::vector<CarStatePOD> init_cars(args.envs);
+    std::vector<CarStatePOD> init_cars(args.envs * cars_per_env);
     for (uint32_t e = 0; e < args.envs; e++) {
         lockstep_cpu_envs[e].GetBallState(init_balls[e]);
-        lockstep_cpu_envs[e].GetCarState(0, init_cars[e]);
+        for (uint32_t c = 0; c < cars_per_env; c++) {
+            lockstep_cpu_envs[e].GetCarState(c, init_cars[e * cars_per_env + c]);
+        }
     }
     gpu_sim.CopyBallStateToDevice(init_balls.data(), 0, args.envs);
-    gpu_sim.CopyCarStateToDevice(init_cars.data(), 0, args.envs);
+    gpu_sim.CopyCarStateToDevice(init_cars.data(), 0, args.envs * cars_per_env);
 
     if (scenario_name == "boost_pad_pickup") {
         report.boost_pad.target_pad_idx = 0;
@@ -713,11 +728,11 @@ bool RunScenarioDifferential(
     }
 
     DeterministicInputGenerator lockstep_gen(args.seed);
-    std::vector<CarControls> step_controls(args.envs);
+    std::vector<CarControls> step_controls(args.envs * cars_per_env);
     std::vector<BallStatePOD> gpu_balls(args.envs);
-    std::vector<CarStatePOD> gpu_cars(args.envs);
+    std::vector<CarStatePOD> gpu_cars(args.envs * cars_per_env);
     std::vector<BallStatePOD> cpu_balls(args.envs);
-    std::vector<CarStatePOD> cpu_cars(args.envs);
+    std::vector<CarStatePOD> cpu_cars(args.envs * cars_per_env);
     std::vector<Vec3> prev_cpu_ball_vel(args.envs);
     std::vector<Vec3> prev_gpu_ball_vel(args.envs);
     for (uint32_t e = 0; e < args.envs; e++) {
@@ -729,30 +744,36 @@ bool RunScenarioDifferential(
 
     for (uint32_t t = 0; t < args.ticks; t++) {
         for (uint32_t e = 0; e < args.envs; e++) {
-            step_controls[e] = GetScenarioControl(scenario_name, t, e, lockstep_gen);
+            for (uint32_t c = 0; c < cars_per_env; c++) {
+                step_controls[e * cars_per_env + c] = GetScenarioControl(scenario_name, t, e + c * 100, lockstep_gen);
+            }
         }
 
 #if defined(_OPENMP)
         #pragma omp parallel for schedule(static)
         for (int e = 0; e < static_cast<int>(args.envs); ++e) {
-            lockstep_cpu_envs[e].Step(&step_controls[e], 1);
+            lockstep_cpu_envs[e].Step(&step_controls[e * cars_per_env], cars_per_env);
             lockstep_cpu_envs[e].GetBallState(cpu_balls[e]);
-            lockstep_cpu_envs[e].GetCarState(0, cpu_cars[e]);
+            for (uint32_t c = 0; c < cars_per_env; c++) {
+                lockstep_cpu_envs[e].GetCarState(c, cpu_cars[e * cars_per_env + c]);
+            }
         }
 #else
         thread_pool.ParallelFor(0, args.envs, [&](uint32_t start_e, uint32_t end_e) {
             for (uint32_t e = start_e; e < end_e; ++e) {
-                lockstep_cpu_envs[e].Step(&step_controls[e], 1);
+                lockstep_cpu_envs[e].Step(&step_controls[e * cars_per_env], cars_per_env);
                 lockstep_cpu_envs[e].GetBallState(cpu_balls[e]);
-                lockstep_cpu_envs[e].GetCarState(0, cpu_cars[e]);
+                for (uint32_t c = 0; c < cars_per_env; c++) {
+                    lockstep_cpu_envs[e].GetCarState(c, cpu_cars[e * cars_per_env + c]);
+                }
             }
         });
 #endif
 
-        gpu_sim.CopyControlsToDevice(step_controls.data(), 0, args.envs);
+        gpu_sim.CopyControlsToDevice(step_controls.data(), 0, args.envs * cars_per_env);
         gpu_sim.Step(args.envs);
         gpu_sim.CopyBallStateToHost(gpu_balls.data(), 0, args.envs);
-        gpu_sim.CopyCarStateToHost(gpu_cars.data(), 0, args.envs);
+        gpu_sim.CopyCarStateToHost(gpu_cars.data(), 0, args.envs * cars_per_env);
 
         uint32_t current_tick = t + 1;
         int snap_idx = -1;
@@ -764,24 +785,34 @@ bool RunScenarioDifferential(
         }
 
         for (uint32_t e = 0; e < args.envs; e++) {
-            float d_c_pos = cpu_cars[e].pos.chebyshev_dist(gpu_cars[e].pos);
-            float d_b_pos = cpu_balls[e].pos.chebyshev_dist(gpu_balls[e].pos);
-
-            float d_c_vel = cpu_cars[e].vel.chebyshev_dist(gpu_cars[e].vel);
-            float d_b_vel = cpu_balls[e].vel.chebyshev_dist(gpu_balls[e].vel);
-
-            float d_c_quat = cpu_cars[e].quat.chebyshev_dist(gpu_cars[e].quat);
-
+            float d_c_pos = 0.0f;
+            float d_c_vel = 0.0f;
+            float d_c_quat = 0.0f;
             float d_susp = 0.0f;
-            for (int w = 0; w < 4; w++) {
-                d_susp = std::max(d_susp, std::fabs(cpu_cars[e].suspension_lengths[w] - gpu_cars[e].suspension_lengths[w]));
-            }
-            float d_boost = std::fabs(cpu_cars[e].boost - gpu_cars[e].boost);
+            float d_boost = 0.0f;
+            bool cars_ok = true;
 
+            for (uint32_t c = 0; c < cars_per_env; c++) {
+                uint32_t c_idx = e * cars_per_env + c;
+                d_c_pos = std::max(d_c_pos, cpu_cars[c_idx].pos.chebyshev_dist(gpu_cars[c_idx].pos));
+                d_c_vel = std::max(d_c_vel, cpu_cars[c_idx].vel.chebyshev_dist(gpu_cars[c_idx].vel));
+                d_c_quat = std::max(d_c_quat, cpu_cars[c_idx].quat.chebyshev_dist(gpu_cars[c_idx].quat));
+                for (int w = 0; w < 4; w++) {
+                    d_susp = std::max(d_susp, std::fabs(cpu_cars[c_idx].suspension_lengths[w] - gpu_cars[c_idx].suspension_lengths[w]));
+                }
+                d_boost = std::max(d_boost, std::fabs(cpu_cars[c_idx].boost - gpu_cars[c_idx].boost));
+
+                DifferentialFailure car_fail;
+                if (!comparator.CompareCar(t, e, c, cpu_cars[c_idx], gpu_cars[c_idx], car_fail)) {
+                    cars_ok = false;
+                    fail = car_fail;
+                }
+            }
+
+            float d_b_pos = cpu_balls[e].pos.chebyshev_dist(gpu_balls[e].pos);
+            float d_b_vel = cpu_balls[e].vel.chebyshev_dist(gpu_balls[e].vel);
             bool ball_ok = comparator.CompareBall(t, e, cpu_balls[e], gpu_balls[e], fail);
-            DifferentialFailure car_fail;
-            bool car_ok = comparator.CompareCar(t, e, 0, cpu_cars[e], gpu_cars[e], car_fail);
-            bool step_ok = ball_ok && car_ok;
+            bool step_ok = ball_ok && cars_ok;
 
             if (t < 1) report.w1.Update(d_c_pos, d_c_vel, d_c_quat, d_b_pos, d_b_vel, d_susp, d_boost, step_ok);
             if (t < 10) report.w10.Update(d_c_pos, d_c_vel, d_c_quat, d_b_pos, d_b_vel, d_susp, d_boost, step_ok);

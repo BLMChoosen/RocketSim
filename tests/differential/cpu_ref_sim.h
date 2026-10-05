@@ -35,6 +35,7 @@ public:
     void SetBallState(const BallStatePOD& in);
     void SetCarState(int carIdx, const CarStatePOD& in);
     void Reset();
+    void ResetToRandomKickoff(int seed = -1);
 
     int GetNumCars() const { return m_numCars; }
     uint64_t GetTickCount() const;

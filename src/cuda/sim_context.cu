@@ -79,6 +79,7 @@ __device__ inline void init_single_car(
     uint32_t seed = 0)
 {
     uint8_t team = (cars_per_env > 1) ? (car_in_env_idx % 2) : 0;
+    if (car_state.team) car_state.team[idx] = team;
     uint32_t team_car_idx = (cars_per_env > 1) ? (car_in_env_idx / 2) : car_in_env_idx;
     uint32_t base_slot = get_kickoff_slot(env_idx, seed);
     uint32_t spawn_slot = (base_slot + team_car_idx) % 5;
@@ -413,8 +414,8 @@ void SimContext::AllocateArena() {
     // Auto-flip & handbrake: 1 uint8, 3 floats
     total += calc_slice(car_count, sizeof(uint8_t));
     total += calc_slice(car_count, sizeof(float)) * 3;
-    // Supersonic & demo: 2 uint8, 2 floats
-    total += calc_slice(car_count, sizeof(uint8_t)) * 2;
+    // Supersonic, demo & team: 3 uint8, 2 floats
+    total += calc_slice(car_count, sizeof(uint8_t)) * 3;
     total += calc_slice(car_count, sizeof(float)) * 2;
     // Contacts: 1 uint8, 3 floats, 1 int32, 1 float
     total += calc_slice(car_count, sizeof(uint8_t));
@@ -555,6 +556,7 @@ void SimContext::AllocateArena() {
     m_car_state.supersonic_time    = static_cast<float*>(assign_slice(car_count, sizeof(float)));
     m_car_state.is_demoed        = static_cast<uint8_t*>(assign_slice(car_count, sizeof(uint8_t)));
     m_car_state.demo_respawn_timer = static_cast<float*>(assign_slice(car_count, sizeof(float)));
+    m_car_state.team             = static_cast<uint8_t*>(assign_slice(car_count, sizeof(uint8_t)));
 
     m_car_state.world_contact_has_contact = static_cast<uint8_t*>(assign_slice(car_count, sizeof(uint8_t)));
     m_car_state.world_contact_normal_x    = static_cast<float*>(assign_slice(car_count, sizeof(float)));

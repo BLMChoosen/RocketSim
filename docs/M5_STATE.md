@@ -1,17 +1,29 @@
-# Milestone 5 State Tracker — Phase 1 & Passo 0: Core Physical Fidelity
+# Milestone 5 State Tracker — Phase 1 & Phase 2: Multi-Car Simulation
 
-> **Document Version:** 1.5.0  
-> **Last Updated:** 2026-10-05T18:00:00Z  
-> **Active Worker:** Worker 1 (Milestone 5 — Passo 0: R1-R4 Parity, SDF & Regression Guard)  
+> **Document Version:** 2.1.0  
+> **Last Updated:** 2026-10-05T19:30:00Z  
+> **Active Worker:** Worker 1 (Milestone 5 — Phase 2: Multi-Car Simulation)  
 > **Parent Orchestrator:** Orchestrator M5  
-> **Repository HEAD Hash:** `b65e1a78c37ec7e434a2fc722ec646845902c42b`  
-> **Working Tree Cleanliness:** Confirmed 100% clean (`git status -s` clean, zero uncommitted files, no stash needed)  
+> **Repository HEAD Hash:** `e520604`  
+> **Working Tree Cleanliness:** Module 2.1 implemented, tests verified (`git status -s` clean on commit)  
 > **Residual Printf Status:** Confirmed zero residual `printf` calls in CUDA kernels or differential harness  
-> **Session State:** Passo 0 (R1 - R4) implementado e validado. Paridade de flips/dodges alinhada ao oráculo CPU Bullet (`Car.cpp:631, 665-677`) via preservação de `omega_pre`, facetação de SDF avaliada com retenção do SDF contínuo analítico (zero ganho contra oráculo `THE_VOID` e preservação de throughput sem custo de SFU `atan2f`), guarda de regressão implementada em `docs/parity_thresholds.json` (+25% buffer) e flag `--check` funcional em `tests/differential/harness_main.cpp`.
+> **Session State:** Fase 2 iniciada. Módulo 2.1 (N Carros por Arena: até 6 carros, times, kickoff com spawns idênticos ao CPU e espelhamento do time laranja) concluído e verificado com 7/7 testes unitários em `tests/python/test_multi_car_kickoff.py`. Próximo: Módulo 2.2 (Colisão Carro-Carro).
 
 ---
 
-## 1. Passo 0 Status Overview (R1 - R4)
+## 1. Phase 2 Status Overview (Multi-Car)
+
+| Module | Description | Status | Implementation Reference | Key Verification / Evidence |
+| :--- | :--- | :--- | :--- | :--- |
+| **M5.2.1** | N Carros por Arena (até 6), Times & Kickoff Espelhado | **COMPLETED** | `car_state.cuh`, `sim_context.cu`, `cpu_ref_sim.cpp`, `harness_main.cpp` | `team` adicionado em `CarStatePOD` e `CarStateSoA`; `cpu_ref_sim` com times alternados e `ResetToRandomKickoff`; espelhamento do time laranja ($x \to -x, y \to -y, \text{yaw} + \pi$); `--cars <N>` e cenário `kickoff_multicar` no harness; 7/7 testes em `test_multi_car_kickoff.py`. |
+| **M5.2.2** | Colisão Carro-Carro (All-Pairs OBB, Bump Curves & Cooldown) | **IN PROGRESS** | `Arena.cpp:323-405`, `RLConst.h:505-527`, `step_kernel.cu` | Implementar detecção de contato entre pares de carros na mesma arena, resolver impulsos mútuos de bump via curvas de ground/air e upward, e cooldown de bump (0.25s). |
+| **M5.2.3** | Supersonic & Demolições | **PENDING** | `Car.cpp:468-490`, `RLConst.h:473-500` | Flags zero-copy `is_supersonic`, `is_demoed`, `demo_respawn_timer` (3.0s), desabilitação de colisão e forças enquanto demoed. |
+| **M5.2.4** | Flip Reset | **PENDING** | CPU Bullet / `Car.cpp` | Avaliar se oráculo possui flip reset em colisão carro-carro ou bola; implementar estritamente conforme CPU. |
+| **M5.2.5** | Fluxo de RL Multi-Carro | **PENDING** | `ArenaStateSoA`, `gym_env.py` | Dones, `goal_scored`, timeouts, `ball_touched` por carro, simetria azul/laranja. |
+
+---
+
+## 2. Passo 0 Status Overview (R1 - R4)
 
 | Requirement | Module | Description | Status | Implementation Reference | Key Verification / Evidence |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -22,7 +34,7 @@
 
 ---
 
-## 2. Historical Milestone 5 Module Status (Phase 1 Baseline)
+## 3. Historical Milestone 5 Module Status (Phase 1 Baseline)
 
 | Module | Requirement | Status | Commit Hash | Key Metrics / Evidence |
 | :--- | :--- | :--- | :--- | :--- |

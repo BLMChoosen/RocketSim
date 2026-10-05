@@ -512,3 +512,35 @@ The flag `--check [path]` is implemented in `tests/differential/harness_main.cpp
 - If any threshold is exceeded, outputs detailed failure telemetry and exits immediately with non-zero exit code (`1`).
 - If all metrics remain within limits, outputs confirmation and exits with code `0`.
 
+---
+
+## FASE 2: Multi-Carro
+
+### Module 2.1: N Carros por Arena (Até 6 Carros, Times e Kickoff com Espelhamento)
+
+#### 1. CPU Oracle Reference
+- **Spawn Locations & Mirroring:** `src/Sim/Arena/Arena.cpp:113-197` (`Arena::ResetToRandomKickoff`), `src/RLConst.h:355-385` (`CAR_SPAWN_LOCATIONS_SOCCAR`).
+  - Blue spawns: standard coordinates `spawnPos = CAR_SPAWN_LOCATIONS[slot]`, `Angle(spawnPos.yawAng, 0, 0)`.
+  - Orange team mirroring (`Arena.cpp:188-190`): `spawnState.pos *= { -1, -1, 1 }` and `angle.yaw += M_PI`.
+- **Team Assignment:** `Team::BLUE` (`0`) and `Team::ORANGE` (`1`). Even index is Blue, odd index is Orange in multi-car games (`1v1`, `2v2`, `3v3`).
+
+#### 2. Implementation Summary
+- **Data Structures (`include/rocketsim_cuda/types/car_state.cuh`):**
+  - Added `uint8_t team = 0;` to `CarStatePOD`.
+  - Added `uint8_t* __restrict__ team = nullptr;` to `CarStateSoA`.
+  - Updated POD/SoA marshalling in `ToPOD` and `FromPOD`.
+- **Memory Arena Allocation (`src/cuda/sim_context.cu`):**
+  - Added `team` slice to total byte calculation in `SimContext::AllocateArena()`.
+  - Initialized `car_state.team[idx]` in `init_single_car`.
+- **CPU Reference Sim & Golden Master (`tests/differential/`):**
+  - `cpu_ref_sim.cpp:169`: alternating teams for cars `i % 2 != 0 ? ORANGE : BLUE`.
+  - `cpu_ref_sim.cpp:197`: implemented `ResetToRandomKickoff(seed)` forwarding to `m_arena->ResetToRandomKickoff(seed)`.
+  - `golden_master.h` / `golden_master.cpp`: packed `team` byte into `RsGoldCarRecord` without changing the 84-byte record layout.
+- **Differential Harness (`tests/differential/harness_main.cpp`):**
+  - Added CLI flag `--cars <N>` (1 to 6).
+  - Generalized `RunScenarioDifferential` to evaluate all $N$ cars per environment with per-car comparator checks.
+  - Added `kickoff_multicar` scenario running random kickoffs up to 6 cars per environment.
+- **Unit & Symmetry Test Suite (`tests/python/test_multi_car_kickoff.py`):**
+  - 7/7 tests passing validating 1v0, 1v1, 2v2, 3v3 team assignments, orange coordinate and orientation mirroring, and SoA layout coalescing stride.
+
+

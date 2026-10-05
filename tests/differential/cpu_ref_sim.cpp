@@ -166,7 +166,8 @@ void CPURefSim::InitArena() {
 
     m_cars.clear();
     for (int i = 0; i < m_numCars; i++) {
-        RocketSim::Car* car = m_arena->AddCar(RocketSim::Team::BLUE, RocketSim::CAR_CONFIG_OCTANE);
+        RocketSim::Team team = (m_numCars > 1 && (i % 2 != 0)) ? RocketSim::Team::ORANGE : RocketSim::Team::BLUE;
+        RocketSim::Car* car = m_arena->AddCar(team, RocketSim::CAR_CONFIG_OCTANE);
         if (!car) {
             throw std::runtime_error("Failed to add car to RocketSim CPU Arena");
         }
@@ -191,6 +192,12 @@ void CPURefSim::CleanupArena() {
 void CPURefSim::Reset() {
     CleanupArena();
     InitArena();
+}
+
+void CPURefSim::ResetToRandomKickoff(int seed) {
+    if (m_arena) {
+        m_arena->ResetToRandomKickoff(seed);
+    }
 }
 
 uint64_t CPURefSim::GetTickCount() const {
@@ -248,6 +255,7 @@ void CPURefSim::GetCarState(int carIdx, CarStatePOD& out) const {
     out.has_double_jumped = cs.hasDoubleJumped ? 1 : 0;
     out.has_flipped = cs.hasFlipped ? 1 : 0;
     out.is_demoed = cs.isDemoed ? 1 : 0;
+    out.team = (car->team == RocketSim::Team::BLUE) ? 0 : 1;
 
     for (int w = 0; w < 4; w++) {
         out.wheels_with_contact[w] = cs.wheelsWithContact[w] ? 1 : 0;
@@ -298,6 +306,7 @@ void CPURefSim::SetCarState(int carIdx, const CarStatePOD& in) {
     cs.rotMat = RocketSim::RotMat(basis);
     cs.boost = in.boost;
     cs.isOnGround = (in.is_on_ground != 0);
+    car->team = (in.team == 0) ? RocketSim::Team::BLUE : RocketSim::Team::ORANGE;
 
     car->SetState(cs);
     car->_rigidBody.activate(true);
