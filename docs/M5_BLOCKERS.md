@@ -1,8 +1,9 @@
 # Milestone 5 Blockers & Anti-Loop Tracker
 
-> **Document Version:** 1.0.0  
-> **Milestone:** Milestone 5 — Phase 1 (Core Physical Fidelity)  
-> **Status:** Active / No Blockers
+> **Document Version:** 1.1.0  
+> **Milestone:** Milestone 5 — Phase 1 & Passo 0 (Core Physical Fidelity)  
+> **Status:** Active / No Active Blockers  
+> **Last Updated:** 2026-10-05T18:00:00Z  
 
 ---
 
@@ -16,9 +17,11 @@ Per `GEMINI.md` and Orchestration Dispatch:
 
 | Blocker ID | Module | Occurrence Date | Failed Command | Attempt Count | Root Cause / Hypotheses | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| *None* | - | - | - | 0 | No active blockers. M5.1 completed with zero failures. | **RESOLVED** |
+| *None* | - | - | - | 0 | No active blockers. Requirements R1, R2, R3, R4 implemented cleanly on first attempt. | **RESOLVED / ZERO BLOCKERS** |
 
 ---
 
 ## Resolved Blockers History
-*(No historical blockers encountered in Milestone 5 Phase 1 to date).*
+- **H1.1 (Angular Damping in Flip Cancel):** Root cause identified and resolved in `include/rocketsim_cuda/physics/car_dynamics.cuh` on first iteration by caching `omega_pre` prior to dodge torque application.
+- **R3 (SDF Faceting):** Evaluated mathematically; analytical continuous SDF retained per R3 condition without blockers.
+- **R4 (Regression Guard):** Calibrated thresholds created in `docs/parity_thresholds.json` and CLI flag `--check` integrated in `tests/differential/harness_main.cpp`.

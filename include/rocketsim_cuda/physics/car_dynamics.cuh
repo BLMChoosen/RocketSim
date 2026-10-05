@@ -464,6 +464,8 @@ __device__ __forceinline__ void update_car_air_control(
         car_state.is_flipping[car_idx] = is_flipping ? 1 : 0;
     }
 
+    Vec3 omega_pre = omega;
+
     bool do_air_control = false;
     if (is_flipping) {
         Vec3 rel_dodge_torque(
@@ -510,9 +512,10 @@ __device__ __forceinline__ void update_car_air_control(
                         + dir_yaw * (controls.yaw * CAR_AIR_CONTROL_TORQUE_Y)
                         + dir_roll * (controls.roll * CAR_AIR_CONTROL_TORQUE_Z);
 
-        float damp_pitch = dir_pitch.dot(omega) * CAR_AIR_CONTROL_DAMPING_X * (1.0f - fabsf(controls.pitch * pitch_torque_scale));
-        float damp_yaw = dir_yaw.dot(omega) * CAR_AIR_CONTROL_DAMPING_Y * (1.0f - fabsf(controls.yaw));
-        float damp_roll = dir_roll.dot(omega) * CAR_AIR_CONTROL_DAMPING_Z;
+        // Evaluate damping using pre-torque angular velocity, mirroring Bullet Car.cpp:665-677
+        float damp_pitch = dir_pitch.dot(omega_pre) * CAR_AIR_CONTROL_DAMPING_X * (1.0f - fabsf(controls.pitch * pitch_torque_scale));
+        float damp_yaw = dir_yaw.dot(omega_pre) * CAR_AIR_CONTROL_DAMPING_Y * (1.0f - fabsf(controls.yaw));
+        float damp_roll = dir_roll.dot(omega_pre) * CAR_AIR_CONTROL_DAMPING_Z;
 
         Vec3 air_damping = dir_yaw * damp_yaw + dir_pitch * damp_pitch + dir_roll * damp_roll;
         Vec3 delta_omega = (air_torque - air_damping) * (CAR_TORQUE_SCALE * dt);

@@ -10,6 +10,9 @@
 #include <functional>
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <fstream>
+#include <sstream>
 #if defined(_OPENMP)
 #include <omp.h>
 #endif
@@ -36,6 +39,8 @@ struct HarnessArgs {
     std::string out_report = "";
     bool cpu_perturb = false;
     bool baseline_mode = false;
+    bool check_mode = false;
+    std::string check_file = "docs/parity_thresholds.json";
 };
 
 void PrintUsage(const char* prog) {
@@ -46,11 +51,12 @@ void PrintUsage(const char* prog) {
               << "  --seed <N>         Pseudorandom seed for PCG32 controls (default: 42)\n"
               << "  --tol <F>          Chebyshev position tolerance (default: 1e-4)\n"
               << "  --record <path>    Output path for .rsgold recording (default: milestone1_golden.rsgold)\n"
-              << "  --scenario <name>  Scenario to run: random, idle, freefall, throttle, boost, jump_flip, ball_flight, car_ball_hit, kickoff_goalie, boost_pad_pickup, all (default: random)\n"
+              << "  --scenario <name>  Scenario to run: random, idle, freefall, throttle, boost, jump_flip, ablation_5_flips, ball_flight, car_ball_hit, kickoff_goalie, boost_pad_pickup, all (default: random)\n"
               << "  --report           Enable windowed differential report mode (no early abort, records windows 1, 10, 60, 120, 600, 10k)\n"
               << "  --baseline         Run baseline mode directly (bypasses serialization, computes component-wise Median & P95)\n"
               << "  --out-report <path>Save report table in Markdown format to file\n"
               << "  --cpu-perturb      Run CPU vs CPU simulation with 1e-3 perturbation to measure divergence rate\n"
+              << "  --check [path]     Validate run metrics against docs/parity_thresholds.json (exit 1 on failure)\n"
               << "  --help             Display this help message\n";
 }
 
@@ -79,6 +85,11 @@ HarnessArgs ParseArgs(int argc, char** argv) {
             args.out_report = argv[++i];
         } else if (arg == "--cpu-perturb") {
             args.cpu_perturb = true;
+        } else if (arg == "--check") {
+            args.check_mode = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                args.check_file = argv[++i];
+            }
         } else if (arg == "--help") {
             PrintUsage(argv[0]);
             std::exit(0);
@@ -109,6 +120,67 @@ CarControls GetScenarioControl(const std::string& scenario, uint32_t tick, uint3
         } else if (tick >= 30) {
             c.pitch = 1.0f;
             c.roll = 0.5f;
+        }
+        return c;
+    } else if (scenario == "ablation_5_flips") {
+        // Ablation 5: Canonical flip directions (front, back, left, right, diagonals), stall, and cancel
+        c.throttle = 1.0f;
+        uint32_t mode = env % 11;
+        if (tick >= 10 && tick < 15) {
+            c.jump = 1;
+        } else if (tick >= 25 && tick < 30) {
+            c.jump = 1;
+            switch (mode) {
+                case 0: // Front flip cancel (initiate front flip)
+                case 1: // Front flip (pure)
+                    c.pitch = -1.0f;
+                    break;
+                case 2: // Back flip (pure)
+                case 9: // Back flip cancel (initiate back flip)
+                    c.pitch = 1.0f;
+                    break;
+                case 3: // Left dodge
+                    c.yaw = -1.0f;
+                    break;
+                case 4: // Right dodge
+                    c.yaw = 1.0f;
+                    break;
+                case 5: // Diagonal front-left
+                    c.pitch = -1.0f;
+                    c.yaw = -1.0f;
+                    break;
+                case 6: // Diagonal front-right
+                    c.pitch = -1.0f;
+                    c.yaw = 1.0f;
+                    break;
+                case 7: // Diagonal back-left
+                    c.pitch = 1.0f;
+                    c.yaw = -1.0f;
+                    break;
+                case 8: // Diagonal back-right
+                    c.pitch = 1.0f;
+                    c.yaw = 1.0f;
+                    break;
+                case 10: // Stall: equal and opposite yaw and roll
+                    c.pitch = 0.0f;
+                    c.yaw = 1.0f;
+                    c.roll = -1.0f;
+                    break;
+            }
+        } else if (tick >= 30) {
+            if (mode == 0) {
+                // Front flip cancel: counter-pitch
+                c.pitch = 1.0f;
+                c.roll = 0.5f;
+            } else if (mode == 9) {
+                // Back flip cancel: counter-pitch
+                c.pitch = -1.0f;
+                c.roll = 0.5f;
+            } else if (mode == 10) {
+                // Maintain stall roll/yaw
+                c.yaw = 1.0f;
+                c.roll = -1.0f;
+            }
         }
         return c;
     } else if (scenario == "car_ball_hit" || scenario == "kickoff_goalie") {
@@ -1180,13 +1252,199 @@ void RunCpuVsCpuPerturbation(const std::string& scenario, uint32_t ticks, uint32
     }
 }
 
+struct ThresholdLimits {
+    float max_car_pos = 1e9f;
+    float max_car_vel = 1e9f;
+    float max_car_quat = 1e9f;
+    float max_ball_pos = 1e9f;
+    float max_ball_vel = 1e9f;
+};
+
+inline bool LoadParityThresholds(const std::string& path, std::map<std::string, std::map<int, ThresholdLimits>>& out_thresholds) {
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        std::cerr << "[-] Error: Unable to open parity thresholds file: " << path << "\n";
+        return false;
+    }
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    std::string json = buffer.str();
+
+    size_t i = 0;
+    auto skip_whitespace = [&]() {
+        while (i < json.size() && (json[i] == ' ' || json[i] == '\t' || json[i] == '\r' || json[i] == '\n')) {
+            i++;
+        }
+    };
+
+    auto parse_string = [&]() -> std::string {
+        skip_whitespace();
+        if (i >= json.size() || json[i] != '"') return "";
+        i++; // skip opening quote
+        size_t start = i;
+        while (i < json.size() && json[i] != '"') {
+            if (json[i] == '\\' && i + 1 < json.size()) i += 2;
+            else i++;
+        }
+        std::string s = json.substr(start, i - start);
+        if (i < json.size() && json[i] == '"') i++; // skip closing quote
+        return s;
+    };
+
+    size_t scn_pos = json.find("\"scenarios\"");
+    if (scn_pos == std::string::npos) {
+        std::cerr << "[-] Error: 'scenarios' key not found in " << path << "\n";
+        return false;
+    }
+    i = scn_pos + 11;
+    skip_whitespace();
+    if (i < json.size() && json[i] == ':') i++;
+    skip_whitespace();
+    if (i >= json.size() || json[i] != '{') return false;
+    i++; // enter scenarios object
+
+    while (i < json.size()) {
+        skip_whitespace();
+        if (i < json.size() && json[i] == '}') { i++; break; }
+        std::string scn_name = parse_string();
+        if (scn_name.empty()) { i++; continue; }
+        skip_whitespace();
+        if (i < json.size() && json[i] == ':') i++;
+        skip_whitespace();
+        if (i >= json.size() || json[i] != '{') break;
+        i++; // enter scenario definition
+
+        while (i < json.size()) {
+            skip_whitespace();
+            if (i < json.size() && json[i] == '}') { i++; break; }
+            std::string key = parse_string();
+            skip_whitespace();
+            if (i < json.size() && json[i] == ':') i++;
+            skip_whitespace();
+            if (key == "windows") {
+                if (i < json.size() && json[i] == '{') i++;
+                while (i < json.size()) {
+                    skip_whitespace();
+                    if (i < json.size() && json[i] == '}') { i++; break; }
+                    std::string win_tick_str = parse_string();
+                    if (win_tick_str.empty()) { i++; continue; }
+                    int win_tick = std::stoi(win_tick_str);
+                    skip_whitespace();
+                    if (i < json.size() && json[i] == ':') i++;
+                    skip_whitespace();
+                    if (i < json.size() && json[i] == '{') i++;
+                    ThresholdLimits limits;
+                    while (i < json.size()) {
+                        skip_whitespace();
+                        if (i < json.size() && json[i] == '}') { i++; break; }
+                        std::string metric_name = parse_string();
+                        skip_whitespace();
+                        if (i < json.size() && json[i] == ':') i++;
+                        skip_whitespace();
+                        size_t val_start = i;
+                        while (i < json.size() && json[i] != ',' && json[i] != '}' && json[i] != ' ' && json[i] != '\n' && json[i] != '\r') {
+                            i++;
+                        }
+                        std::string val_str = json.substr(val_start, i - val_start);
+                        float val = std::strtof(val_str.c_str(), nullptr);
+                        if (metric_name == "max_car_pos") limits.max_car_pos = val;
+                        else if (metric_name == "max_car_vel") limits.max_car_vel = val;
+                        else if (metric_name == "max_car_quat") limits.max_car_quat = val;
+                        else if (metric_name == "max_ball_pos") limits.max_ball_pos = val;
+                        else if (metric_name == "max_ball_vel") limits.max_ball_vel = val;
+                        skip_whitespace();
+                        if (i < json.size() && json[i] == ',') i++;
+                    }
+                    out_thresholds[scn_name][win_tick] = limits;
+                    skip_whitespace();
+                    if (i < json.size() && json[i] == ',') i++;
+                }
+            } else {
+                int depth = 0;
+                while (i < json.size()) {
+                    if (json[i] == '{' || json[i] == '[') depth++;
+                    else if (json[i] == '}' || json[i] == ']') {
+                        if (depth == 0) break;
+                        depth--;
+                    } else if (json[i] == ',' && depth == 0) {
+                        break;
+                    }
+                    i++;
+                }
+            }
+            skip_whitespace();
+            if (i < json.size() && json[i] == ',') i++;
+        }
+        skip_whitespace();
+        if (i < json.size() && json[i] == ',') i++;
+    }
+
+    return true;
+}
+
+inline bool ValidateScenarioThresholds(
+    const ScenarioReport& rep,
+    const std::map<std::string, std::map<int, ThresholdLimits>>& all_thresholds,
+    std::ostream& os)
+{
+    auto it = all_thresholds.find(rep.name);
+    if (it == all_thresholds.end()) {
+        for (const auto& kv : all_thresholds) {
+            if (kv.first.find(rep.name) != std::string::npos || rep.name.find(kv.first) != std::string::npos) {
+                it = all_thresholds.find(kv.first);
+                break;
+            }
+        }
+    }
+
+    if (it == all_thresholds.end()) {
+        os << "[Warning] No regression thresholds defined for scenario '" << rep.name << "'\n";
+        return true;
+    }
+
+    bool passed = true;
+    const auto& win_thresholds = it->second;
+
+    auto check_window = [&](int win_tick, const WindowMetrics& m, const std::string& win_label) {
+        auto w_it = win_thresholds.find(win_tick);
+        if (w_it == win_thresholds.end()) return;
+        const auto& lim = w_it->second;
+
+        auto check_metric = [&](const char* name, float actual, float limit) {
+            if (actual > limit) {
+                os << "[-] Regression Check FAILED for '" << rep.name << "' at Window " << win_label
+                   << " (" << win_tick << " ticks): " << name << " " << std::scientific << std::setprecision(3)
+                   << actual << " > threshold " << limit << "\n";
+                passed = false;
+            }
+        };
+
+        check_metric("Car Pos", m.max_car_pos, lim.max_car_pos);
+        check_metric("Car Vel", m.max_car_vel, lim.max_car_vel);
+        check_metric("Car Quat", m.max_car_quat, lim.max_car_quat);
+        check_metric("Ball Pos", m.max_ball_pos, lim.max_ball_pos);
+        check_metric("Ball Vel", m.max_ball_vel, lim.max_ball_vel);
+    };
+
+    check_window(1, rep.w1, "1");
+    check_window(10, rep.w10, "10");
+    if (rep.ticks_simulated >= 60) check_window(60, rep.w60, "60");
+    if (rep.ticks_simulated >= 120) check_window(120, rep.w120, "120");
+    if (rep.ticks_simulated >= 600) check_window(600, rep.w600, "600");
+
+    if (passed) {
+        os << "[+] Parity thresholds check PASSED for scenario '" << rep.name << "'\n";
+    }
+    return passed;
+}
+
 int main(int argc, char** argv) {
     HarnessArgs args = ParseArgs(argc, argv);
 
     if (args.cpu_perturb) {
         std::vector<std::string> scns;
         if (args.scenario == "all") {
-            scns = {"idle", "freefall", "throttle", "boost", "jump_flip", "ball_flight", "car_ball_hit", "kickoff_goalie",
+            scns = {"idle", "freefall", "throttle", "boost", "jump_flip", "ablation_5_flips", "ball_flight", "car_ball_hit", "kickoff_goalie",
                     "boost_pad_pickup", "ball_floor_drop", "ball_floor_angled", "ball_side_wall", "ball_back_wall",
                     "ball_ceiling", "ball_corner_ramp", "ball_goal_post", "ball_crossbar"};
         } else if (args.scenario == "ball_suite") {
@@ -1386,7 +1644,7 @@ int main(int argc, char** argv) {
 
     std::vector<std::string> scenarios_to_run;
     if (args.scenario == "all") {
-        scenarios_to_run = {"idle", "freefall", "throttle", "boost", "jump_flip", "ball_flight", "car_ball_hit", "kickoff_goalie",
+        scenarios_to_run = {"idle", "freefall", "throttle", "boost", "jump_flip", "ablation_5_flips", "ball_flight", "car_ball_hit", "kickoff_goalie",
                             "boost_pad_pickup", "ball_floor_drop", "ball_floor_angled", "ball_side_wall", "ball_back_wall",
                             "ball_ceiling", "ball_corner_ramp", "ball_goal_post", "ball_crossbar"};
     } else if (args.scenario == "ball_suite") {
@@ -1402,13 +1660,14 @@ int main(int argc, char** argv) {
     for (const auto& scn : scenarios_to_run) {
         std::cout << "  --> Running scenario: " << scn << " (" << args.ticks << " ticks)...\n";
         ScenarioReport rep;
-        bool scn_ok = RunScenarioDifferential(scn, args, tol, comparator, rep, !args.report_mode);
+        bool fail_fast = !args.report_mode && !args.check_mode;
+        bool scn_ok = RunScenarioDifferential(scn, args, tol, comparator, rep, fail_fast);
         reports.push_back(rep);
-        if (!scn_ok) {
+        if (!scn_ok && fail_fast) {
             all_passed = false;
-            if (!args.report_mode) {
-                return 1;
-            }
+            return 1;
+        } else if (!scn_ok) {
+            all_passed = false;
         }
     }
 
@@ -1423,6 +1682,28 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (args.check_mode) {
+        std::cout << "\n[Regression Guard] Validating parity thresholds against: " << args.check_file << "\n";
+        std::map<std::string, std::map<int, ThresholdLimits>> thresholds;
+        if (!LoadParityThresholds(args.check_file, thresholds)) {
+            std::cerr << "[-] Error: Failed to load parity thresholds from " << args.check_file << "\n";
+            return 1;
+        }
+
+        bool thresholds_ok = true;
+        for (const auto& rep : reports) {
+            if (!ValidateScenarioThresholds(rep, thresholds, std::cout)) {
+                thresholds_ok = false;
+            }
+        }
+
+        if (!thresholds_ok) {
+            std::cerr << "\n[-] FATAL: Parity threshold limit exceeded! Regression guard failed.\n";
+            return 1;
+        }
+        std::cout << "\n[+] SUCCESS: All parity thresholds verified within limits (+25% buffer)!\n";
+    }
+
     if (all_passed) {
         std::cout << "======================================================================\n"
                   << "  ALL DIFFERENTIAL PARITY & GOLDEN MASTER TESTS PASSED SUCCESSFULLY!  \n"
@@ -1431,6 +1712,11 @@ int main(int argc, char** argv) {
     } else if (args.report_mode) {
         std::cout << "======================================================================\n"
                   << "  DIFFERENTIAL PARITY REPORT COMPLETED ACROSS ALL REQUESTED WINDOWS!  \n"
+                  << "======================================================================\n";
+        return 0;
+    } else if (args.check_mode) {
+        std::cout << "======================================================================\n"
+                  << "  PARITY THRESHOLDS CHECK PASSED SUCCESSFULLY ACROSS ALL SCENARIOS!   \n"
                   << "======================================================================\n";
         return 0;
     } else {
