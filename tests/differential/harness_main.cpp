@@ -791,6 +791,7 @@ bool RunScenarioDifferential(
             float d_susp = 0.0f;
             float d_boost = 0.0f;
             bool cars_ok = true;
+            DifferentialFailure car_fail;
 
             for (uint32_t c = 0; c < cars_per_env; c++) {
                 uint32_t c_idx = e * cars_per_env + c;
@@ -802,10 +803,11 @@ bool RunScenarioDifferential(
                 }
                 d_boost = std::max(d_boost, std::fabs(cpu_cars[c_idx].boost - gpu_cars[c_idx].boost));
 
-                DifferentialFailure car_fail;
-                if (!comparator.CompareCar(t, e, c, cpu_cars[c_idx], gpu_cars[c_idx], car_fail)) {
+                DifferentialFailure this_car_fail;
+                if (!comparator.CompareCar(t, e, c, cpu_cars[c_idx], gpu_cars[c_idx], this_car_fail)) {
                     cars_ok = false;
-                    fail = car_fail;
+                    car_fail = this_car_fail;
+                    fail = this_car_fail;
                 }
             }
 
