@@ -543,4 +543,38 @@ The flag `--check [path]` is implemented in `tests/differential/harness_main.cpp
 - **Unit & Symmetry Test Suite (`tests/python/test_multi_car_kickoff.py`):**
   - 7/7 tests passing validating 1v0, 1v1, 2v2, 3v3 team assignments, orange coordinate and orientation mirroring, and SoA layout coalescing stride.
 
+---
+
+## Milestone 5 — Passo A: Base Compilável e Testes Confiáveis
+
+### 1. Auditoria do Commit 399110e e `omega_pre` (Item A0)
+- `git show 399110e` alterou menções textuais de `omega_pre` exclusivamente em `docs/M5_STATE.md` (ao atualizar a descrição do estado da sessão de Passo 0 para Fase 2).
+- O arquivo `include/rocketsim_cuda/physics/car_dynamics.cuh` permaneceu estritamente intocado no commit `399110e`.
+- O cálculo de amortecimento pré-torque (`omega_pre`) implementado no commit `e520604` permaneceu 100% ativo e inalterado.
+
+### 2. Correção de Escopo de `car_fail` no Harness (Item A1)
+- Em `tests/differential/harness_main.cpp:805`, `DifferentialFailure car_fail` havia sido declarado dentro do escopo do laço `for (uint32_t c = 0; c < cars_per_env; c++)`, mas era referenciado nas linhas 982-984 e 995-996 fora do laço.
+- Corrigido alçando a declaração para o escopo externo do ambiente `e` e gravando cada falha detectada em `this_car_fail`. Commit atômico: `2f05285`.
+- Recompilação completa do harness (`differential_harness.exe`) e da extensão Python (`rocketsim_cuda.cp314-win_amd64.pyd`) realizada com sucesso via MSVC v143.
+
+### 3. Diagnóstico e Resolução de `test_auto_roll_surface_alignment` (Item A3)
+- O módulo Python compilado pré-existente (`01:12`) possuía layout de memória desatualizado anterior à introdução de `car_state.team` em `AllocateArena()`.
+- O desalinhamento de slices de memória fazia com que `world_contact_has_contact` lesse lixo de memória na GPU, interferindo no cálculo de auto-roll.
+- Com o binário recompilado pelo MSVC, a memória SoA ficou perfeitamente sincronizada, e `test_auto_roll_surface_alignment` foi aprovado imediatamente sem necessidade de alterar o código do teste ou do kernel.
+
+### 4. Confirmação da Ablação de Flips (Item A4)
+- Commit `e520604` confirmado no histórico git.
+- Execução do cenário `ablation_5_flips` (11 ambientes, 120 ticks):
+  - Erro absoluto de posição no tick 60: Mediana $1.953 \times 10^{-3}$ UU (X), $6.836 \times 10^{-3}$ UU (Y), $2.060 \times 10^{-4}$ UU (Z).
+  - Chebyshev combinado: $\mathbf{0.006836\text{ UU}}$ ($\le 0.0078\text{ UU}$).
+  - Erro no tick 1: $0.000\text{ UU}$ (bit-exact).
+
+### 5. Verificação de Multi-Car Kickoff na GPU (Item A5)
+- O arquivo `test_multi_car_kickoff.py` exercita validações matemáticas de espelhamento e layouts SoA em nível Python.
+- A execução física real na GPU vs CPU é validada pelo cenário `kickoff_multicar` no `differential_harness`:
+  - 1v1 (2 carros), 2v2 (4 carros), 3v3 (6 carros) avaliados em 4 ambientes por 10 ticks.
+  - Tick 1: Erro de posição $0.000\text{ UU}$ (bit-exact em X, Y, Z), erro de quaternion máx $5.216 \times 10^{-7}$.
+  - Tick 10: Erro de posição mediano $2.441 \times 10^{-4}$ UU (Y) / P95 $7.324 \times 10^{-4}$ UU, erro de quaternion máx $7.008 \times 10^{-7}$.
+
+
 

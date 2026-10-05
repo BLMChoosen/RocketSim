@@ -1,13 +1,13 @@
 # Milestone 5 State Tracker — Phase 1 & Phase 2: Multi-Car Simulation
 
-> **Document Version:** 2.1.0  
-> **Last Updated:** 2026-10-05T19:30:00Z  
-> **Active Worker:** Worker 1 (Milestone 5 — Phase 2: Multi-Car Simulation)  
+> **Document Version:** 2.2.0  
+> **Last Updated:** 2026-10-05T20:15:00Z  
+> **Active Worker:** Worker 1 (Milestone 5 — Passo A: Base Compilável & Testes Confiáveis)  
 > **Parent Orchestrator:** Orchestrator M5  
-> **Repository HEAD Hash:** `e520604`  
-> **Working Tree Cleanliness:** Module 2.1 implemented, tests verified (`git status -s` clean on commit)  
+> **Repository HEAD Hash:** `2f05285`  
+> **Working Tree Cleanliness:** Commit 2f05285 aplicado (correção de escopo car_fail); harness e .pyd recompilados; 64/64 pytests passando; differential_harness --check 100% OK  
 > **Residual Printf Status:** Confirmed zero residual `printf` calls in CUDA kernels or differential harness  
-> **Session State:** Fase 2 iniciada. Módulo 2.1 (N Carros por Arena: até 6 carros, times, kickoff com spawns idênticos ao CPU e espelhamento do time laranja) concluído e verificado com 7/7 testes unitários em `tests/python/test_multi_car_kickoff.py`. Próximo: Módulo 2.2 (Colisão Carro-Carro).
+> **Session State:** Passo A concluído. Harness e módulo Python recompilados com sucesso. 64/64 testes pytest aprovados. Regressão guard --check aprovada com exit code 0. Ablação de flips reconfirmada em ~0.0068 UU (< 0.0078 UU) no tick 60. Próximo: Passo B (Módulo 2.2 - Colisão Carro-Carro).
 
 ---
 
