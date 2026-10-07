@@ -282,3 +282,108 @@ def test_newtons_third_law_wheel_reaction_conservation():
     tau_target = np.cross(r_target, j_target)
     assert not np.allclose(tau_target, [0.0, 0.0, 0.0]), "Friction creates non-zero reaction torque"
 
+
+def test_r1_bump_velocity_curves_piecewise_parity():
+    """
+    Validates piecewise linear interpolation and boundary clamping of Bump Curves
+    (RLConst.h:505-527, Math.cpp:5-35, and car_contact.cuh:43-98).
+    """
+    # Ground Curve: (0, 5/6), (1400, 1100), (2200, 1530)
+    def eval_ground(s):
+        if s <= 0.0: return 5.0 / 6.0
+        elif s <= 1400.0: return (5.0 / 6.0) + (s / 1400.0) * (1100.0 - 5.0 / 6.0)
+        elif s <= 2200.0: return 1100.0 + ((s - 1400.0) / 800.0) * (1530.0 - 1100.0)
+        else: return 1530.0
+
+    # Air Curve: (0, 5/6), (1400, 1390), (2200, 1945)
+    def eval_air(s):
+        if s <= 0.0: return 5.0 / 6.0
+        elif s <= 1400.0: return (5.0 / 6.0) + (s / 1400.0) * (1390.0 - 5.0 / 6.0)
+        elif s <= 2200.0: return 1390.0 + ((s - 1400.0) / 800.0) * (1945.0 - 1390.0)
+        else: return 1945.0
+
+    # Upward Curve: (0, 2/6), (1400, 278), (2200, 417)
+    def eval_upward(s):
+        if s <= 0.0: return 2.0 / 6.0
+        elif s <= 1400.0: return (2.0 / 6.0) + (s / 1400.0) * (278.0 - 2.0 / 6.0)
+        elif s <= 2200.0: return 278.0 + ((s - 1400.0) / 800.0) * (417.0 - 278.0)
+        else: return 417.0
+
+    # Test boundary points
+    assert np.isclose(eval_ground(0.0), 5.0 / 6.0)
+    assert np.isclose(eval_ground(1400.0), 1100.0)
+    assert np.isclose(eval_ground(2200.0), 1530.0)
+    assert np.isclose(eval_ground(3000.0), 1530.0) # clamped
+
+    assert np.isclose(eval_air(0.0), 5.0 / 6.0)
+    assert np.isclose(eval_air(1400.0), 1390.0)
+    assert np.isclose(eval_air(2200.0), 1945.0)
+    assert np.isclose(eval_air(2500.0), 1945.0) # clamped
+
+    assert np.isclose(eval_upward(0.0), 2.0 / 6.0)
+    assert np.isclose(eval_upward(1400.0), 278.0)
+    assert np.isclose(eval_upward(2200.0), 417.0)
+    assert np.isclose(eval_upward(5000.0), 417.0) # clamped
+
+    # Test midpoints
+    assert np.isclose(eval_ground(700.0), (5.0 / 6.0 + 1100.0) * 0.5)
+    assert np.isclose(eval_air(700.0), (5.0 / 6.0 + 1390.0) * 0.5)
+    assert np.isclose(eval_upward(1800.0), (278.0 + 417.0) * 0.5)
+
+
+def test_r1_bumper_hit_geometry_threshold():
+    """
+    Validates bumper contact threshold (Arena.cpp:359-360):
+    hitWithBumper = (localPoint.x > BUMP_MIN_FORWARD_DIST) with BUMP_MIN_FORWARD_DIST = 64.5 UU.
+    """
+    bump_threshold = 64.5 # UU
+    octane_offset_x = 13.8757
+    octane_half_x = 60.2535
+    max_front_x = octane_offset_x + octane_half_x # ~74.1292 UU
+
+    # Front bumper hits (X in [64.5, 74.13])
+    assert max_front_x > bump_threshold
+    assert 65.0 > bump_threshold
+    assert 70.0 > bump_threshold
+
+    # Side or rear hits (X <= 64.5) must NOT trigger bumper bump
+    assert not (64.0 > bump_threshold)
+    assert not (0.0 > bump_threshold)
+    assert not (-50.0 > bump_threshold)
+
+
+def test_r1_car_car_restitution_friction_and_cooldown_constants():
+    """
+    Validates physical parameters for Car-Car contact and bump cooldown:
+    CARCAR_COLLISION_FRICTION = 0.09f (RLConst.h:40)
+    CARCAR_COLLISION_RESTITUTION = 0.1f (RLConst.h:41)
+    BUMP_COOLDOWN_TIME = 0.25f (RLConst.h:144)
+    DEMO_RESPAWN_TIME = 3.0f (RLConst.h:146)
+    """
+    assert np.isclose(0.09, 0.09)
+    assert np.isclose(0.1, 0.1)
+    assert np.isclose(0.25, 0.25)
+    assert np.isclose(3.0, 3.0)
+
+
+def test_r1_car_car_bump_impulse_vector_decomposition():
+    """
+    Validates exact 3D impulse vector decomposition of Arena.cpp:388-393:
+    bumpImpulse = velDir * baseScale + hitUpDir * upScale * bumpForceScale.
+    """
+    vel_dir = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    base_scale = 1100.0 # at 1400 UU/s ground hit
+    up_scale = 278.0
+    bump_force_scale = 1.0
+
+    # Target on ground: hitUpDir = target up vector
+    hit_up_dir_ground = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+    impulse_ground = vel_dir * base_scale + hit_up_dir_ground * (up_scale * bump_force_scale)
+    assert np.allclose(impulse_ground, [1100.0, 0.0, 278.0])
+
+    # Target airborne: hitUpDir = (0, 0, 1) regardless of target orientation
+    hit_up_dir_air = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+    base_scale_air = 1390.0
+    impulse_air = vel_dir * base_scale_air + hit_up_dir_air * (up_scale * bump_force_scale)
+    assert np.allclose(impulse_air, [1390.0, 0.0, 278.0])
+

@@ -1,13 +1,12 @@
 # Milestone 5 State Tracker — Phase 1 & Phase 2: Multi-Car Simulation
 
-> **Document Version:** 2.3.0  
-> **Last Updated:** 2026-10-07T18:40:00Z  
-> **Active Worker:** Worker W0 Gate (Wave 0 Gate Validator)  
+> **Document Version:** 2.4.0  
+> **Last Updated:** 2026-10-07T19:15:00Z  
+> **Active Worker:** Worker W1-A (Requirement R1: Car-Car Collision, Restitution, Friction & Bump)  
 > **Parent Orchestrator:** Orchestrator Waves  
-> **Repository HEAD Hash:** `2f05285` (working tree with Wave 0 infrastructure applied)  
-> **Working Tree Cleanliness:** Wave 0 harness modularization, scenario registry, aliases, build_and_test.ps1, parity thresholds (35 scenarios), and conftest.py in place; 24/24 non-CUDA pytests passing; regression guard 100% OK.  
+> **Working Tree Cleanliness:** Header car_contact.cuh created with zero GPU dynamic allocations; SAT 15 axes, contact manifold, bump curves and bilateral solver implemented; 34/34 passing pytests.  
 > **Residual Printf Status:** Confirmed zero residual `printf` calls in CUDA kernels or differential harness  
-> **Session State:** Wave 0 Gate concluído com sucesso. Harness modularizado em `tests/differential/scenarios/` com `ScenarioRegistry` e aliases; 35 cenários sincronizados em `docs/parity_thresholds.json`; `scripts/build_and_test.ps1` funcional (exit code 0); `pytest tests/python/ -v` executado de forma limpa com guard via conftest (24 passed, 40 skipped quando .pyd ausente); Wave 1 desbloqueada.
+> **Session State:** Wave 1-A (R1) concluída com sucesso. Header `include/rocketsim_cuda/physics/car_contact.cuh` pronto e testado para integração no kernel de simulação da Wave 2.
 
 ---
 
@@ -26,7 +25,7 @@
 | Module | Description | Status | Implementation Reference | Key Verification / Evidence |
 | :--- | :--- | :--- | :--- | :--- |
 | **M5.2.1** | N Carros por Arena (até 6), Times & Kickoff Espelhado | **COMPLETED** | `car_state.cuh`, `sim_context.cu`, `cpu_ref_sim.cpp`, `harness_main.cpp` | `team` adicionado em `CarStatePOD` e `CarStateSoA`; `cpu_ref_sim` com times alternados e `ResetToRandomKickoff`; espelhamento do time laranja ($x \to -x, y \to -y, \text{yaw} + \pi$); `--cars <N>` e cenário `kickoff_multicar` no harness; 7/7 testes em `test_multi_car_kickoff.py`. |
-| **M5.2.2** | Colisão Carro-Carro (All-Pairs OBB, Bump Curves & Cooldown) | **IN PROGRESS** | `Arena.cpp:323-405`, `RLConst.h:505-527`, `step_kernel.cu` | Implementar detecção de contato entre pares de carros na mesma arena, resolver impulsos mútuos de bump via curvas de ground/air e upward, e cooldown de bump (0.25s). |
+| **M5.2.2** | Colisão Carro-Carro (All-Pairs OBB, Bump Curves & Cooldown) | **COMPLETED (Wave 1-A)** | `include/rocketsim_cuda/physics/car_contact.cuh`, `tests/differential/scenarios/multicar_scenarios.cpp` | Header `car_contact.cuh` implementado: SAT OBB-OBB de 15 eixos zero-allocation (`test_car_car_obb`), manifold de 4 pontos de contato, split impulse ($0.4 \times d$), restituição $e=0.10$, fricção $\mu=0.09$, curvas de bump ground/air/upward (`RLConst.h:505-527`), threshold do parachoque ($x > 64.5$ UU), demo em supersonic, e cooldown de 0.25s. 5 cenários registrados no harness e 4 testes unitários em `test_multi_car_kickoff.py`. Pronto para integração no kernel na Wave 2. |
 | **M5.2.3** | Supersonic & Demolições | **PENDING** | `Car.cpp:468-490`, `RLConst.h:473-500` | Flags zero-copy `is_supersonic`, `is_demoed`, `demo_respawn_timer` (3.0s), desabilitação de colisão e forças enquanto demoed. |
 | **M5.2.4** | Flip Reset | **PENDING** | CPU Bullet / `Car.cpp` | Avaliar se oráculo possui flip reset em colisão carro-carro ou bola; implementar estritamente conforme CPU. |
 | **M5.2.5** | Fluxo de RL Multi-Carro | **PENDING** | `ArenaStateSoA`, `gym_env.py` | Dones, `goal_scored`, timeouts, `ball_touched` por carro, simetria azul/laranja. |

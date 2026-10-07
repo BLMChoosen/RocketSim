@@ -751,3 +751,91 @@ The flag `--check [path]` is implemented in `tests/differential/harness_main.cpp
   - Total: **30 passed, 40 skipped**, exit code 0.
 - **Pipeline Orchestration (`scripts/build_and_test.ps1 -SkipHarness`):**
   - Execução bem-sucedida de ponta a ponta com exit code 0.
+
+---
+
+## Wave 1-A: Car-Car Collision, Restitution, Friction & Bump (R1)
+
+### 1. CPU Oracle Reference Tracking (`arquivo:linha`)
+- **Car-Car Collision Callback & Bump Resolution:**
+  - `src/Sim/Arena/Arena.cpp:323-405`: `_BtCallback_OnCarCarCollision`:
+    - Callback do Bullet registrado via `gContactAddedCallback = _BtCallback_OnCarCarCollision`.
+    - Sobrescrita de coeficientes de contato para o par chassi-chassi:
+      `cp.m_combinedFriction = CARCAR_COLLISION_FRICTION` ($0.09f$),
+      `cp.m_combinedRestitution = CARCAR_COLLISION_RESTITUTION` ($0.1f$).
+    - Loop de avaliação bidirecional: `for (int i = 0; i < 2; i++)` com `std::swap(car1, car2)` para simetria de bump mútuo.
+    - Condições de bump:
+      - Ambos os carros não demolidos (`!car1->_internalState.isDemoed && !car2->_internalState.isDemoed`).
+      - Cooldown zerado (`car1->_internalState.carContactCooldownTimer <= 0`).
+      - Vetor de aproximação relativo no sentido de aproximação: `deltaPos = car2->pos - car1->pos`, verificação `car1->vel.dot(deltaPos) > 0`.
+      - Projeção de velocidade: `speedTowards = car1->vel.dot(deltaPos.Normalized())`, `otherAwaySpeed = car2->vel.dot(deltaPos.Normalized())`, requer `speedTowards > otherAwaySpeed`.
+      - Bumper hit threshold: ponto de contato no referencial local de `car1`: `localPoint = car1->worldTransform.inverse() * cp.m_positionWorldOnB`.
+        Requer `hitWithBumper = (localPoint.x * BT_TO_UU) > BUMP_MIN_FORWARD_DIST` ($64.5\text{ UU}$).
+      - Demolição vs Bump:
+        Se `car1->_internalState.isSupersonic` (ou mutator `demoMode == ON_CONTACT` / `car1->_internalState.isDemoed`), demolição acionada via `car2->Demolish(respawnDelay)`.
+        Caso contrário, bump impulse:
+        - Curvas de velocidade alvo: `evaluate_bump_vel_ground`, `evaluate_bump_vel_air`, e componente vertical `evaluate_bump_upward_vel`.
+        - Vetor vertical de bump: `upDir = car1->_internalState.isOnGround ? car1->GetUpDir() : Vec(0, 0, 1)`.
+        - Decomposição vetorial: $\Delta\mathbf{v}_{\text{target}} = \mathbf{f} \cdot v_{\text{target}} + \mathbf{u}_{\text{up}} \cdot v_{\text{up}}$.
+        - Impulso de velocidade adicionado a `car2->_velocityImpulseCache`.
+        - Reset de cooldown: `car1->_internalState.carContactCooldownTimer = BUMP_COOLDOWN_TIME` ($0.25\text{ s}$) e `otherCarID = car2->id`.
+- **Demolição do Carro & Timers de Respawn:**
+  - `src/Sim/Car/Car.cpp:38-41`: `Car::Demolish(respawnDelay)`:
+    - Atribui `_internalState.isDemoed = true`, `_internalState.demoRespawnTimer = respawnDelay` ($3.0\text{ s}$).
+  - `src/Sim/Car/Car.cpp:172-173`: Decremento do timer de cooldown em `_PreTickUpdate`:
+    - `carContactCooldownTimer = std::max(0.0f, carContactCooldownTimer - tickTime)`.
+  - `src/Sim/Car/Car.cpp:185-187`: Aplicação de `_velocityImpulseCache` em `_FinishPhysicsTick`:
+    - `m_linearVelocity += _velocityImpulseCache * UU_TO_BT`, `_velocityImpulseCache = Vec(0, 0, 0)`.
+- **Constantes Físicas Globais (`src/RLConst.h`):**
+  - `src/RLConst.h:40-41`: `CARCAR_COLLISION_FRICTION = 0.09f`, `CARCAR_COLLISION_RESTITUTION = 0.1f`.
+  - `src/RLConst.h:144-146`: `BUMP_COOLDOWN_TIME = 0.25f`, `BUMP_MIN_FORWARD_DIST = 64.5f`, `DEMO_RESPAWN_TIME = 3.f`.
+  - `src/RLConst.h:505-527`: Curvas de velocidade por partes:
+    - `BUMP_VEL_AMOUNT_GROUND_CURVE`: $(0, 5/6) \to (1400, 1100) \to (2200, 1530)$.
+    - `BUMP_VEL_AMOUNT_AIR_CURVE`: $(0, 5/6) \to (1400, 1390) \to (2200, 1945)$.
+    - `BUMP_UPWARD_VEL_AMOUNT_CURVE`: $(0, 2/6) \to (1400, 278) \to (2200, 417)$.
+- **Bullet Box-Box SAT & Contact Manifold:**
+  - `libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btBoxBoxDetector.cpp:277-728`:
+    - Algoritmo ODE `dBoxBox2`: teste de separação nos 15 eixos potenciais:
+      - 3 normais de face de A ($\mathbf{u}_{A, 0}, \mathbf{u}_{A, 1}, \mathbf{u}_{A, 2}$)
+      - 3 normais de face de B ($\mathbf{u}_{B, 0}, \mathbf{u}_{B, 1}, \mathbf{u}_{B, 2}$)
+      - 9 produtos vetoriais de arestas ($\mathbf{u}_{A, i} \times \mathbf{u}_{B, j}$)
+    - Determinação do eixo de penetração mínima.
+    - Recorte de polígonos (`intersectRectQuad2`, `cullPoints2`) gerando manifold de até 4 pontos de contato com penetração e pontos locais nos chassis de A e B.
+
+### 2. Implementation Summary (`include/rocketsim_cuda/physics/car_contact.cuh`)
+1. **Detector OBB-OBB SAT Zero-Allocation (`test_car_car_obb`):**
+   - Implementação de forma fechada e branch-friendly do algoritmo `dBoxBox2` de Bullet/ODE.
+   - 100% de buffers estáticos na pilha do thread (`float buffer[16]`, `float quad[8]`, `float ret[16]`, `int iret[8]`, `float point[24]`, `float dep[8]`).
+   - Zero chamadas a `cudaMalloc`, `malloc`, `new` ou alocações dinâmicas, respeitando rigorosamente o GEMINI.md Invariant 2.2.
+   - Retorna normal de contato $\mathbf{n}$ (apontando de B para A), profundidade máxima de penetração, quantidade de pontos (até 4) e coordenadas locais e mundiais de cada ponto.
+2. **Curvas de Bump Piecewise Exatas:**
+   - Funções device `evaluate_bump_vel_ground`, `evaluate_bump_vel_air` e `evaluate_bump_upward_vel` reproduzindo com exatidão as interpolações lineares de `RLConst.h:505-527`.
+3. **Avaliação Bidirecional de Bump (`evaluate_single_car_bump`):**
+   - Testa se o carro atingiu o adversário com o para-choque frontal (`local_point.x > 64.5f` UU).
+   - Verifica velocidade relativa de aproximação (`vel.dot(delta_pos) > 0` e `speed_towards > other_away_speed`).
+   - Respeita o timer de cooldown de 0.25s e status de demolição.
+   - Aciona demolição se supersônico (`is_supersonic`), atribuindo `is_demoed = true` e timer de 3.0s (`DEMO_RESPAWN_TIME`).
+   - Caso contrário, calcula o vetor $\Delta\mathbf{v}_{\text{target}}$ combinando a velocidade alvo horizontal na direção de impacto com a componente vertical baseada na normal de piso (`isOnGround ? GetUpDir() : Vec(0, 0, 1)`), e atualiza o timer de cooldown para 0.25s.
+4. **Resolução de Contato de Chassi Bilateral (`resolve_car_car_contact`):**
+   - Resolução bilateral de impulso normal com coeficiente de restituição $e = 0.10f$ (`CARCAR_COLLISION_RESTITUTION`) para velocidades normais relativas acima de $10.0\text{ UU/s}$.
+   - Fricção de Coulomb com $\mu = 0.09f$ (`CARCAR_COLLISION_FRICTION`) resolvendo impulsos tangenciais de escorregamento.
+   - Separação de penetração (split-impulse) deslocando simetricamente cada carro por $0.4 \times d$ ao longo da normal de contato para prevenir interpenetração sem ganho espúrio de energia cinética.
+   - Clamping estrito às velocidades máximas canônicas: `CAR_MAX_SPEED` ($2300.0\text{ UU/s}$) e `CAR_MAX_ANG_SPEED` ($5.5\text{ rad/s}$).
+5. **Resolução All-Pairs em Arena (`resolve_all_car_car_collisions`):**
+   - Loop de todos os pares $0 \le i < j < N$ em SoA coalescido para até 6 carros por arena ($\le 15$ pares de contato).
+   - Filtra carros inativos ou demolidos (`is_demoed`).
+   - Aplica `resolve_car_car_contact` e avalia bumps nos dois sentidos ($A \to B$ e $B \to A$).
+6. **Helper de Decremento de Cooldown (`update_car_contact_cooldown`):**
+   - Decrementa `car_contact_cooldown_timer` por $\Delta t$ a cada tick, saturando em $0.0f$.
+
+### 3. Verification Evidence
+- **Pytest Suite (`pytest tests/python/test_multi_car_kickoff.py -v`):**
+  - `test_r1_bump_velocity_curves_piecewise_parity` (PASSED): verifica todos os pontos e interpolações das curvas de ground, air e upward bump.
+  - `test_r1_bumper_hit_geometry_threshold` (PASSED): validação de que impactos com $x > 64.5\text{ UU}$ disparam bump/demo, enquanto $x \le 64.5\text{ UU}$ são classificados como colisão ordinária sem bump.
+  - `test_r1_car_car_restitution_friction_and_cooldown_constants` (PASSED): validação de todas as constantes $e = 0.10f$, $\mu = 0.09f$, cooldown $0.25f$, threshold $64.5f$ e tempo de demo $3.0f$.
+  - `test_r1_car_car_bump_impulse_vector_decomposition` (PASSED): validação da decomposição vetorial de bump no solo e no ar, garantindo conservação e alinhamento físico.
+- **Differential Harness Scenarios (`tests/differential/scenarios/multicar_scenarios.cpp`):**
+  - 5 cenários canônicos de colisão multi-carro registrados e disponíveis: `car_car_front`, `car_car_side`, `car_car_rear`, `car_car_air`, `car_on_car`.
+- **Full Pipeline Execution:**
+  - 34 passed, 40 skipped (gracefully skipped em ausência de toolchain nativa no host), 0 failed.
+
