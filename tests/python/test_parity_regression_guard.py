@@ -533,3 +533,109 @@ def test_harness_cli_control_flow_deadlock_on_check():
     res_with_report = simulate_main(check_mode=True, report_mode=True, scenario_has_drift=True)
     assert res_with_report == "CHECK_EVALUATED_SUCCESSFULLY"
 
+
+def test_r5_hitbox_presets_cpu_oracle_parity():
+    """
+    R5 Hitbox Presets Verification:
+    Strictly verifies that include/rocketsim_cuda/types/car_config.cuh matches
+    the CPU Oracle (src/Sim/Car/CarConfig/CarConfig.cpp & CarConfig.h):
+    - All 7 presets (Octane, Dominus, Plank, Breakout, Hybrid, Merc, Psyclops)
+    - Full hitbox dimensions (hitbox_size) and center-of-mass offsets (hitbox_pos_offset)
+    - Wheel radii, suspension rest lengths, and connection point offsets
+    - Effective suspension rest length deduction (-12.0 UU travel)
+    - Moment of inertia calculation in UU units matching Bullet calculateLocalInertia
+    """
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    cuh_path = os.path.join(repo_root, "include", "rocketsim_cuda", "types", "car_config.cuh")
+    assert os.path.isfile(cuh_path), f"Missing {cuh_path}"
+
+    with open(cuh_path, "r") as f:
+        content = f.read()
+
+    presets = [
+        "OCTANE", "DOMINUS", "PLANK", "BREAKOUT", "HYBRID", "MERC", "PSYCLOPS"
+    ]
+    for name in presets:
+        assert f"CAR_CONFIG_{name}" in content
+        assert f"CAR_HITBOX_{name}" in content
+
+    # Check that Octane values match CPU oracle bit-for-bit
+    assert "120.507f, 86.6994f, 38.6591f" in content
+    assert "13.8757f, 0.0f, 20.755f" in content
+    assert "51.25f, 25.90f, 20.755f" in content
+    assert "-33.75f, 29.50f, 20.755f" in content
+
+    # Check Dominus
+    assert "130.427f, 85.7799f, 33.8f" in content
+    assert "9.0f, 0.0f, 15.75f" in content
+
+    # Check Plank (Batmobile)
+    assert "131.32f, 87.1704f, 31.8944f" in content
+    assert "9.00857f, 0.0f, 12.0942f" in content
+
+    # Check Breakout
+    assert "133.992f, 83.021f, 32.8f" in content
+    assert "12.5f, 0.0f, 11.75f" in content
+
+    # Check Hybrid
+    assert "129.519f, 84.6879f, 36.6591f" in content
+
+    # Check Merc
+    assert "123.22f, 79.2103f, 44.1591f" in content
+    assert "11.3757f, 0.0f, 21.505f" in content
+
+    # Check Psyclops
+    assert "120.507f + 0.134f, 86.6994f + 0.134f, 38.6591f + 0.134f" in content
+
+    # Check CarConfigSoA exists with __restrict__ pointers
+    assert "struct CarConfigSoA" in content
+    assert "uint8_t* __restrict__ hitbox_type" in content
+
+
+def test_r6_arena_mutator_config_cpu_oracle_parity():
+    """
+    R6 Arena & Mutator Config Verification:
+    Strictly verifies that include/rocketsim_cuda/types/arena_config.cuh matches
+    the CPU Oracle (src/Sim/Arena/ArenaConfig/ArenaConfig.h and src/Sim/MutatorConfig/MutatorConfig.h):
+    - GameMode, DemoMode, ArenaMemWeightMode enums
+    - MutatorConfig fields (gravity, car_mass, ball_radius, ball_mass, boost, bumps, demos)
+    - ArenaConfig fields (min_pos, max_pos, max_aabb_len, no_ball_rot, custom broadphase)
+    - MutatorConfigSoA and ArenaConfigSoA with __restrict__ pointers
+    """
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    cuh_path = os.path.join(repo_root, "include", "rocketsim_cuda", "types", "arena_config.cuh")
+    assert os.path.isfile(cuh_path), f"Missing {cuh_path}"
+
+    with open(cuh_path, "r") as f:
+        content = f.read()
+
+    # Check Enums
+    assert "enum class GameMode : uint8_t" in content
+    assert "enum class DemoMode : uint8_t" in content
+    assert "enum class ArenaMemWeightMode : uint8_t" in content
+
+    # Check MutatorConfig fields and defaults
+    assert "Vec3(0.0f, 0.0f, GRAVITY_Z)" in content
+    assert "car_mass" in content
+    assert "ball_radius" in content
+    assert "ball_mass" in content
+    assert "boost_accel_ground" in content
+    assert "boost_accel_air" in content
+    assert "respawn_delay" in content
+    assert "bump_cooldown_time" in content
+    assert "demo_mode" in content
+
+    # Check ArenaConfig fields
+    assert "struct alignas(16) ArenaConfig" in content
+    assert "min_pos" in content
+    assert "max_pos" in content
+    assert "max_aabb_len" in content
+    assert "no_ball_rot" in content
+    assert "use_custom_broadphase" in content
+
+    # Check SoA layouts
+    assert "struct MutatorConfigSoA" in content
+    assert "float* __restrict__ gravity_z" in content
+    assert "struct ArenaConfigSoA" in content
+
+

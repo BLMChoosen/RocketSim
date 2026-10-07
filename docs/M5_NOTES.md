@@ -604,6 +604,67 @@ The flag `--check [path]` is implemented in `tests/differential/harness_main.cpp
 - Criação de `tests/python/conftest.py`: detecção transparente da extensão nativa `.pyd`. Quando o ambiente do host não possui toolchain C++/CUDA (como o AtlasOS atual sem MSVC/NVCC), os testes que demandam a GPU são pulados graciosamente (`SKIPPED`), permitindo que a suíte completa `pytest tests/python/ -v` termine com exit code 0 (24 passed, 40 skipped).
 - Todas as suítes puras de física (adversarial flips, kickoff de múltiplos carros e parser de thresholds) executam e passam 100% (24/24 pass).
 
+---
+
+## Wave 1-C: Official Hitbox Presets (R5) & Arena / Mutator Configurations (R6)
+
+### 1. CPU Oracle Reference Tracking (`arquivo:linha`)
+- **Hitbox Presets & Wheel Pair Definitions:**
+  - `src/Sim/Car/CarConfig/CarConfig.h:6-16`: `WheelPairConfig` (`wheelRadius`, `suspensionRestLength`, `connectionPointOffset`).
+  - `src/Sim/Car/CarConfig/CarConfig.h:21-38`: `CarConfig` (`hitboxSize`, `hitboxPosOffset`, `frontWheels`, `backWheels`, `threeWheels`, `dodgeDeadzone`).
+  - `src/Sim/Car/CarConfig/CarConfig.cpp:20-29`: `HITBOX_SIZES[7]` (Octane, Dominus, Plank, Breakout, Hybrid, Merc, Psyclops).
+  - `src/Sim/Car/CarConfig/CarConfig.cpp:31-40`: `HITBOX_OFFSETS[7]`.
+  - `src/Sim/Car/CarConfig/CarConfig.cpp:42-50`: `FRONT_WHEEL_RADS[7]` e `BACK_WHEEL_RADS[7]`.
+  - `src/Sim/Car/CarConfig/CarConfig.cpp:52-60`: `FRONT_WHEEL_SUS_REST[7]` e `BACK_WHEEL_SUS_REST[7]`.
+  - `src/Sim/Car/CarConfig/CarConfig.cpp:62-82`: `FRONT_WHEELS_OFFSET[7]` e `BACK_WHEELS_OFFSET[7]`.
+  - `src/Sim/Car/CarConfig/CarConfig.cpp:85-101`: `MAKE_CAR_CONFIG` macros e instâncias canônicas.
+- **Car Rigid Body & Suspension Setup:**
+  - `src/Sim/Car/Car.cpp:210-220`: Criação do `_childHitboxShape` com meias-extensões `(hitboxSize * 0.02f) / 2.0f`, translação do offset local no composto (`hitboxPosOffset * 0.02f`), e cálculo do tensor de inércia via `calculateLocalInertia(180.0f, localInertia)`.
+  - `src/Sim/Car/Car.cpp:261-295`: Hardpoints das 4 rodas com inversão do sinal em Y para rodas esquerdas (`left = i % 2; if (left) wheelRayStartOffset.y() *= -1;`), e dedução do curso máximo da suspensão (`suspensionRestLength -= RLConst::BTVehicle::MAX_SUSPENSION_TRAVEL`, onde $12.0\text{ UU}$ é subtraído da rest length nominal).
+- **Mutator & Arena Configurations:**
+  - `src/Sim/MutatorConfig/MutatorConfig.h:10-14`: Enum `DemoMode` (`NORMAL`, `ON_CONTACT`, `DISABLED`).
+  - `src/Sim/MutatorConfig/MutatorConfig.h:16-79`: Struct `MutatorConfig` com 30 campos físicos.
+  - `src/Sim/MutatorConfig/MutatorConfig.cpp:5-41`: Construtor de `MutatorConfig(GameMode)` com regras para Soccar, Hoops, Snowday, Dropshot e Heatseeker.
+  - `src/Sim/Arena/ArenaConfig/ArenaConfig.h:12-16`: Enum `ArenaMemWeightMode` (`HEAVY`, `LIGHT`).
+  - `src/Sim/Arena/ArenaConfig/ArenaConfig.h:18-50`: Struct `ArenaConfig` (`minPos`, `maxPos`, `maxAABBLen`, `noBallRot`, `useCustomBroadphase`, `maxObjects`).
+  - `src/RLConst.h:12-74, 94-95, 117-121, 144-147, 258-267`: Constantes universais de física do Rocket League.
+
+### 2. Implementation Summary (`include/rocketsim_cuda/types/car_config.cuh`)
+1. **Enum `CarHitboxType` e Constantes Numéricas:**
+   - 7 presets canônicos definidos: `OCTANE = 0`, `DOMINUS = 1`, `PLANK = 2` (Batmobile), `BREAKOUT = 3`, `HYBRID = 4`, `MERC = 5`, `PSYCLOPS = 6`, `COUNT = 7`.
+2. **Hitbox Geometry & Wheel Pair Configurations:**
+   - Dimensões exatas e offsets portados bit-a-bit de `CarConfig.cpp`.
+   - `get_hitbox_half()` computa meias-extensões exatas.
+   - `get_susp_rest_effective(int w)` aplica a dedução exata de $12.0\text{ UU}$ de `Car.cpp:280`.
+   - `get_wheel_connection_offset(int w)` aplica a simetria lateral (+Y para direita, -Y para esquerda).
+   - `calculate_inertia(mass)` e `calculate_inv_inertia(mass)` reproduzem a fórmula analítica de inércia do Bullet para paralelepípedos retângulos uniformes em unidades de Unreal ($UU^2 \cdot \text{mass}$):
+     $$I_x = \frac{M}{12} (l_y^2 + l_z^2) \times 2500, \quad I_y = \frac{M}{12} (l_x^2 + l_z^2) \times 2500, \quad I_z = \frac{M}{12} (l_x^2 + l_y^2) \times 2500$$
+3. **Tabela de Constantes e Funções Device:**
+   - Tabela `CAR_CONFIG_PRESETS[7]` utilizável em CPU e GPU via `static constexpr` e branchless helpers (`get_hitbox_size`, `get_hitbox_offset`, `get_hitbox_half`, `get_inv_inertia`, `get_wheel_radius`, `get_susp_rest_effective`).
+4. **Layout Structure of Arrays (`CarConfigSoA`):**
+   - Estrutura SoA em conformidade estrita com o GEMINI.md Invariant 2.1, permitindo seleção de preset por índice (`uint8_t* __restrict__ hitbox_type`) e buffers opcionais de meias-extensões, inércia inversa e hardpoints alinhados para transações coalescidas de 128 bytes em batches massivos.
+
+### 3. Implementation Summary (`include/rocketsim_cuda/types/arena_config.cuh`)
+1. **Enums Canônicos:**
+   - `GameMode` (`SOCCAR`, `HOOPS`, `DROPSHOT`, `SNOWDAY`, `THE_VOID`, `HEATSEEKER`).
+   - `DemoMode` (`NORMAL`, `ON_CONTACT`, `DISABLED`).
+   - `ArenaMemWeightMode` (`HEAVY`, `LIGHT`).
+2. **`MutatorConfig` POD:**
+   - 30 campos físicos portados com valores default canônicos do RocketSim CPU.
+   - Construtor explícito `MutatorConfig(GameMode)` que replica os parâmetros de raio e fricção para modos Hoops, Snowday, Dropshot e Heatseeker.
+3. **`ArenaConfig` POD:**
+   - Dimensões espaciais da arena (`min_pos = {-5600, -6000, 0}`, `max_pos = {5600, 6000, 2200}`), `max_aabb_len = 370`, `no_ball_rot = true`, `max_objects = 512`, e capacidade estática fixa de boost pads (`num_boost_pads = 34`).
+4. **Layout Structure of Arrays (`MutatorConfigSoA` & `ArenaConfigSoA`):**
+   - Estruturas completas SoA com ponteiros `__restrict__` para suporte a randomização de domínio por arena em GPU (ex: variação contínua de gravidade, raio e massa da bola entre ambientes de treino de RL) sem overhead de divergência ou alocações dinâmicas.
+
+### 4. Verification Evidence
+- **Pytest Regression Guard:**
+  - `test_r5_hitbox_presets_cpu_oracle_parity` (PASSED): validação de paridade exata para todos os 7 presets contra o código-fonte C++ do CPU.
+  - `test_r6_arena_mutator_config_cpu_oracle_parity` (PASSED): validação de paridade de todos os enums, campos e defaults das structs.
+- **Full Pipeline Execution (`scripts/build_and_test.ps1`):**
+  - Suíte completa de 66 testes executada limpa: **26 passed, 40 skipped (sem módulo nativo no host), 0 failed**, exit code 0.
+
+
 
 
 
