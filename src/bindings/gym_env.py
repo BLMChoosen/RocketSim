@@ -101,6 +101,13 @@ class RocketSimBatchedEnv:
         self._pad_active_view = self.sim.get_pad_is_active()
         self._pad_cd_view = self.sim.get_pad_cooldown()
         self._ball_hit_is_valid_view = self.sim.get_ball_hit_is_valid()
+        self._is_supersonic_view = getattr(self.sim, "get_is_supersonic", lambda: None)()
+        self._is_demoed_view = getattr(self.sim, "get_is_demoed", lambda: None)()
+        self._demo_respawn_timer_view = getattr(self.sim, "get_demo_respawn_timer", lambda: None)()
+        self._ball_touched_view = getattr(self.sim, "get_ball_touched", lambda: None)()
+        self._has_flipped_view = getattr(self.sim, "get_has_flipped", getattr(self.sim, "get_has_flip", lambda: None))()
+        self._boost_view = getattr(self.sim, "get_boost", lambda: None)()
+        self._on_ground_view = getattr(self.sim, "get_is_on_ground", getattr(self.sim, "get_on_ground", lambda: None))()
 
         # Determine if PyTorch CUDA DLPack is natively available
         self._has_cuda_torch = (
@@ -167,6 +174,62 @@ class RocketSimBatchedEnv:
         """Zero-copy view of ball hit flags: shape [num_envs, cars_per_env] in GPU VRAM."""
         return self._wrap(self._ball_hit_is_valid_view)
 
+    def get_ball_touched(self) -> Any:
+        """Zero-copy view of ball touched flags: shape [num_envs, cars_per_env] in GPU VRAM."""
+        if self._ball_touched_view is None and hasattr(self.sim, "get_ball_touched"):
+            self._ball_touched_view = self.sim.get_ball_touched()
+        return self._wrap(self._ball_touched_view)
+
+    def get_is_supersonic(self) -> Any:
+        """Zero-copy view of supersonic flags: shape [num_envs, cars_per_env] in GPU VRAM."""
+        if self._is_supersonic_view is None and hasattr(self.sim, "get_is_supersonic"):
+            self._is_supersonic_view = self.sim.get_is_supersonic()
+        return self._wrap(self._is_supersonic_view)
+
+    def get_is_demoed(self) -> Any:
+        """Zero-copy view of demoed flags: shape [num_envs, cars_per_env] in GPU VRAM."""
+        if self._is_demoed_view is None and hasattr(self.sim, "get_is_demoed"):
+            self._is_demoed_view = self.sim.get_is_demoed()
+        return self._wrap(self._is_demoed_view)
+
+    def get_demo_respawn_timer(self) -> Any:
+        """Zero-copy view of demo respawn timers: shape [num_envs, cars_per_env] in GPU VRAM."""
+        if self._demo_respawn_timer_view is None and hasattr(self.sim, "get_demo_respawn_timer"):
+            self._demo_respawn_timer_view = self.sim.get_demo_respawn_timer()
+        return self._wrap(self._demo_respawn_timer_view)
+
+    def get_has_flipped(self) -> Any:
+        """Zero-copy view of has flipped flags: shape [num_envs, cars_per_env] in GPU VRAM."""
+        if self._has_flipped_view is None:
+            if hasattr(self.sim, "get_has_flipped"):
+                self._has_flipped_view = self.sim.get_has_flipped()
+            elif hasattr(self.sim, "get_has_flip"):
+                self._has_flipped_view = self.sim.get_has_flip()
+        return self._wrap(self._has_flipped_view)
+
+    def get_has_flip(self) -> Any:
+        """Zero-copy view of has flip / has flipped flags: shape [num_envs, cars_per_env] in GPU VRAM."""
+        return self.get_has_flipped()
+
+    def get_boost(self) -> Any:
+        """Zero-copy view of car boost amounts: shape [num_envs, cars_per_env] in GPU VRAM."""
+        if self._boost_view is None and hasattr(self.sim, "get_boost"):
+            self._boost_view = self.sim.get_boost()
+        return self._wrap(self._boost_view)
+
+    def get_is_on_ground(self) -> Any:
+        """Zero-copy view of is on ground flags: shape [num_envs, cars_per_env] in GPU VRAM."""
+        if self._on_ground_view is None:
+            if hasattr(self.sim, "get_is_on_ground"):
+                self._on_ground_view = self.sim.get_is_on_ground()
+            elif hasattr(self.sim, "get_on_ground"):
+                self._on_ground_view = self.sim.get_on_ground()
+        return self._wrap(self._on_ground_view)
+
+    def get_on_ground(self) -> Any:
+        """Alias for get_is_on_ground: shape [num_envs, cars_per_env] in GPU VRAM."""
+        return self.get_is_on_ground()
+
     @property
     def observations(self) -> Dict[str, Any]:
         """Dictionary exposing car and ball zero-copy tensors in GPU VRAM."""
@@ -186,6 +249,14 @@ class RocketSimBatchedEnv:
             "pad_is_active": self.get_pad_is_active(),
             "pad_cooldown": self.get_pad_cooldown(),
             "ball_hit_is_valid": self.get_ball_hit_is_valid(),
+            "ball_touched": self.get_ball_touched(),
+            "is_supersonic": self.get_is_supersonic(),
+            "is_demoed": self.get_is_demoed(),
+            "demo_respawn_timer": self.get_demo_respawn_timer(),
+            "has_flip": self.get_has_flip(),
+            "has_flipped": self.get_has_flipped(),
+            "boost": self.get_boost(),
+            "on_ground": self.get_on_ground(),
         }
 
     def step(
@@ -256,6 +327,20 @@ class RocketSimBatchedEnv:
         self._rewards_view = None
         self._terminated_view = None
         self._truncated_view = None
+        self._is_goal_view = None
+        self._scoring_team_view = None
+        self._is_oob_view = None
+        self._tick_count_view = None
+        self._pad_active_view = None
+        self._pad_cd_view = None
+        self._ball_hit_is_valid_view = None
+        self._is_supersonic_view = None
+        self._is_demoed_view = None
+        self._demo_respawn_timer_view = None
+        self._ball_touched_view = None
+        self._has_flipped_view = None
+        self._boost_view = None
+        self._on_ground_view = None
         self.sim = None
 
 

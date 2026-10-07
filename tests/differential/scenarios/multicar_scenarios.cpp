@@ -239,6 +239,180 @@ public:
     }
 };
 
+class CarBumpSupersonicScenario : public IScenario {
+public:
+    std::string GetName() const override { return "car_bump_supersonic"; }
+    std::string GetDescription() const override { return "Car 0 supersonic bumps Car 1 on the same team from behind (no demo, bumper impulse response)"; }
+    uint32_t GetDefaultCars() const override { return 2; }
+    uint32_t GetDefaultTicks() const override { return 120; }
+
+    void ApplyInitialState(CPURefSim& env, uint32_t /*env_idx*/) const override {
+        CarStatePOD c0{};
+        c0.pos = Vec3(0.0f, -400.0f, 17.0f);
+        c0.vel = Vec3(0.0f, 2250.0f, 0.0f);
+        c0.quat = Quat(0.7071068f, 0.0f, 0.0f, 0.7071068f); // Facing +Y
+        c0.is_on_ground = 1;
+        c0.boost = 100.0f;
+        c0.is_supersonic = 1;
+        c0.team = 0; // Blue
+        env.SetCarState(0, c0);
+
+        CarStatePOD c1{};
+        c1.pos = Vec3(0.0f, 0.0f, 17.0f);
+        c1.vel = Vec3(0.0f, 0.0f, 0.0f);
+        c1.quat = Quat(0.7071068f, 0.0f, 0.0f, 0.7071068f); // Facing +Y
+        c1.is_on_ground = 1;
+        c1.team = 0; // Blue (same team -> no demo!)
+        env.SetCarState(1, c1);
+    }
+
+    CarControls GetControl(uint32_t /*tick*/, uint32_t /*env*/, uint32_t car_idx, DeterministicInputGenerator& /*gen*/) const override {
+        CarControls c{};
+        if (car_idx == 0) {
+            c.throttle = 1.0f;
+            c.boost = 1;
+        }
+        return c;
+    }
+};
+
+class CarDemoScenario : public IScenario {
+public:
+    std::string GetName() const override { return "car_demo"; }
+    std::string GetDescription() const override { return "Car 0 (Blue) supersonic head-on impact demolishes Car 1 (Orange)"; }
+    uint32_t GetDefaultCars() const override { return 2; }
+    uint32_t GetDefaultTicks() const override { return 120; }
+
+    void ApplyInitialState(CPURefSim& env, uint32_t /*env_idx*/) const override {
+        CarStatePOD c0{};
+        c0.pos = Vec3(0.0f, -400.0f, 17.0f);
+        c0.vel = Vec3(0.0f, 2250.0f, 0.0f);
+        c0.quat = Quat(0.7071068f, 0.0f, 0.0f, 0.7071068f); // Facing +Y
+        c0.is_on_ground = 1;
+        c0.boost = 100.0f;
+        c0.is_supersonic = 1;
+        c0.team = 0; // Blue
+        env.SetCarState(0, c0);
+
+        CarStatePOD c1{};
+        c1.pos = Vec3(0.0f, 0.0f, 17.0f);
+        c1.vel = Vec3(0.0f, 0.0f, 0.0f);
+        c1.quat = Quat(0.7071068f, 0.0f, 0.0f, -0.7071068f); // Facing -Y (Head-on)
+        c1.is_on_ground = 1;
+        c1.team = 1; // Orange (opposite team -> demo triggers!)
+        env.SetCarState(1, c1);
+    }
+
+    CarControls GetControl(uint32_t /*tick*/, uint32_t /*env*/, uint32_t car_idx, DeterministicInputGenerator& /*gen*/) const override {
+        CarControls c{};
+        if (car_idx == 0) {
+            c.throttle = 1.0f;
+            c.boost = 1;
+        }
+        return c;
+    }
+};
+
+class CarDemoRespawnScenario : public IScenario {
+public:
+    std::string GetName() const override { return "car_demo_respawn"; }
+    std::string GetDescription() const override { return "Car 0 demolishes Car 1 (Orange), which respawns at canonical Soccar location after 3.0s"; }
+    uint32_t GetDefaultCars() const override { return 2; }
+    uint32_t GetDefaultTicks() const override { return 400; }
+
+    void ApplyInitialState(CPURefSim& env, uint32_t /*env_idx*/) const override {
+        CarStatePOD c0{};
+        c0.pos = Vec3(0.0f, -300.0f, 17.0f);
+        c0.vel = Vec3(0.0f, 2250.0f, 0.0f);
+        c0.quat = Quat(0.7071068f, 0.0f, 0.0f, 0.7071068f); // Facing +Y
+        c0.is_on_ground = 1;
+        c0.boost = 100.0f;
+        c0.is_supersonic = 1;
+        c0.team = 0; // Blue
+        env.SetCarState(0, c0);
+
+        CarStatePOD c1{};
+        c1.pos = Vec3(0.0f, 0.0f, 17.0f);
+        c1.vel = Vec3(0.0f, 0.0f, 0.0f);
+        c1.quat = Quat(0.7071068f, 0.0f, 0.0f, -0.7071068f); // Facing -Y
+        c1.is_on_ground = 1;
+        c1.team = 1; // Orange
+        env.SetCarState(1, c1);
+    }
+
+    CarControls GetControl(uint32_t tick, uint32_t /*env*/, uint32_t car_idx, DeterministicInputGenerator& /*gen*/) const override {
+        CarControls c{};
+        if (car_idx == 0 && tick < 25) {
+            c.throttle = 1.0f;
+            c.boost = 1;
+        }
+        return c;
+    }
+};
+
+class MultiCar2v2GoalDemoScenario : public IScenario {
+public:
+    std::string GetName() const override { return "multicar_2v2_goal_demo"; }
+    std::string GetDescription() const override { return "2v2 match: Ball rolls into Orange goal while Blue Car 0 demolishes Orange Car 2"; }
+    uint32_t GetDefaultCars() const override { return 4; }
+    uint32_t GetDefaultTicks() const override { return 120; }
+
+    void ApplyInitialState(CPURefSim& env, uint32_t /*env_idx*/) const override {
+        BallStatePOD b{};
+        b.pos = Vec3(0.0f, 4800.0f, 93.15f);
+        b.vel = Vec3(0.0f, 1200.0f, 0.0f);
+        b.quat = Quat::identity();
+        env.SetBallState(b);
+
+        // Car 0: Blue Attacker (Supersonic towards Car 2)
+        CarStatePOD c0{};
+        c0.pos = Vec3(-500.0f, -300.0f, 17.0f);
+        c0.vel = Vec3(0.0f, 2250.0f, 0.0f);
+        c0.quat = Quat(0.7071068f, 0.0f, 0.0f, 0.7071068f);
+        c0.is_on_ground = 1;
+        c0.boost = 100.0f;
+        c0.is_supersonic = 1;
+        c0.team = 0;
+        env.SetCarState(0, c0);
+
+        // Car 1: Blue Teammate (Resting)
+        CarStatePOD c1{};
+        c1.pos = Vec3(500.0f, -1000.0f, 17.0f);
+        c1.vel = Vec3(0.0f, 0.0f, 0.0f);
+        c1.quat = Quat(0.7071068f, 0.0f, 0.0f, 0.7071068f);
+        c1.is_on_ground = 1;
+        c1.team = 0;
+        env.SetCarState(1, c1);
+
+        // Car 2: Orange Victim (Target of Demolition)
+        CarStatePOD c2{};
+        c2.pos = Vec3(-500.0f, 100.0f, 17.0f);
+        c2.vel = Vec3(0.0f, 0.0f, 0.0f);
+        c2.quat = Quat(0.7071068f, 0.0f, 0.0f, -0.7071068f);
+        c2.is_on_ground = 1;
+        c2.team = 1;
+        env.SetCarState(2, c2);
+
+        // Car 3: Orange Defender (Resting near goal)
+        CarStatePOD c3{};
+        c3.pos = Vec3(500.0f, 1000.0f, 17.0f);
+        c3.vel = Vec3(0.0f, 0.0f, 0.0f);
+        c3.quat = Quat(0.7071068f, 0.0f, 0.0f, -0.7071068f);
+        c3.is_on_ground = 1;
+        c3.team = 1;
+        env.SetCarState(3, c3);
+    }
+
+    CarControls GetControl(uint32_t tick, uint32_t /*env*/, uint32_t car_idx, DeterministicInputGenerator& /*gen*/) const override {
+        CarControls c{};
+        if (car_idx == 0 && tick < 30) {
+            c.throttle = 1.0f;
+            c.boost = 1;
+        }
+        return c;
+    }
+};
+
 } // namespace
 
 void RegisterMultiCarScenarios() {
@@ -251,6 +425,10 @@ void RegisterMultiCarScenarios() {
     reg.Register(std::make_shared<CarOnCarScenario>());
     reg.Register(std::make_shared<WheelsOnBallScenario>());
     reg.Register(std::make_shared<WheelsOnCarScenario>());
+    reg.Register(std::make_shared<CarBumpSupersonicScenario>());
+    reg.Register(std::make_shared<CarDemoScenario>());
+    reg.Register(std::make_shared<CarDemoRespawnScenario>());
+    reg.Register(std::make_shared<MultiCar2v2GoalDemoScenario>());
 }
 
 } // namespace rocketsim_cuda

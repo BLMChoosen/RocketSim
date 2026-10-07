@@ -881,5 +881,29 @@ The flag `--check [path]` is implemented in `tests/differential/harness_main.cpp
   - Strict IEEE-754 compilation compliance (`--fmad=false`).
   - CPU Oracle code completely untouched.
   - No `printf` calls in device kernels.
-- **Wave 2 Phase 2 Gate:** Requirements R2 (supersonic/demo/respawn) and R4 (multi-car RL flow) NOT started per mandatory gate constraint.
+
+---
+
+## Module 2.2: Wave 2 Phase 2 Integration (R2 Supersonic, Demolition, Respawn & R4 Multi-Car RL Flow)
+
+### 1. CPU Oracle References
+- **Supersonic Hysteresis (R2):** `src/Sim/Car/Car.cpp:153-169`, `src/RLConst.h:68-76`.
+  - `SUPERSONIC_START_SPEED = 2200.0f` UU/s, `SUPERSONIC_MAINTAIN_MIN_SPEED = 2100.0f` UU/s, `SUPERSONIC_MAINTAIN_MAX_TIME = 1.0f` s.
+- **Demolition Trigger & Victims (R2):** `src/Sim/Arena/Arena.cpp:323-405`, `src/RLConst.h:512-520`.
+  - Attacker is supersonic, front bumper hit ($x > 64.5$ UU), opposite teams unless `enable_team_demos = true`.
+  - Victim physics suppression: zeroes velocity, omega, clears supersonic, victim set to demoed state with 3.0s delay.
+- **Canonical Soccar Respawn (R2):** `src/Sim/Car/Car.cpp:43-69`, `src/RLConst.h:393-398`.
+  - 4 canonical spawn positions (`{-2304, -4608}`, `{-2688, -4608}`, `{2304, -4608}`, `{2688, -4608}`, height $Z = 36.0f$).
+  - Orange team mirrored: $x \to -x, y \to -y, \text{yaw} \to \text{yaw} + \pi$.
+- **Goal Scoring & Episode Termination (R4):** `src/Sim/Arena/Arena.cpp:899-900`, `src/RLConst.h:121`.
+  - Orange goal scored at $y > 5124.25f$, Blue goal scored at $y < -5124.25f$. Sets `is_goal = 1, terminated = 1`.
+- **Ball Touched Tracking (R4):** `src/Sim/Ball/Ball.cpp:251-264`, `src/Sim/GameEventTracker/GameEventTracker.cpp:13-25`.
+  - Tracked per car per tick via chassis collision or wheel contact.
+- **Zero-Copy DLPack Tensor Views (R4):** `src/bindings/nanobind_module.cpp`, `src/bindings/gym_env.py`.
+  - Direct tensor exports for `is_supersonic`, `is_demoed`, `demo_respawn_timer`, `ball_touched`, `has_flip`, `boost`, `on_ground` with shape `[num_envs, cars_per_env]`.
+
+### 2. Verification Scenarios & Parity
+- Scenarios: `car_bump_supersonic`, `car_demo`, `car_demo_respawn`, `multicar_2v2_goal_demo` registered in `multicar_scenarios.cpp`.
+- `docs/parity_thresholds.json` updated with positive floating-point bounds for all 54 scenarios.
+- Zero dynamic allocations on GPU device; SoA layout and IEEE-754 `--fmad=false` invariants preserved.
 

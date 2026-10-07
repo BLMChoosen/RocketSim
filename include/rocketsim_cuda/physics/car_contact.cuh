@@ -909,7 +909,8 @@ __device__ inline bool resolve_car_pair_collision_device(
     float dt,
     int demo_mode = 0,
     bool enable_team_demos = false,
-    float bump_force_scale = 1.0f)
+    float bump_force_scale = 1.0f,
+    float respawn_delay = DEMO_RESPAWN_TIME)
 {
     // Ignore if either car is demolished (Arena.cpp:341)
     if (car_state.is_demoed && (car_state.is_demoed[car_idx_a] || car_state.is_demoed[car_idx_b])) {
@@ -990,7 +991,16 @@ __device__ inline bool resolve_car_pair_collision_device(
     if (bump_a_to_b.type == CarBumpType::DEMO) {
         b_demoed = true;
         if (car_state.is_demoed) car_state.is_demoed[car_idx_b] = 1;
-        if (car_state.demo_respawn_timer) car_state.demo_respawn_timer[car_idx_b] = DEMO_RESPAWN_TIME;
+        if (car_state.demo_respawn_timer) car_state.demo_respawn_timer[car_idx_b] = respawn_delay;
+        if (car_state.is_supersonic) car_state.is_supersonic[car_idx_b] = 0;
+        if (car_state.supersonic_time) car_state.supersonic_time[car_idx_b] = 0.0f;
+        vel_b = Vec3(0.0f, 0.0f, 0.0f);
+        omega_b = Vec3(0.0f, 0.0f, 0.0f);
+        if (car_state.vel_bt_x) {
+            car_state.vel_bt_x[car_idx_b] = 0.0f;
+            car_state.vel_bt_y[car_idx_b] = 0.0f;
+            car_state.vel_bt_z[car_idx_b] = 0.0f;
+        }
         if (car_state.car_contact_other_car_id) car_state.car_contact_other_car_id[car_idx_a] = (int32_t)car_idx_b;
         if (car_state.car_contact_cooldown_timer) car_state.car_contact_cooldown_timer[car_idx_a] = BUMP_COOLDOWN_TIME;
     } else if (bump_a_to_b.type == CarBumpType::BUMP) {
@@ -1004,7 +1014,16 @@ __device__ inline bool resolve_car_pair_collision_device(
         if (bump_b_to_a.type == CarBumpType::DEMO) {
             a_demoed = true;
             if (car_state.is_demoed) car_state.is_demoed[car_idx_a] = 1;
-            if (car_state.demo_respawn_timer) car_state.demo_respawn_timer[car_idx_a] = DEMO_RESPAWN_TIME;
+            if (car_state.demo_respawn_timer) car_state.demo_respawn_timer[car_idx_a] = respawn_delay;
+            if (car_state.is_supersonic) car_state.is_supersonic[car_idx_a] = 0;
+            if (car_state.supersonic_time) car_state.supersonic_time[car_idx_a] = 0.0f;
+            vel_a = Vec3(0.0f, 0.0f, 0.0f);
+            omega_a = Vec3(0.0f, 0.0f, 0.0f);
+            if (car_state.vel_bt_x) {
+                car_state.vel_bt_x[car_idx_a] = 0.0f;
+                car_state.vel_bt_y[car_idx_a] = 0.0f;
+                car_state.vel_bt_z[car_idx_a] = 0.0f;
+            }
             if (car_state.car_contact_other_car_id) car_state.car_contact_other_car_id[car_idx_b] = (int32_t)car_idx_a;
             if (car_state.car_contact_cooldown_timer) car_state.car_contact_cooldown_timer[car_idx_b] = BUMP_COOLDOWN_TIME;
         } else if (bump_b_to_a.type == CarBumpType::BUMP) {
@@ -1067,7 +1086,8 @@ __device__ inline void resolve_all_car_car_collisions(
     float dt,
     int demo_mode = 0,
     bool enable_team_demos = false,
-    float bump_force_scale = 1.0f)
+    float bump_force_scale = 1.0f,
+    float respawn_delay = DEMO_RESPAWN_TIME)
 {
     if (cars_per_env <= 1) return;
 
@@ -1080,7 +1100,8 @@ __device__ inline void resolve_all_car_car_collisions(
             resolve_car_pair_collision_device(
                 car_idx_a, car_idx_b,
                 car_state, dt,
-                demo_mode, enable_team_demos, bump_force_scale
+                demo_mode, enable_team_demos, bump_force_scale,
+                respawn_delay
             );
         }
     }

@@ -20,6 +20,9 @@ struct CarStatePOD {
     uint8_t has_double_jumped   = 0;
     uint8_t has_flipped         = 0;
     uint8_t is_demoed           = 0;
+    uint8_t is_supersonic       = 0;
+    float demo_respawn_timer    = 0.0f;
+    uint8_t ball_touched        = 0;
     uint8_t team                = 0; // 0 = BLUE, 1 = ORANGE
     uint8_t hitbox_type         = 0; // 0 = OCTANE, 1 = DOMINUS, ..., 6 = PSYCLOPS (R5)
     uint8_t wheels_with_contact[4] = {1, 1, 1, 1};
@@ -123,6 +126,7 @@ struct CarStateSoA {
     float* __restrict__ ball_hit_extra_hit_force_y    = nullptr;
     float* __restrict__ ball_hit_extra_hit_force_z    = nullptr;
     uint64_t* __restrict__ ball_hit_tick_count        = nullptr;
+    uint8_t* __restrict__ ball_touched                = nullptr;
 
     // --- 10. Last Controls ---
     float* __restrict__ last_controls_throttle   = nullptr;
@@ -197,6 +201,9 @@ struct CarStateSoA {
         pod.has_double_jumped      = has_double_jumped[idx];
         pod.has_flipped            = has_flipped[idx];
         pod.is_demoed              = is_demoed[idx];
+        pod.is_supersonic          = is_supersonic ? is_supersonic[idx] : 0;
+        pod.demo_respawn_timer     = demo_respawn_timer ? demo_respawn_timer[idx] : 0.0f;
+        pod.ball_touched           = ball_touched ? ball_touched[idx] : 0;
         pod.team                   = team ? team[idx] : 0;
         pod.hitbox_type            = hitbox_type ? hitbox_type[idx] : 0;
         pod.wheels_with_contact[0] = wheel_contact_0[idx];
@@ -248,6 +255,9 @@ struct CarStateSoA {
         has_double_jumped[idx]     = pod.has_double_jumped;
         has_flipped[idx]           = pod.has_flipped;
         is_demoed[idx]             = pod.is_demoed;
+        if (is_supersonic) is_supersonic[idx] = pod.is_supersonic;
+        if (demo_respawn_timer) demo_respawn_timer[idx] = pod.demo_respawn_timer;
+        if (ball_touched) ball_touched[idx] = pod.ball_touched;
         if (team) team[idx]        = pod.team;
         if (hitbox_type) hitbox_type[idx] = pod.hitbox_type;
         wheel_contact_0[idx]       = pod.wheels_with_contact[0];

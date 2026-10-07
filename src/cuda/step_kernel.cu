@@ -89,8 +89,27 @@ __device__ void StepCarDevice(
     BodyReactionImpulse* ball_reaction,
     BodyReactionImpulse* other_cars_reactions)
 {
-    // Skip if demolished
+    // Reset ball touched for this car this tick (R4)
+    if (car_state.ball_touched) {
+        car_state.ball_touched[car_idx] = 0;
+    }
+
+    // Skip if demolished, decrement respawn timer and respawn when ready (R2, R4)
     if (car_state.is_demoed && car_state.is_demoed[car_idx]) {
+        float timer = car_state.demo_respawn_timer ? car_state.demo_respawn_timer[car_idx] : 0.0f;
+        if (timer > 0.0f) {
+            timer = fmaxf(timer - dt, 0.0f);
+            if (car_state.demo_respawn_timer) {
+                car_state.demo_respawn_timer[car_idx] = timer;
+            }
+        }
+        if (timer <= 0.0f) {
+            uint32_t env_idx = (cars_per_env > 0) ? (car_idx / cars_per_env) : 0;
+            respawn_car_device(
+                car_idx, car_in_env_idx, cars_per_env, env_idx,
+                car_state, mut_cfg.car_spawn_boost_amount
+            );
+        }
         return;
     }
 
@@ -146,6 +165,16 @@ __device__ void StepCarDevice(
         other_cars_pos, other_cars_basis, other_cars_is_demoed, other_cars_hitbox_type,
         wheels_contact, susp_lengths, wheel_results
     );
+
+    // Track ball touched from wheel contacts (R4)
+    if (has_ball && car_state.ball_touched) {
+        for (int w = 0; w < 4; ++w) {
+            if (wheel_results[w].hit_object_type == HIT_OBJECT_BALL) {
+                car_state.ball_touched[car_idx] = 1;
+                break;
+            }
+        }
+    }
 
     int num_wheels_contact = wheels_contact[0] + wheels_contact[1] + wheels_contact[2] + wheels_contact[3];
     bool is_on_ground = (num_wheels_contact >= 3);
@@ -419,13 +448,14 @@ __global__ void StepSimulationKernel(
     // Step Ball (R6 mutators)
     StepBallDevice(env_idx, ball_state, dt, mut_cfg);
 
-    // Resolve Car-Car Collisions & Bumps (R1, R5, R6)
+    // Resolve Car-Car Collisions & Bumps (R1, R2, R5, R6)
     if (cars_per_env > 1) {
         resolve_all_car_car_collisions(
             env_idx, cars_per_env, car_state, dt,
             static_cast<int>(mut_cfg.demo_mode),
             mut_cfg.enable_team_demos,
-            mut_cfg.bump_force_scale
+            mut_cfg.bump_force_scale,
+            mut_cfg.respawn_delay
         );
     }
 
@@ -434,7 +464,7 @@ __global__ void StepSimulationKernel(
         arena_state.tick_count[env_idx]++;
     }
 
-    // Resolve Car-Ball Collisions (R5, R6)
+    // Resolve Car-Ball Collisions (R4, R5, R6)
     for (uint32_t c = 0; c < cars_per_env; ++c) {
         uint32_t car_idx = env_idx * cars_per_env + c;
         if (car_state.is_demoed && car_state.is_demoed[car_idx]) continue;
@@ -442,6 +472,9 @@ __global__ void StepSimulationKernel(
         const CarConfig& car_cfg = get_car_config(ht);
         bool hit = resolve_car_ball_collision(env_idx, car_idx, ball_state, car_state, arena_state, dt, mut_cfg, car_cfg);
         if (hit) {
+            if (car_state.ball_touched) {
+                car_state.ball_touched[car_idx] = 1;
+            }
             car_state.pos_z[car_idx] += car_state.vel_z[car_idx] * dt;
         }
     }

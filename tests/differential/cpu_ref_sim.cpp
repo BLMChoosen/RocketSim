@@ -275,6 +275,9 @@ void CPURefSim::GetCarState(int carIdx, CarStatePOD& out) const {
     out.has_double_jumped = cs.hasDoubleJumped ? 1 : 0;
     out.has_flipped = cs.hasFlipped ? 1 : 0;
     out.is_demoed = cs.isDemoed ? 1 : 0;
+    out.is_supersonic = cs.isSupersonic ? 1 : 0;
+    out.demo_respawn_timer = cs.demoRespawnTimer;
+    out.ball_touched = (cs.ballHitInfo.isValid && m_arena && cs.ballHitInfo.tickCountWhenHit == m_arena->tickCount) ? 1 : 0;
     out.team = (car->team == RocketSim::Team::BLUE) ? 0 : 1;
     out.hitbox_type = static_cast<uint8_t>(m_hitboxType);
 
@@ -327,6 +330,16 @@ void CPURefSim::SetCarState(int carIdx, const CarStatePOD& in) {
     cs.rotMat = RocketSim::RotMat(basis);
     cs.boost = in.boost;
     cs.isOnGround = (in.is_on_ground != 0);
+    cs.hasJumped = (in.has_jumped != 0);
+    cs.hasDoubleJumped = (in.has_double_jumped != 0);
+    cs.hasFlipped = (in.has_flipped != 0);
+    cs.isDemoed = (in.is_demoed != 0);
+    cs.isSupersonic = (in.is_supersonic != 0);
+    cs.demoRespawnTimer = in.demo_respawn_timer;
+    if (in.ball_touched && m_arena) {
+        cs.ballHitInfo.isValid = true;
+        cs.ballHitInfo.tickCountWhenHit = m_arena->tickCount;
+    }
     car->team = (in.team == 0) ? RocketSim::Team::BLUE : RocketSim::Team::ORANGE;
 
     car->SetState(cs);

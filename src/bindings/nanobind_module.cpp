@@ -472,6 +472,120 @@ NB_MODULE(rocketsim_cuda, m) {
             v.owner = nb::borrow(self);
             return v;
         }, "Get DLPack CUDA tensor view of Ball Hit Is Valid flags [num_envs, cars_per_env]")
+        .def("get_ball_touched", [](nb::handle self) {
+            auto& ctx = nb::cast<SimContext&>(self);
+            GpuTensorView v;
+            v.data = ctx.GetCarState().ball_touched;
+            v.shape = { static_cast<int64_t>(ctx.GetNumEnvs()), static_cast<int64_t>(ctx.GetCarsPerEnv()) };
+            v.strides = { static_cast<int64_t>(ctx.GetCarsPerEnv()), 1 };
+            v.dtype = "uint8";
+            v.device_type = 2;
+            v.device_id = 0;
+            v.owner = nb::borrow(self);
+            return v;
+        }, "Get DLPack CUDA tensor view of Ball Touched flags [num_envs, cars_per_env]")
+
+        // Supersonic & Demolition State Views: shape [num_envs, cars_per_env]
+        .def("get_is_supersonic", [](nb::handle self) {
+            auto& ctx = nb::cast<SimContext&>(self);
+            GpuTensorView v;
+            v.data = ctx.GetCarState().is_supersonic;
+            v.shape = { static_cast<int64_t>(ctx.GetNumEnvs()), static_cast<int64_t>(ctx.GetCarsPerEnv()) };
+            v.strides = { static_cast<int64_t>(ctx.GetCarsPerEnv()), 1 };
+            v.dtype = "uint8";
+            v.device_type = 2;
+            v.device_id = 0;
+            v.owner = nb::borrow(self);
+            return v;
+        }, "Get DLPack CUDA tensor view of Supersonic flags [num_envs, cars_per_env]")
+        .def("get_is_demoed", [](nb::handle self) {
+            auto& ctx = nb::cast<SimContext&>(self);
+            GpuTensorView v;
+            v.data = ctx.GetCarState().is_demoed;
+            v.shape = { static_cast<int64_t>(ctx.GetNumEnvs()), static_cast<int64_t>(ctx.GetCarsPerEnv()) };
+            v.strides = { static_cast<int64_t>(ctx.GetCarsPerEnv()), 1 };
+            v.dtype = "uint8";
+            v.device_type = 2;
+            v.device_id = 0;
+            v.owner = nb::borrow(self);
+            return v;
+        }, "Get DLPack CUDA tensor view of Demolished flags [num_envs, cars_per_env]")
+        .def("get_demo_respawn_timer", [](nb::handle self) {
+            auto& ctx = nb::cast<SimContext&>(self);
+            GpuTensorView v;
+            v.data = ctx.GetCarState().demo_respawn_timer;
+            v.shape = { static_cast<int64_t>(ctx.GetNumEnvs()), static_cast<int64_t>(ctx.GetCarsPerEnv()) };
+            v.strides = { static_cast<int64_t>(ctx.GetCarsPerEnv()), 1 };
+            v.dtype = "float32";
+            v.device_type = 2;
+            v.device_id = 0;
+            v.owner = nb::borrow(self);
+            return v;
+        }, "Get DLPack CUDA tensor view of Demolition Respawn Timers [num_envs, cars_per_env]")
+
+        // Flip & Jump Mechanics Views: shape [num_envs, cars_per_env]
+        .def("get_has_flipped", [](nb::handle self) {
+            auto& ctx = nb::cast<SimContext&>(self);
+            GpuTensorView v;
+            v.data = ctx.GetCarState().has_flipped;
+            v.shape = { static_cast<int64_t>(ctx.GetNumEnvs()), static_cast<int64_t>(ctx.GetCarsPerEnv()) };
+            v.strides = { static_cast<int64_t>(ctx.GetCarsPerEnv()), 1 };
+            v.dtype = "uint8";
+            v.device_type = 2;
+            v.device_id = 0;
+            v.owner = nb::borrow(self);
+            return v;
+        }, "Get DLPack CUDA tensor view of Has Flipped flags [num_envs, cars_per_env]")
+        .def("get_has_flip", [](nb::handle self) {
+            auto& ctx = nb::cast<SimContext&>(self);
+            GpuTensorView v;
+            v.data = ctx.GetCarState().has_flipped;
+            v.shape = { static_cast<int64_t>(ctx.GetNumEnvs()), static_cast<int64_t>(ctx.GetCarsPerEnv()) };
+            v.strides = { static_cast<int64_t>(ctx.GetCarsPerEnv()), 1 };
+            v.dtype = "uint8";
+            v.device_type = 2;
+            v.device_id = 0;
+            v.owner = nb::borrow(self);
+            return v;
+        }, "Get DLPack CUDA tensor view of Has Flip / Has Flipped flags [num_envs, cars_per_env]")
+
+        // Boost & Ground Mechanics Views: shape [num_envs, cars_per_env]
+        .def("get_boost", [](nb::handle self) {
+            auto& ctx = nb::cast<SimContext&>(self);
+            GpuTensorView v;
+            v.data = ctx.GetCarState().boost;
+            v.shape = { static_cast<int64_t>(ctx.GetNumEnvs()), static_cast<int64_t>(ctx.GetCarsPerEnv()) };
+            v.strides = { static_cast<int64_t>(ctx.GetCarsPerEnv()), 1 };
+            v.dtype = "float32";
+            v.device_type = 2;
+            v.device_id = 0;
+            v.owner = nb::borrow(self);
+            return v;
+        }, "Get DLPack CUDA tensor view of Car Boost amounts [num_envs, cars_per_env]")
+        .def("get_is_on_ground", [](nb::handle self) {
+            auto& ctx = nb::cast<SimContext&>(self);
+            GpuTensorView v;
+            v.data = ctx.GetCarState().is_on_ground;
+            v.shape = { static_cast<int64_t>(ctx.GetNumEnvs()), static_cast<int64_t>(ctx.GetCarsPerEnv()) };
+            v.strides = { static_cast<int64_t>(ctx.GetCarsPerEnv()), 1 };
+            v.dtype = "uint8";
+            v.device_type = 2;
+            v.device_id = 0;
+            v.owner = nb::borrow(self);
+            return v;
+        }, "Get DLPack CUDA tensor view of Is On Ground flags [num_envs, cars_per_env]")
+        .def("get_on_ground", [](nb::handle self) {
+            auto& ctx = nb::cast<SimContext&>(self);
+            GpuTensorView v;
+            v.data = ctx.GetCarState().is_on_ground;
+            v.shape = { static_cast<int64_t>(ctx.GetNumEnvs()), static_cast<int64_t>(ctx.GetCarsPerEnv()) };
+            v.strides = { static_cast<int64_t>(ctx.GetCarsPerEnv()), 1 };
+            v.dtype = "uint8";
+            v.device_type = 2;
+            v.device_id = 0;
+            v.owner = nb::borrow(self);
+            return v;
+        }, "Alias for get_is_on_ground [num_envs, cars_per_env]")
 
         // Boost Pad States: shape [num_envs, 34], strides [34, 1]
         .def("get_pad_is_active", [](nb::handle self) {

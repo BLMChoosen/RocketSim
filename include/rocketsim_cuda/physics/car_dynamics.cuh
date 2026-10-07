@@ -645,6 +645,12 @@ __device__ __forceinline__ void update_car_supersonic(
     const Vec3& vel,
     float dt)
 {
+    if (car_state.is_demoed && car_state.is_demoed[car_idx]) {
+        if (car_state.is_supersonic) car_state.is_supersonic[car_idx] = 0;
+        if (car_state.supersonic_time) car_state.supersonic_time[car_idx] = 0.0f;
+        return;
+    }
+
     float speed_sq = vel.length_sq();
     bool is_super = (car_state.is_supersonic[car_idx] != 0);
     float super_time = car_state.supersonic_time[car_idx];
@@ -663,6 +669,132 @@ __device__ __forceinline__ void update_car_supersonic(
 
     car_state.is_supersonic[car_idx] = is_super ? 1 : 0;
     car_state.supersonic_time[car_idx] = super_time;
+}
+
+// ============================================================================
+// Canonical Car Respawn Dynamics (src/Sim/Car/Car.cpp:43-69, RLConst.h:393-398)
+// ============================================================================
+
+struct RespawnLocationDef {
+    float x;
+    float y;
+    float z;
+    float yaw;
+};
+
+// 4 Canonical Soccar Respawn Locations (RLConst.h:393-398)
+#if defined(__CUDA_ARCH__)
+__device__ static constexpr RespawnLocationDef SOCCAR_RESPAWN_LOCATIONS[4] = {
+#else
+static constexpr RespawnLocationDef SOCCAR_RESPAWN_LOCATIONS[4] = {
+#endif
+    { -2304.0f, -4608.0f, 36.0f, 1.57079632679f }, // Yaw = pi/2 (90 deg, facing +Y)
+    { -2688.0f, -4608.0f, 36.0f, 1.57079632679f },
+    {  2304.0f, -4608.0f, 36.0f, 1.57079632679f },
+    {  2688.0f, -4608.0f, 36.0f, 1.57079632679f }
+};
+
+/**
+ * @brief Respawns a car after its demo respawn timer expires.
+ * Mirrors Car::Respawn (src/Sim/Car/Car.cpp:43-69) and Arena kickoff mirroring (src/Sim/Arena/Arena.cpp:187-190).
+ */
+__device__ inline void respawn_car_device(
+    uint32_t car_idx,
+    uint32_t car_in_env_idx,
+    uint32_t cars_per_env,
+    uint32_t env_idx,
+    CarStateSoA& car_state,
+    float spawn_boost = BOOST_SPAWN)
+{
+    uint8_t team = car_state.team ? car_state.team[car_idx] : (car_in_env_idx % 2);
+    uint32_t team_car_idx = (cars_per_env > 1) ? (car_in_env_idx / 2) : car_in_env_idx;
+    uint32_t spawn_slot = (env_idx + team_car_idx) % 4;
+
+    const RespawnLocationDef& loc = SOCCAR_RESPAWN_LOCATIONS[spawn_slot];
+
+    float x = loc.x;
+    float y = loc.y;
+    float z = loc.z;
+    Quat q = Quat(0.7071068f, 0.0f, 0.0f, 0.7071068f); // Yaw = pi/2
+
+    if (team != 0) { // Orange team: mirror X -> -X, Y -> -Y, yaw -> yaw + pi (Arena.cpp:187-190)
+        x = -loc.x;
+        y = -loc.y;
+        q = Quat(0.7071068f, 0.0f, 0.0f, -0.7071068f); // Yaw = -pi/2
+    }
+
+    // Set position and orientation
+    car_state.pos_x[car_idx] = x;
+    car_state.pos_y[car_idx] = y;
+    car_state.pos_z[car_idx] = z;
+
+    car_state.pos_bt_x[car_idx] = x * 0.02f;
+    car_state.pos_bt_y[car_idx] = y * 0.02f;
+    car_state.pos_bt_z[car_idx] = z * 0.02f;
+
+    car_state.q_w[car_idx] = q.w;
+    car_state.q_x[car_idx] = q.x;
+    car_state.q_y[car_idx] = q.y;
+    car_state.q_z[car_idx] = q.z;
+
+    // Reset velocities to zero
+    car_state.vel_x[car_idx] = 0.0f;
+    car_state.vel_y[car_idx] = 0.0f;
+    car_state.vel_z[car_idx] = 0.0f;
+
+    car_state.vel_bt_x[car_idx] = 0.0f;
+    car_state.vel_bt_y[car_idx] = 0.0f;
+    car_state.vel_bt_z[car_idx] = 0.0f;
+
+    car_state.ang_vel_x[car_idx] = 0.0f;
+    car_state.ang_vel_y[car_idx] = 0.0f;
+    car_state.ang_vel_z[car_idx] = 0.0f;
+
+    // Reset demo flags
+    if (car_state.is_demoed) car_state.is_demoed[car_idx] = 0;
+    if (car_state.demo_respawn_timer) car_state.demo_respawn_timer[car_idx] = 0.0f;
+
+    // Reset supersonic flags
+    if (car_state.is_supersonic) car_state.is_supersonic[car_idx] = 0;
+    if (car_state.supersonic_time) car_state.supersonic_time[car_idx] = 0.0f;
+
+    // Set spawn boost
+    car_state.boost[car_idx] = spawn_boost;
+    car_state.boosting_time[car_idx] = 0.0f;
+    car_state.time_since_boosted[car_idx] = 0.0f;
+    car_state.is_boosting[car_idx] = 0;
+
+    // Reset support & dynamics flags
+    car_state.is_on_ground[car_idx] = 1;
+    car_state.has_jumped[car_idx] = 0;
+    car_state.is_jumping[car_idx] = 0;
+    car_state.jump_time[car_idx] = 0.0f;
+    car_state.has_double_jumped[car_idx] = 0;
+    car_state.has_flipped[car_idx] = 0;
+    car_state.is_flipping[car_idx] = 0;
+    car_state.flip_time[car_idx] = 0.0f;
+    car_state.air_time[car_idx] = 0.0f;
+    car_state.air_time_since_jump[car_idx] = 0.0f;
+
+    car_state.is_auto_flipping[car_idx] = 0;
+    car_state.auto_flip_timer[car_idx] = 0.0f;
+    car_state.auto_flip_torque_scale[car_idx] = 0.0f;
+    car_state.handbrake_val[car_idx] = 0.0f;
+
+    car_state.wheel_contact_0[car_idx] = 1;
+    car_state.wheel_contact_1[car_idx] = 1;
+    car_state.wheel_contact_2[car_idx] = 1;
+    car_state.wheel_contact_3[car_idx] = 1;
+
+    car_state.suspension_length_0[car_idx] = 0.0f;
+    car_state.suspension_length_1[car_idx] = 0.0f;
+    car_state.suspension_length_2[car_idx] = 0.0f;
+    car_state.suspension_length_3[car_idx] = 0.0f;
+
+    if (car_state.ball_touched) car_state.ball_touched[car_idx] = 0;
+    if (car_state.ball_hit_is_valid) car_state.ball_hit_is_valid[car_idx] = 0;
+    if (car_state.car_contact_cooldown_timer) car_state.car_contact_cooldown_timer[car_idx] = 0.0f;
+    if (car_state.car_contact_other_car_id) car_state.car_contact_other_car_id[car_idx] = -1;
 }
 
 } // namespace rocketsim_cuda
