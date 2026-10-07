@@ -52,8 +52,8 @@ bool GetCPURefSimBoostPadState(const CPURefSim* sim, int padIdx, bool& isActive,
     return false;
 }
 
-CPURefSim::CPURefSim(int numCars, bool addFloor, float tickRate, int spawnSeed)
-    : m_numCars(numCars), m_addFloor(addFloor), m_tickRate(tickRate), m_spawnSeed(spawnSeed) {
+CPURefSim::CPURefSim(int numCars, bool addFloor, float tickRate, int spawnSeed, int hitboxType)
+    : m_numCars(numCars), m_addFloor(addFloor), m_tickRate(tickRate), m_spawnSeed(spawnSeed), m_hitboxType(hitboxType) {
     EnsureRocketSimInit();
     InitArena();
 }
@@ -68,7 +68,8 @@ CPURefSim::CPURefSim(CPURefSim&& other) noexcept
       m_numCars(other.m_numCars),
       m_addFloor(other.m_addFloor),
       m_tickRate(other.m_tickRate),
-      m_spawnSeed(other.m_spawnSeed) {
+      m_spawnSeed(other.m_spawnSeed),
+      m_hitboxType(other.m_hitboxType) {
     {
         std::lock_guard<std::mutex> lock(s_simArenaMapMutex);
         s_simArenaMap.erase(&other);
@@ -87,6 +88,7 @@ CPURefSim& CPURefSim::operator=(CPURefSim&& other) noexcept {
         m_addFloor = other.m_addFloor;
         m_tickRate = other.m_tickRate;
         m_spawnSeed = other.m_spawnSeed;
+        m_hitboxType = other.m_hitboxType;
         {
             std::lock_guard<std::mutex> lock(s_simArenaMapMutex);
             s_simArenaMap.erase(&other);
@@ -165,9 +167,20 @@ void CPURefSim::InitArena() {
     }
 
     m_cars.clear();
+    const RocketSim::CarConfig* carCfg = &RocketSim::CAR_CONFIG_OCTANE;
+    switch (m_hitboxType) {
+        case 1: carCfg = &RocketSim::CAR_CONFIG_DOMINUS; break;
+        case 2: carCfg = &RocketSim::CAR_CONFIG_PLANK; break;
+        case 3: carCfg = &RocketSim::CAR_CONFIG_BREAKOUT; break;
+        case 4: carCfg = &RocketSim::CAR_CONFIG_HYBRID; break;
+        case 5: carCfg = &RocketSim::CAR_CONFIG_MERC; break;
+        case 6: carCfg = &RocketSim::CAR_CONFIG_PSYCLOPS; break;
+        default: carCfg = &RocketSim::CAR_CONFIG_OCTANE; break;
+    }
+
     for (int i = 0; i < m_numCars; i++) {
         RocketSim::Team team = (m_numCars > 1 && (i % 2 != 0)) ? RocketSim::Team::ORANGE : RocketSim::Team::BLUE;
-        RocketSim::Car* car = m_arena->AddCar(team, RocketSim::CAR_CONFIG_OCTANE);
+        RocketSim::Car* car = m_arena->AddCar(team, *carCfg);
         if (!car) {
             throw std::runtime_error("Failed to add car to RocketSim CPU Arena");
         }
@@ -190,6 +203,13 @@ void CPURefSim::CleanupArena() {
 }
 
 void CPURefSim::Reset() {
+    CleanupArena();
+    InitArena();
+}
+
+void CPURefSim::SetHitboxType(int ht) {
+    if (m_hitboxType == ht) return;
+    m_hitboxType = ht;
     CleanupArena();
     InitArena();
 }
@@ -256,6 +276,7 @@ void CPURefSim::GetCarState(int carIdx, CarStatePOD& out) const {
     out.has_flipped = cs.hasFlipped ? 1 : 0;
     out.is_demoed = cs.isDemoed ? 1 : 0;
     out.team = (car->team == RocketSim::Team::BLUE) ? 0 : 1;
+    out.hitbox_type = static_cast<uint8_t>(m_hitboxType);
 
     for (int w = 0; w < 4; w++) {
         out.wheels_with_contact[w] = cs.wheelsWithContact[w] ? 1 : 0;

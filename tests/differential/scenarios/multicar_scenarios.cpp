@@ -182,6 +182,63 @@ public:
     }
 };
 
+class WheelsOnBallScenario : public IScenario {
+public:
+    std::string GetName() const override { return "wheels_on_ball"; }
+    std::string GetDescription() const override { return "Car dropped onto ball with 4 wheels raycasting and contacting the ball"; }
+    uint32_t GetDefaultCars() const override { return 1; }
+    uint32_t GetDefaultTicks() const override { return 120; }
+
+    void ApplyInitialState(CPURefSim& env, uint32_t /*env_idx*/) const override {
+        BallStatePOD b{};
+        b.pos = Vec3(0.0f, 0.0f, 93.15f);
+        b.vel = Vec3(0.0f, 0.0f, 0.0f);
+        b.quat = Quat::identity();
+        env.SetBallState(b);
+
+        CarStatePOD c{};
+        c.pos = Vec3(0.0f, 0.0f, 150.0f);
+        c.vel = Vec3(0.0f, 0.0f, -50.0f);
+        c.quat = Quat::identity();
+        c.is_on_ground = 0;
+        env.SetCarState(0, c);
+    }
+
+    CarControls GetControl(uint32_t /*tick*/, uint32_t /*env*/, uint32_t /*car_idx*/, DeterministicInputGenerator& /*gen*/) const override {
+        return CarControls{};
+    }
+};
+
+class WheelsOnCarScenario : public IScenario {
+public:
+    std::string GetName() const override { return "wheels_on_car"; }
+    std::string GetDescription() const override { return "Car positioned above another resting car with wheels raycasting onto the chassis roof"; }
+    uint32_t GetDefaultCars() const override { return 2; }
+    uint32_t GetDefaultTicks() const override { return 120; }
+
+    void ApplyInitialState(CPURefSim& env, uint32_t /*env_idx*/) const override {
+        CarStatePOD c0{};
+        c0.pos = Vec3(0.0f, 0.0f, 17.0f);
+        c0.vel = Vec3(0.0f, 0.0f, 0.0f);
+        c0.quat = Quat::identity();
+        c0.is_on_ground = 1;
+        c0.team = 0;
+        env.SetCarState(0, c0);
+
+        CarStatePOD c1{};
+        c1.pos = Vec3(0.0f, 0.0f, 65.0f);
+        c1.vel = Vec3(0.0f, 0.0f, -20.0f);
+        c1.quat = Quat::identity();
+        c1.is_on_ground = 0;
+        c1.team = 1;
+        env.SetCarState(1, c1);
+    }
+
+    CarControls GetControl(uint32_t /*tick*/, uint32_t /*env*/, uint32_t /*car_idx*/, DeterministicInputGenerator& /*gen*/) const override {
+        return CarControls{};
+    }
+};
+
 } // namespace
 
 void RegisterMultiCarScenarios() {
@@ -192,6 +249,8 @@ void RegisterMultiCarScenarios() {
     reg.Register(std::make_shared<CarCarRearScenario>());
     reg.Register(std::make_shared<CarCarAirScenario>());
     reg.Register(std::make_shared<CarOnCarScenario>());
+    reg.Register(std::make_shared<WheelsOnBallScenario>());
+    reg.Register(std::make_shared<WheelsOnCarScenario>());
 }
 
 } // namespace rocketsim_cuda

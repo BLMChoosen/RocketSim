@@ -8,6 +8,7 @@
 #include "rocketsim_cuda/physics/arena_sdf.cuh"
 #include "rocketsim_cuda/types/car_state.cuh"
 #include "rocketsim_cuda/types/ball_state.cuh"
+#include "rocketsim_cuda/types/car_config.cuh"
 
 namespace rocketsim_cuda {
 
@@ -304,6 +305,7 @@ __device__ __forceinline__ bool raycast_obb(
 __device__ __forceinline__ void evaluate_car_wheels_raycast_multibody(
     const Vec3& car_pos,
     const Mat3& basis,
+    const CarConfig& car_cfg,
     bool check_ball,
     const Vec3& ball_pos,
     float ball_radius,
@@ -312,6 +314,7 @@ __device__ __forceinline__ void evaluate_car_wheels_raycast_multibody(
     const Vec3* __restrict__ other_cars_pos,
     const Mat3* __restrict__ other_cars_basis,
     const uint8_t* __restrict__ other_cars_is_demoed,
+    const uint8_t* __restrict__ other_cars_hitbox_type,
     uint8_t* __restrict__ wheels_in_contact,
     float* __restrict__ suspension_lengths,
     WheelRaycastResult* __restrict__ results)
@@ -321,9 +324,9 @@ __device__ __forceinline__ void evaluate_car_wheels_raycast_multibody(
 
     #pragma unroll
     for (int w = 0; w < 4; ++w) {
-        Vec3 hardpoint = car_pos + basis * get_octane_wheel_offset(w);
-        float config_rest = get_octane_susp_rest(w);
-        float radius = get_octane_wheel_rad(w);
+        Vec3 hardpoint = car_pos + basis * car_cfg.get_wheel_connection_offset(w);
+        float config_rest = car_cfg.get_susp_rest_effective(w);
+        float radius = car_cfg.get_wheel_radius(w);
         float real_ray_len = config_rest + SUSP_MAX_TRAVEL + radius - SUSP_SUBTRACTION;
 
         float closest_dist = real_ray_len + 1.0f;
@@ -359,12 +362,13 @@ __device__ __forceinline__ void evaluate_car_wheels_raycast_multibody(
 
         // 3. Raycast against other cars (OBB geometry)
         if (other_cars_pos && other_cars_basis && num_other_cars > 0) {
-            Vec3 hitbox_offset = get_octane_hitbox_offset_susp();
-            Vec3 hitbox_half = get_octane_hitbox_half_susp();
-
             for (uint32_t c = 0; c < num_other_cars; ++c) {
                 if (c == current_car_idx) continue;
                 if (other_cars_is_demoed && other_cars_is_demoed[c]) continue;
+
+                uint8_t other_type = other_cars_hitbox_type ? other_cars_hitbox_type[c] : 0;
+                Vec3 hitbox_offset = get_hitbox_offset(other_type);
+                Vec3 hitbox_half = get_hitbox_half(other_type);
 
                 float car_hit_dist = 0.0f;
                 Vec3 car_hit_normal = Vec3(0.0f, 0.0f, 1.0f);
@@ -409,6 +413,33 @@ __device__ __forceinline__ void evaluate_car_wheels_raycast_multibody(
 }
 
 /**
+ * @brief Overload of evaluate_car_wheels_raycast_multibody defaulting to Octane preset.
+ */
+__device__ __forceinline__ void evaluate_car_wheels_raycast_multibody(
+    const Vec3& car_pos,
+    const Mat3& basis,
+    bool check_ball,
+    const Vec3& ball_pos,
+    float ball_radius,
+    uint32_t num_other_cars,
+    uint32_t current_car_idx,
+    const Vec3* __restrict__ other_cars_pos,
+    const Mat3* __restrict__ other_cars_basis,
+    const uint8_t* __restrict__ other_cars_is_demoed,
+    uint8_t* __restrict__ wheels_in_contact,
+    float* __restrict__ suspension_lengths,
+    WheelRaycastResult* __restrict__ results)
+{
+    evaluate_car_wheels_raycast_multibody(
+        car_pos, basis, CAR_CONFIG_OCTANE,
+        check_ball, ball_pos, ball_radius,
+        num_other_cars, current_car_idx,
+        other_cars_pos, other_cars_basis, other_cars_is_demoed, nullptr,
+        wheels_in_contact, suspension_lengths, results
+    );
+}
+
+/**
  * @brief Legacy single-car evaluate_car_wheels_raycast query against Arena SDF.
  * Preserves 100% backward compatibility for existing callers.
  */
@@ -420,9 +451,9 @@ __device__ __forceinline__ void evaluate_car_wheels_raycast(
     WheelRaycastResult* __restrict__ results)
 {
     evaluate_car_wheels_raycast_multibody(
-        car_pos, basis,
+        car_pos, basis, CAR_CONFIG_OCTANE,
         false, Vec3(0,0,0), 0.0f,
-        0, 0, nullptr, nullptr, nullptr,
+        0, 0, nullptr, nullptr, nullptr, nullptr,
         wheels_in_contact, suspension_lengths, results
     );
 }
@@ -589,6 +620,24 @@ __device__ __forceinline__ void apply_wheel_reaction_to_car(
     target_omega = target_omega + target_basis * delta_omega_loc;
 }
 
+__device__ __forceinline__ void apply_wheel_reaction_to_car(
+    const BodyReactionImpulse& reaction,
+    const Mat3& target_basis,
+    Vec3& target_vel_bt,
+    Vec3& target_omega,
+    uint8_t target_hitbox_type,
+    float target_car_mass = CAR_MASS)
+{
+    Vec3 inv_inertia_bt = get_inv_inertia(target_hitbox_type, target_car_mass) * (1.0f / 2500.0f);
+    target_vel_bt = target_vel_bt + reaction.lin_impulse_bt * (1.0f / target_car_mass);
+    Vec3 delta_omega_loc = Vec3(
+        inv_inertia_bt.x * (target_basis.transpose() * reaction.ang_impulse_bt).x,
+        inv_inertia_bt.y * (target_basis.transpose() * reaction.ang_impulse_bt).y,
+        inv_inertia_bt.z * (target_basis.transpose() * reaction.ang_impulse_bt).z
+    );
+    target_omega = target_omega + target_basis * delta_omega_loc;
+}
+
 // ============================================================================
 // Multi-Body Suspension & Tire Friction Solver
 // CPU Reference: src/Sim/btVehicleRL/btVehicleRL.cpp:270-380
@@ -602,6 +651,7 @@ __device__ __forceinline__ void apply_wheel_reaction_to_car(
 __device__ __forceinline__ void apply_suspension_and_friction_multibody(
     const Vec3& car_pos,
     const Mat3& basis,
+    const CarConfig& car_cfg,
     const WheelRaycastResult* __restrict__ wheel_results,
     float dt,
     float cached_engine_force,
@@ -621,11 +671,14 @@ __device__ __forceinline__ void apply_suspension_and_friction_multibody(
     const Mat3* other_cars_basis = nullptr,
     const Vec3* other_cars_vel_bt = nullptr,
     const Vec3* other_cars_omega = nullptr,
+    const uint8_t* other_cars_hitbox_type = nullptr,
     // Output reaction accumulators (Newton's 3rd law)
     BodyReactionImpulse* ball_reaction = nullptr,
-    BodyReactionImpulse* other_cars_reactions = nullptr)
+    BodyReactionImpulse* other_cars_reactions = nullptr,
+    float car_mass = CAR_MASS)
 {
-    Vec3 inv_inertia_bt = get_octane_inv_inertia_bt();
+    Vec3 inv_inertia_bt = car_cfg.calculate_inv_inertia(car_mass) * (1.0f / 2500.0f);
+    float inv_car_mass_bt = 1.0f / car_mass;
     Vec3 total_lin_imp_bt(0.0f, 0.0f, 0.0f);
     Vec3 total_ang_imp_bt(0.0f, 0.0f, 0.0f);
 
@@ -633,8 +686,8 @@ __device__ __forceinline__ void apply_suspension_and_friction_multibody(
     for (int w = 0; w < 4; ++w) {
         if (!wheel_results[w].in_contact) continue;
 
-        float config_rest = get_octane_susp_rest(w);
-        float radius = get_octane_wheel_rad(w);
+        float config_rest = car_cfg.get_susp_rest_effective(w);
+        float radius = car_cfg.get_wheel_radius(w);
         float hit_dist = wheel_results[w].hit_dist;
         float cur_susp_len = fminf(fmaxf(hit_dist - radius, config_rest - SUSP_MAX_TRAVEL), config_rest + SUSP_MAX_TRAVEL);
 
@@ -656,7 +709,7 @@ __device__ __forceinline__ void apply_suspension_and_friction_multibody(
         float spring_force = compression_bt * SUSP_STIFFNESS * inv_dot;
         float damping_scale = (v_rel_bt < 0.0f) ? SUSP_DAMPING_COMPRESSION : SUSP_DAMPING_RELAXATION;
         float susp_force = spring_force - (damping_scale * v_rel_bt);
-        susp_force *= get_octane_force_scale(w);
+        susp_force *= (w < 2) ? SUSP_FORCE_SCALE_FRONT : SUSP_FORCE_SCALE_BACK;
         if (susp_force < 0.0f) susp_force = 0.0f;
 
         // 2. Extra Pushback (resolveSingleCollision)
@@ -671,9 +724,9 @@ __device__ __forceinline__ void apply_suspension_and_friction_multibody(
                 float vel_error = -proj_vel_bt;
                 Vec3 c0 = rel_pos_bt.cross(hit_normal);
                 Vec3 c0_loc = basis.transpose() * c0;
-                float denom = INV_CAR_MASS_BT_DEFAULT + (c0_loc.x * c0_loc.x * inv_inertia_bt.x
-                                                       + c0_loc.y * c0_loc.y * inv_inertia_bt.y
-                                                       + c0_loc.z * c0_loc.z * inv_inertia_bt.z);
+                float denom = inv_car_mass_bt + (c0_loc.x * c0_loc.x * inv_inertia_bt.x
+                                               + c0_loc.y * c0_loc.y * inv_inertia_bt.y
+                                               + c0_loc.z * c0_loc.z * inv_inertia_bt.z);
                 extra_pushback = fmaxf(0.0f, (pos_error + vel_error) / denom) * 0.25f;
             }
         }
@@ -706,14 +759,16 @@ __device__ __forceinline__ void apply_suspension_and_friction_multibody(
             Vec3 r_cross_axle = target_rel_pos_bt.cross(axle_dir);
             other_ang_term = INV_BALL_INERTIA_BT_DEFAULT * r_cross_axle.length_sq();
         } else if (hit_type == HIT_OBJECT_CAR && hit_car_idx >= 0 && other_cars_pos_uu && other_cars_basis && other_cars_vel_bt && other_cars_omega) {
-            other_inv_mass_bt = INV_CAR_MASS_BT_DEFAULT;
+            other_inv_mass_bt = inv_car_mass_bt;
             target_rel_pos_bt = (contact_pt_uu - other_cars_pos_uu[hit_car_idx]) * 0.02f;
             target_vel_at_pt_bt = other_cars_vel_bt[hit_car_idx] + other_cars_omega[hit_car_idx].cross(target_rel_pos_bt);
             Vec3 r_cross_axle = target_rel_pos_bt.cross(axle_dir);
+            uint8_t other_type = other_cars_hitbox_type ? other_cars_hitbox_type[hit_car_idx] : 0;
+            Vec3 other_inv_inertia_bt = get_inv_inertia(other_type, car_mass) * (1.0f / 2500.0f);
             Vec3 m_bJ = other_cars_basis[hit_car_idx].transpose() * r_cross_axle;
-            other_ang_term = (inv_inertia_bt.x * m_bJ.x * m_bJ.x
-                            + inv_inertia_bt.y * m_bJ.y * m_bJ.y
-                            + inv_inertia_bt.z * m_bJ.z * m_bJ.z);
+            other_ang_term = (other_inv_inertia_bt.x * m_bJ.x * m_bJ.x
+                            + other_inv_inertia_bt.y * m_bJ.y * m_bJ.y
+                            + other_inv_inertia_bt.z * m_bJ.z * m_bJ.z);
         }
 
         float side_impulse = resolve_single_bilateral(
@@ -762,13 +817,53 @@ __device__ __forceinline__ void apply_suspension_and_friction_multibody(
     }
 
     // Apply accumulated impulses directly to chassis velocity and angular velocity
-    vel_bt = vel_bt + total_lin_imp_bt * INV_CAR_MASS_BT_DEFAULT;
+    vel_bt = vel_bt + total_lin_imp_bt * inv_car_mass_bt;
     Vec3 delta_omega_loc = Vec3(
         inv_inertia_bt.x * (basis.transpose() * total_ang_imp_bt).x,
         inv_inertia_bt.y * (basis.transpose() * total_ang_imp_bt).y,
         inv_inertia_bt.z * (basis.transpose() * total_ang_imp_bt).z
     );
     omega = omega + basis * delta_omega_loc;
+}
+
+/**
+ * @brief Overload of apply_suspension_and_friction_multibody defaulting to Octane preset.
+ */
+__device__ __forceinline__ void apply_suspension_and_friction_multibody(
+    const Vec3& car_pos,
+    const Mat3& basis,
+    const WheelRaycastResult* __restrict__ wheel_results,
+    float dt,
+    float cached_engine_force,
+    float cached_brake,
+    float cached_steer_angle,
+    const float* cached_lat_frictions,
+    const float* cached_long_frictions,
+    Vec3& vel_bt,
+    Vec3& omega,
+    // Multi-body target kinematics
+    bool has_ball = false,
+    const Vec3& ball_pos_uu = Vec3(0,0,0),
+    const Vec3& ball_vel_bt = Vec3(0,0,0),
+    const Vec3& ball_omega = Vec3(0,0,0),
+    uint32_t num_other_cars = 0,
+    const Vec3* other_cars_pos_uu = nullptr,
+    const Mat3* other_cars_basis = nullptr,
+    const Vec3* other_cars_vel_bt = nullptr,
+    const Vec3* other_cars_omega = nullptr,
+    // Output reaction accumulators (Newton's 3rd law)
+    BodyReactionImpulse* ball_reaction = nullptr,
+    BodyReactionImpulse* other_cars_reactions = nullptr)
+{
+    apply_suspension_and_friction_multibody(
+        car_pos, basis, CAR_CONFIG_OCTANE, wheel_results, dt,
+        cached_engine_force, cached_brake, cached_steer_angle,
+        cached_lat_frictions, cached_long_frictions,
+        vel_bt, omega,
+        has_ball, ball_pos_uu, ball_vel_bt, ball_omega,
+        num_other_cars, other_cars_pos_uu, other_cars_basis, other_cars_vel_bt, other_cars_omega,
+        nullptr, ball_reaction, other_cars_reactions, CAR_MASS
+    );
 }
 
 /**

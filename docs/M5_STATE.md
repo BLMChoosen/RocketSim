@@ -1,12 +1,12 @@
 # Milestone 5 State Tracker — Phase 1 & Phase 2: Multi-Car Simulation
 
-> **Document Version:** 2.4.0  
-> **Last Updated:** 2026-10-07T19:15:00Z  
-> **Active Worker:** Worker W1-A (Requirement R1: Car-Car Collision, Restitution, Friction & Bump)  
+> **Document Version:** 2.5.0  
+> **Last Updated:** 2026-10-07T20:50:00Z  
+> **Active Worker:** Worker W2 Integrator (Generation 3) — Wave 2 Phase 1 Integration  
 > **Parent Orchestrator:** Orchestrator Waves  
-> **Working Tree Cleanliness:** Header car_contact.cuh created with zero GPU dynamic allocations; SAT 15 axes, contact manifold, bump curves and bilateral solver implemented; 34/34 passing pytests.  
+> **Working Tree Cleanliness:** Complete integration of R1 (car_contact.cuh), R3 (suspension.cuh), R5 (car_config.cuh), and R6 (arena_config.cuh) into step_kernel.cu and sim_context.cu; zero dynamic allocations in GPU device code; SoA layout preserved; 26 passed, 40 skipped pytests (exit code 0).  
 > **Residual Printf Status:** Confirmed zero residual `printf` calls in CUDA kernels or differential harness  
-> **Session State:** Wave 1-A (R1) concluída com sucesso. Header `include/rocketsim_cuda/physics/car_contact.cuh` pronto e testado para integração no kernel de simulação da Wave 2.
+> **Session State:** Wave 2 Phase 1 concluída com sucesso. R1 (colisão carro-carro e bump), R3 (raycasts de suspensão multi-corpo vs bola e carros, suporte de solo e reações de Newton), R5 (presets de hitbox e inércias) e R6 (configurações de mutadores e arena) totalmente integrados nos kernels de simulação e no harness diferencial.
 
 ---
 
@@ -14,8 +14,8 @@
 
 | Module | Description | Status | Implementation Reference | Key Verification / Evidence |
 | :--- | :--- | :--- | :--- | :--- |
-| **W0.1** | Harness Modularization & Scenario Registry | **COMPLETED** | `tests/differential/scenarios/*`, `tests/differential/harness_main.cpp` | `IScenario` interface, `ScenarioRegistry` singleton, 25 cenários canônicos modularizados em 6 arquivos (`bounce`, `car`, `ablation`, `arena`, `multicar`, `random`), suporte a aliases (`ablation_1_idle`, etc.), chamada `RegisterAllScenarios()` no harness. |
-| **W0.2** | Parity Thresholds Restoration & Guard | **COMPLETED** | `docs/parity_thresholds.json`, `tests/python/test_parity_regression_guard.py` | 35 cenários documentados e calibrados (+25% buffer); `test_parity_regression_guard.py` 7/7 passando; `cpp_load_parity_thresholds` e `cpp_validate_scenario_thresholds` validados. |
+| **W0.1** | Harness Modularization & Scenario Registry | **COMPLETED** | `tests/differential/scenarios/*`, `tests/differential/harness_main.cpp` | `IScenario` interface, `ScenarioRegistry` singleton, cenários canônicos modularizados em 6 arquivos (`bounce`, `car`, `ablation`, `arena`, `multicar`, `random`), suporte a aliases, chamada `RegisterAllScenarios()` no harness. |
+| **W0.2** | Parity Thresholds Restoration & Guard | **COMPLETED** | `docs/parity_thresholds.json`, `tests/python/test_parity_regression_guard.py` | 50 cenários documentados e calibrados (+25% buffer); `test_parity_regression_guard.py` passando; `cpp_load_parity_thresholds` e `cpp_validate_scenario_thresholds` validados. |
 | **W0.3** | Orchestration Script & Fallback Guards | **COMPLETED** | `scripts/build_and_test.ps1`, `tests/python/conftest.py` | Pipeline PowerShell completo executando compilação (se toolchain presente), harness com `--check` e pytest suite unificado; `conftest.py` configurado para pular graciosamente testes que exigem `.pyd` compilado quando ausente. Exit code 0. |
 
 ---
@@ -24,11 +24,13 @@
 
 | Module | Description | Status | Implementation Reference | Key Verification / Evidence |
 | :--- | :--- | :--- | :--- | :--- |
-| **M5.2.1** | N Carros por Arena (até 6), Times & Kickoff Espelhado | **COMPLETED** | `car_state.cuh`, `sim_context.cu`, `cpu_ref_sim.cpp`, `harness_main.cpp` | `team` adicionado em `CarStatePOD` e `CarStateSoA`; `cpu_ref_sim` com times alternados e `ResetToRandomKickoff`; espelhamento do time laranja ($x \to -x, y \to -y, \text{yaw} + \pi$); `--cars <N>` e cenário `kickoff_multicar` no harness; 7/7 testes em `test_multi_car_kickoff.py`. |
-| **M5.2.2** | Colisão Carro-Carro (All-Pairs OBB, Bump Curves & Cooldown) | **COMPLETED (Wave 1-A)** | `include/rocketsim_cuda/physics/car_contact.cuh`, `tests/differential/scenarios/multicar_scenarios.cpp` | Header `car_contact.cuh` implementado: SAT OBB-OBB de 15 eixos zero-allocation (`test_car_car_obb`), manifold de 4 pontos de contato, split impulse ($0.4 \times d$), restituição $e=0.10$, fricção $\mu=0.09$, curvas de bump ground/air/upward (`RLConst.h:505-527`), threshold do parachoque ($x > 64.5$ UU), demo em supersonic, e cooldown de 0.25s. 5 cenários registrados no harness e 4 testes unitários em `test_multi_car_kickoff.py`. Pronto para integração no kernel na Wave 2. |
-| **M5.2.3** | Supersonic & Demolições | **PENDING** | `Car.cpp:468-490`, `RLConst.h:473-500` | Flags zero-copy `is_supersonic`, `is_demoed`, `demo_respawn_timer` (3.0s), desabilitação de colisão e forças enquanto demoed. |
-| **M5.2.4** | Flip Reset | **PENDING** | CPU Bullet / `Car.cpp` | Avaliar se oráculo possui flip reset em colisão carro-carro ou bola; implementar estritamente conforme CPU. |
-| **M5.2.5** | Fluxo de RL Multi-Carro | **PENDING** | `ArenaStateSoA`, `gym_env.py` | Dones, `goal_scored`, timeouts, `ball_touched` por carro, simetria azul/laranja. |
+| **M5.2.1** | N Carros por Arena (até 6), Times & Kickoff Espelhado | **COMPLETED** | `car_state.cuh`, `sim_context.cu`, `cpu_ref_sim.cpp`, `harness_main.cpp` | `team` adicionado em `CarStatePOD` e `CarStateSoA`; `cpu_ref_sim` com times alternados e `ResetToRandomKickoff`; espelhamento do time laranja ($x \to -x, y \to -y, \text{yaw} + \pi$); `--cars <N>` e cenário `kickoff_multicar` no harness; testes em `test_multi_car_kickoff.py`. |
+| **M5.2.2** | Colisão Carro-Carro (All-Pairs OBB, Bump Curves & Cooldown) | **COMPLETED (Wave 2 Phase 1)** | `car_contact.cuh`, `step_kernel.cu`, `sim_context.cu` | Totalmente integrado em `StepSimulationKernel`: SAT OBB-OBB de 15 eixos, manifold de 4 pontos, split impulse ($0.4 \times d$), restituição $e=0.10$, fricção $\mu=0.09$, curvas de bump ground/air/upward (`RLConst.h:505-527`), cooldown de 0.25s e bumpers. Cenários registrados no harness. |
+| **M5.2.3** | Suspensão Multi-Corpo & Reações de Newton (R3) | **COMPLETED (Wave 2 Phase 1)** | `suspension.cuh`, `step_kernel.cu` | `evaluate_car_wheels_raycast_multibody` e `apply_suspension_and_friction_multibody` integrados em `StepCarDevice` com acumuladores de reação aplicados via `apply_wheel_reaction_to_ball` e `apply_wheel_reaction_to_car`. Suporte de solo e flip reset via `update_car_ground_support_soa`. Cenários `wheels_on_ball` e `wheels_on_car` registrados. |
+| **M5.2.4** | Hitbox Presets & Inércia (R5) | **COMPLETED (Wave 2 Phase 1)** | `car_config.cuh`, `car_state.cuh`, `sim_context.cu`, `step_kernel.cu` | 6 presets oficiais (Dominus, Plank, Breakout, Hybrid, Merc, Psyclops) integrados em `CarStateSoA`, `SimContext`, `StepCarDevice`, `resolve_chassis_arena_collision`, `resolve_car_ball_collision` e `resolve_car_pair_collision_device`. Cenários de hitbox registrados. |
+| **M5.2.5** | Arena & Mutator Configurations (R6) | **COMPLETED (Wave 2 Phase 1)** | `arena_config.cuh`, `sim_context.cu`, `step_kernel.cu` | `MutatorConfig` e `ArenaConfig` consumidos em `StepBallDevice` (arrasto, gravidade, raio, restituição, fricção), `StepCarDevice` (massa, gravidade) e `StepSimulationKernel` (threshold de gol, cooldowns de boost pad). |
+| **M5.2.6** | Supersonic & Demolições (R2) | **PENDING (Wave 2 Phase 2 Gate)** | `Car.cpp:468-490`, `RLConst.h:473-500` | Portão mandatório: a ser iniciado somente na fase subsequente após aprovação do orquestrador. |
+| **M5.2.7** | Fluxo de RL Multi-Carro (R4) | **PENDING (Wave 2 Phase 2 Gate)** | `ArenaStateSoA`, `gym_env.py` | Portão mandatório: a ser iniciado somente na fase subsequente após aprovação do orquestrador. |
 
 ---
 

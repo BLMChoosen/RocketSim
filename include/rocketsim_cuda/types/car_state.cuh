@@ -21,6 +21,7 @@ struct CarStatePOD {
     uint8_t has_flipped         = 0;
     uint8_t is_demoed           = 0;
     uint8_t team                = 0; // 0 = BLUE, 1 = ORANGE
+    uint8_t hitbox_type         = 0; // 0 = OCTANE, 1 = DOMINUS, ..., 6 = PSYCLOPS (R5)
     uint8_t wheels_with_contact[4] = {1, 1, 1, 1};
     float suspension_lengths[4]    = {0.0f, 0.0f, 0.0f, 0.0f};
 
@@ -103,6 +104,7 @@ struct CarStateSoA {
     uint8_t* __restrict__ is_demoed            = nullptr;
     float* __restrict__ demo_respawn_timer     = nullptr;
     uint8_t* __restrict__ team                 = nullptr; // 0 = BLUE, 1 = ORANGE
+    uint8_t* __restrict__ hitbox_type         = nullptr; // 0 = OCTANE, 1 = DOMINUS, ..., 6 = PSYCLOPS (R5)
 
     // --- 8. World & Car Contacts ---
     uint8_t* __restrict__ world_contact_has_contact  = nullptr;
@@ -196,6 +198,7 @@ struct CarStateSoA {
         pod.has_flipped            = has_flipped[idx];
         pod.is_demoed              = is_demoed[idx];
         pod.team                   = team ? team[idx] : 0;
+        pod.hitbox_type            = hitbox_type ? hitbox_type[idx] : 0;
         pod.wheels_with_contact[0] = wheel_contact_0[idx];
         pod.wheels_with_contact[1] = wheel_contact_1[idx];
         pod.wheels_with_contact[2] = wheel_contact_2[idx];
@@ -246,6 +249,7 @@ struct CarStateSoA {
         has_flipped[idx]           = pod.has_flipped;
         is_demoed[idx]             = pod.is_demoed;
         if (team) team[idx]        = pod.team;
+        if (hitbox_type) hitbox_type[idx] = pod.hitbox_type;
         wheel_contact_0[idx]       = pod.wheels_with_contact[0];
         wheel_contact_1[idx]       = pod.wheels_with_contact[1];
         wheel_contact_2[idx]       = pod.wheels_with_contact[2];

@@ -5,13 +5,17 @@
 #include "rocketsim_cuda/physics/suspension.cuh"
 #include "rocketsim_cuda/physics/contact_solver.cuh"
 #include "rocketsim_cuda/physics/car_dynamics.cuh"
+#include "rocketsim_cuda/physics/car_contact.cuh"
+#include "rocketsim_cuda/types/car_config.cuh"
+#include "rocketsim_cuda/types/arena_config.cuh"
 
 namespace rocketsim_cuda {
 
 __device__ void StepBallDevice(
     uint32_t env_idx,
     BallStateSoA& ball_state,
-    float dt)
+    float dt,
+    const MutatorConfig& mut_cfg = MutatorConfig())
 {
     Vec3 pos(ball_state.pos_x[env_idx], ball_state.pos_y[env_idx], ball_state.pos_z[env_idx]);
     Vec3 vel(ball_state.vel_x[env_idx], ball_state.vel_y[env_idx], ball_state.vel_z[env_idx]);
@@ -19,24 +23,30 @@ __device__ void StepBallDevice(
     Quat quat(ball_state.q_w[env_idx], ball_state.q_x[env_idx], ball_state.q_y[env_idx], ball_state.q_z[env_idx]);
 
     // Check if sleeping (zero velocity on ground)
-    if (vel.length_sq() == 0.0f && ang_vel.length_sq() == 0.0f && pos.z <= BALL_REST_Z + 0.05f) {
+    if (vel.length_sq() == 0.0f && ang_vel.length_sq() == 0.0f && pos.z <= mut_cfg.ball_radius + 0.05f) {
         return;
     }
 
     // 1. Damping
-    apply_rigid_body_damping(vel, ang_vel, BALL_DRAG, 0.0f, dt);
+    apply_rigid_body_damping(vel, ang_vel, mut_cfg.ball_drag, 0.0f, dt);
 
     // 2. Gravity
-    vel.z += GRAVITY_Z * dt;
+    vel = vel + mut_cfg.gravity * dt;
 
     // 3. Arena / Ground collision resolution (updates velocities and pushes out penetration)
-    resolve_ball_arena_collision(pos, vel, ang_vel);
+    resolve_ball_arena_collision(pos, vel, ang_vel, mut_cfg.ball_radius, mut_cfg.ball_world_restitution, mut_cfg.ball_world_friction);
 
     // 4. Linear pos integration with post-collision velocity (in Bullet units for exact rounding parity)
     pos = (pos * 0.02f + vel * (0.02f * dt)) * 50.0f;
 
     // 5. Rotation integration with post-collision angular velocity
     quat = bullet_integrate_quaternion(quat, ang_vel, dt);
+
+    // Velocity Clamping
+    float b_speed = vel.length();
+    if (b_speed > mut_cfg.ball_max_speed) {
+        vel = vel * (mut_cfg.ball_max_speed / b_speed);
+    }
 
     // Write back coalesced
     ball_state.pos_x[env_idx] = pos.x;
@@ -59,11 +69,31 @@ __device__ void StepBallDevice(
 
 __device__ void StepCarDevice(
     uint32_t car_idx,
+    uint32_t car_in_env_idx,
+    uint32_t cars_per_env,
     CarStateSoA& car_state,
     const CarControlsSoA& controls,
     const float* __restrict__ actions_tensor,
-    float dt)
+    float dt,
+    const MutatorConfig& mut_cfg,
+    bool has_ball,
+    const Vec3& ball_pos,
+    const Vec3& ball_vel_bt,
+    const Vec3& ball_omega,
+    const Vec3* other_cars_pos,
+    const Mat3* other_cars_basis,
+    const Vec3* other_cars_vel_bt,
+    const Vec3* other_cars_omega,
+    const uint8_t* other_cars_is_demoed,
+    const uint8_t* other_cars_hitbox_type,
+    BodyReactionImpulse* ball_reaction,
+    BodyReactionImpulse* other_cars_reactions)
 {
+    // Skip if demolished
+    if (car_state.is_demoed && car_state.is_demoed[car_idx]) {
+        return;
+    }
+
     // 1. Controls: Direct VRAM tensor consumption or fallback to CarControlsSoA
     CarControls ctrl;
     if (actions_tensor) {
@@ -100,19 +130,28 @@ __device__ void StepCarDevice(
 
     Mat3 basis = Mat3::from_quat(quat);
 
-    // 3. Wheel raycast query (btVehicleRL::updateVehicleFirst)
+    // Hitbox preset lookup (R5)
+    uint8_t hitbox_type = car_state.hitbox_type ? car_state.hitbox_type[car_idx] : 0;
+    const CarConfig& car_cfg = get_car_config(hitbox_type);
+
+    // 3. Multi-body wheel raycast query (R3)
     uint8_t wheels_contact[4] = {0};
     float susp_lengths[4] = {0};
     WheelRaycastResult wheel_results[4];
 
-    evaluate_car_wheels_raycast(
-        pos, basis,
-        wheels_contact, susp_lengths,
-        wheel_results
+    evaluate_car_wheels_raycast_multibody(
+        pos, basis, car_cfg,
+        has_ball, ball_pos, mut_cfg.ball_radius,
+        cars_per_env, car_in_env_idx,
+        other_cars_pos, other_cars_basis, other_cars_is_demoed, other_cars_hitbox_type,
+        wheels_contact, susp_lengths, wheel_results
     );
 
     int num_wheels_contact = wheels_contact[0] + wheels_contact[1] + wheels_contact[2] + wheels_contact[3];
     bool is_on_ground = (num_wheels_contact >= 3);
+
+    // Update ground support and flip reset (R3)
+    update_car_ground_support_soa(car_idx, car_state, num_wheels_contact);
 
     // 4. Load previous tick's cached wheel dynamics
     float cached_engine_force = car_state.wheel_engine_force[car_idx];
@@ -132,7 +171,6 @@ __device__ void StepCarDevice(
     };
 
     // 5. Update wheel dynamics (throttle, brake, steer, friction curves, sticky downforce) for NEXT tick
-    // In CPU RocketSim (Car::_UpdateWheels), this runs before updateVehicleSecond and reads pre-impulse velocity
     Vec3 total_force(0.0f, 0.0f, 0.0f);
     Vec3 contact_normals[4] = {
         wheel_results[0].contact_normal,
@@ -175,40 +213,43 @@ __device__ void StepCarDevice(
     // Clear world contact has contact flag after auto-roll / auto-flip have consumed it
     car_state.world_contact_has_contact[car_idx] = 0;
 
-    // 10. Boost update (persists minimum boost time and fuel)
+    // 10. Boost update
     update_car_boost(car_idx, car_state, ctrl, is_on_ground, basis, dt, total_force);
 
-    // 11. Apply suspension & bilateral tire friction impulses (btVehicleRL::updateVehicleSecond)
-    // Matches CPU: updateVehicleSecond is called after _UpdateWheels, jumps, and air controls, but before world step.
+    // 11. Multi-body suspension & bilateral tire friction impulses (btVehicleRL::updateVehicleSecond) (R3)
     Vec3 vel_bt = vel * 0.02f;
-    apply_suspension_and_friction(
-        pos, basis, wheel_results, dt,
+    apply_suspension_and_friction_multibody(
+        pos, basis, car_cfg, wheel_results, dt,
         cached_engine_force, cached_brake, cached_steer_angle,
         cached_lat_frictions, cached_long_frictions,
-        vel_bt, omega
+        vel_bt, omega,
+        has_ball, ball_pos, ball_vel_bt, ball_omega,
+        cars_per_env, other_cars_pos, other_cars_basis, other_cars_vel_bt, other_cars_omega, other_cars_hitbox_type,
+        ball_reaction, other_cars_reactions,
+        mut_cfg.car_mass
     );
     vel = vel_bt * 50.0f;
 
-    // 12. Gravity
-    total_force.z += GRAVITY_Z * CAR_MASS;
+    // 12. Gravity (R6)
+    total_force = total_force + mut_cfg.gravity * mut_cfg.car_mass;
 
     // 13. Symplectic Euler linear integration (in Bullet units for exact rounding parity)
-    vel = vel + total_force * ((1.0f / CAR_MASS) * dt);
+    vel = vel + total_force * ((1.0f / mut_cfg.car_mass) * dt);
     pos_bt = pos_bt + (vel * 0.02f) * dt;
     pos = pos_bt * 50.0f;
 
-    // 14. Angular dynamics
+    // 14. Angular dynamics with preset inertia (R5, R6)
     Vec3 total_torque(0.0f, 0.0f, 0.0f);
-    bullet_angular_dynamics(omega, total_torque, get_octane_inv_inertia_local(), basis, dt);
+    bullet_angular_dynamics(omega, total_torque, car_cfg.calculate_inv_inertia(mut_cfg.car_mass), basis, dt);
 
-    // 15. Chassis arena contact
-    resolve_chassis_arena_collision(car_idx, car_state, pos, vel, omega, basis, dt);
+    // 15. Chassis arena contact with preset hitbox extents (R5, R6)
+    resolve_chassis_arena_collision(car_idx, car_state, pos, vel, omega, basis, dt, car_cfg.hitbox_pos_offset, car_cfg.get_hitbox_half(), mut_cfg.car_mass);
     pos_bt = pos * 0.02f;
 
-    // 14. Quaternion integration
+    // 16. Quaternion integration
     quat = bullet_integrate_quaternion(quat, omega, dt);
 
-    // 15. Velocity limiting (clamping)
+    // 17. Velocity limiting (clamping)
     float speed_sq = vel.length_sq();
     if (speed_sq > CAR_MAX_SPEED * CAR_MAX_SPEED) {
         vel = vel * (CAR_MAX_SPEED / sqrtf(speed_sq));
@@ -218,10 +259,13 @@ __device__ void StepCarDevice(
         omega = omega * (CAR_MAX_ANG_SPEED / sqrtf(ang_speed_sq));
     }
 
-    // 16. Supersonic status update
+    // 18. Supersonic status update
     update_car_supersonic(car_idx, car_state, vel, dt);
 
-    // 17. Write back SoA
+    // 19. Contact cooldown timer update (R1)
+    update_car_contact_cooldown(car_idx, car_state, dt);
+
+    // 20. Write back SoA
     car_state.pos_bt_x[car_idx] = pos_bt.x;
     car_state.pos_bt_y[car_idx] = pos_bt.y;
     car_state.pos_bt_z[car_idx] = pos_bt.z;
@@ -266,6 +310,24 @@ __device__ void StepCarDevice(
     car_state.last_controls_handbrake[car_idx]  = ctrl.handbrake;
 }
 
+__device__ void StepCarDevice(
+    uint32_t car_idx,
+    CarStateSoA& car_state,
+    const CarControlsSoA& controls,
+    const float* __restrict__ actions_tensor,
+    float dt)
+{
+    MutatorConfig mut_cfg;
+    StepCarDevice(
+        car_idx, 0, 1,
+        car_state, controls, actions_tensor, dt,
+        mut_cfg,
+        false, Vec3(0,0,0), Vec3(0,0,0), Vec3(0,0,0),
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr
+    );
+}
+
 __global__ void StepSimulationKernel(
     uint32_t num_envs,
     uint32_t cars_per_env,
@@ -274,18 +336,97 @@ __global__ void StepSimulationKernel(
     ArenaStateSoA arena_state,
     CarControlsSoA controls,
     const float* __restrict__ actions_tensor,
-    float dt)
+    float dt,
+    MutatorConfigSoA mutator_config = {},
+    ArenaConfigSoA arena_config = {},
+    CarConfigSoA car_config = {})
 {
     uint32_t env_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (env_idx >= num_envs) return;
 
-    // Step Ball
-    StepBallDevice(env_idx, ball_state, dt);
+    MutatorConfig mut_cfg = mutator_config.get(env_idx);
+    ArenaConfig arena_cfg = arena_config.get(env_idx);
+
+    // Multi-body kinematics snapshot for this environment (up to 6 cars)
+    constexpr uint32_t MAX_ENV_CARS = 6;
+    Vec3 cars_pos[MAX_ENV_CARS];
+    Mat3 cars_basis[MAX_ENV_CARS];
+    Vec3 cars_vel_bt[MAX_ENV_CARS];
+    Vec3 cars_omega[MAX_ENV_CARS];
+    uint8_t cars_is_demoed[MAX_ENV_CARS];
+    uint8_t cars_hitbox_type[MAX_ENV_CARS];
+
+    uint32_t active_cars = (cars_per_env > MAX_ENV_CARS) ? MAX_ENV_CARS : cars_per_env;
+    for (uint32_t c = 0; c < active_cars; ++c) {
+        uint32_t car_idx = env_idx * cars_per_env + c;
+        cars_pos[c] = Vec3(car_state.pos_x[car_idx], car_state.pos_y[car_idx], car_state.pos_z[car_idx]);
+        Quat q(car_state.q_w[car_idx], car_state.q_x[car_idx], car_state.q_y[car_idx], car_state.q_z[car_idx]);
+        cars_basis[c] = Mat3::from_quat(q);
+        cars_vel_bt[c] = Vec3(car_state.vel_x[car_idx] * 0.02f, car_state.vel_y[car_idx] * 0.02f, car_state.vel_z[car_idx] * 0.02f);
+        cars_omega[c] = Vec3(car_state.ang_vel_x[car_idx], car_state.ang_vel_y[car_idx], car_state.ang_vel_z[car_idx]);
+        cars_is_demoed[c] = car_state.is_demoed ? car_state.is_demoed[car_idx] : 0;
+        cars_hitbox_type[c] = car_state.hitbox_type ? car_state.hitbox_type[car_idx] : 0;
+    }
+
+    Vec3 ball_pos(ball_state.pos_x[env_idx], ball_state.pos_y[env_idx], ball_state.pos_z[env_idx]);
+    Vec3 ball_vel_bt(ball_state.vel_x[env_idx] * 0.02f, ball_state.vel_y[env_idx] * 0.02f, ball_state.vel_z[env_idx] * 0.02f);
+    Vec3 ball_omega(ball_state.ang_vel_x[env_idx], ball_state.ang_vel_y[env_idx], ball_state.ang_vel_z[env_idx]);
+
+    BodyReactionImpulse total_ball_reaction;
+    BodyReactionImpulse total_cars_reactions[MAX_ENV_CARS];
 
     // Step Cars
     for (uint32_t c = 0; c < cars_per_env; ++c) {
         uint32_t car_idx = env_idx * cars_per_env + c;
-        StepCarDevice(car_idx, car_state, controls, actions_tensor, dt);
+        StepCarDevice(
+            car_idx, c, active_cars,
+            car_state, controls, actions_tensor, dt,
+            mut_cfg,
+            true, ball_pos, ball_vel_bt, ball_omega,
+            cars_pos, cars_basis, cars_vel_bt, cars_omega,
+            cars_is_demoed, cars_hitbox_type,
+            &total_ball_reaction, total_cars_reactions
+        );
+    }
+
+    // Apply wheel reactions to ball (Newton's 3rd Law) (R3)
+    if (total_ball_reaction.lin_impulse_bt.length_sq() > 0.0f || total_ball_reaction.ang_impulse_bt.length_sq() > 0.0f) {
+        apply_wheel_reaction_to_ball(total_ball_reaction, ball_vel_bt, ball_omega);
+        ball_state.vel_x[env_idx] = ball_vel_bt.x * 50.0f;
+        ball_state.vel_y[env_idx] = ball_vel_bt.y * 50.0f;
+        ball_state.vel_z[env_idx] = ball_vel_bt.z * 50.0f;
+        ball_state.ang_vel_x[env_idx] = ball_omega.x;
+        ball_state.ang_vel_y[env_idx] = ball_omega.y;
+        ball_state.ang_vel_z[env_idx] = ball_omega.z;
+    }
+
+    // Apply wheel reactions to target cars (Newton's 3rd Law) (R3)
+    for (uint32_t c = 0; c < active_cars; ++c) {
+        if (total_cars_reactions[c].lin_impulse_bt.length_sq() > 0.0f || total_cars_reactions[c].ang_impulse_bt.length_sq() > 0.0f) {
+            uint32_t car_idx = env_idx * cars_per_env + c;
+            Vec3 c_vel_bt(car_state.vel_x[car_idx] * 0.02f, car_state.vel_y[car_idx] * 0.02f, car_state.vel_z[car_idx] * 0.02f);
+            Vec3 c_omega(car_state.ang_vel_x[car_idx], car_state.ang_vel_y[car_idx], car_state.ang_vel_z[car_idx]);
+            apply_wheel_reaction_to_car(total_cars_reactions[c], cars_basis[c], c_vel_bt, c_omega, cars_hitbox_type[c], mut_cfg.car_mass);
+            car_state.vel_x[car_idx] = c_vel_bt.x * 50.0f;
+            car_state.vel_y[car_idx] = c_vel_bt.y * 50.0f;
+            car_state.vel_z[car_idx] = c_vel_bt.z * 50.0f;
+            car_state.ang_vel_x[car_idx] = c_omega.x;
+            car_state.ang_vel_y[car_idx] = c_omega.y;
+            car_state.ang_vel_z[car_idx] = c_omega.z;
+        }
+    }
+
+    // Step Ball (R6 mutators)
+    StepBallDevice(env_idx, ball_state, dt, mut_cfg);
+
+    // Resolve Car-Car Collisions & Bumps (R1, R5, R6)
+    if (cars_per_env > 1) {
+        resolve_all_car_car_collisions(
+            env_idx, cars_per_env, car_state, dt,
+            static_cast<int>(mut_cfg.demo_mode),
+            mut_cfg.enable_team_demos,
+            mut_cfg.bump_force_scale
+        );
     }
 
     // Increment Arena Tick Count
@@ -293,11 +434,13 @@ __global__ void StepSimulationKernel(
         arena_state.tick_count[env_idx]++;
     }
 
-    // Resolve Car-Ball Collisions
+    // Resolve Car-Ball Collisions (R5, R6)
     for (uint32_t c = 0; c < cars_per_env; ++c) {
         uint32_t car_idx = env_idx * cars_per_env + c;
         if (car_state.is_demoed && car_state.is_demoed[car_idx]) continue;
-        bool hit = resolve_car_ball_collision(env_idx, car_idx, ball_state, car_state, arena_state, dt);
+        uint8_t ht = car_state.hitbox_type ? car_state.hitbox_type[car_idx] : 0;
+        const CarConfig& car_cfg = get_car_config(ht);
+        bool hit = resolve_car_ball_collision(env_idx, car_idx, ball_state, car_state, arena_state, dt, mut_cfg, car_cfg);
         if (hit) {
             car_state.pos_z[car_idx] += car_state.vel_z[car_idx] * dt;
         }
@@ -313,10 +456,10 @@ __global__ void StepSimulationKernel(
         uint8_t goal_flag = 0;
         uint8_t score_team = 0;
         if (fabsf(bx) < GOAL_WIDTH * 0.5f && bz < GOAL_HEIGHT) {
-            if (by > GOAL_SCORE_THRESHOLD_Y) {
+            if (by > mut_cfg.goal_base_threshold_y) {
                 goal_flag = 1;
                 score_team = 0;
-            } else if (by < -GOAL_SCORE_THRESHOLD_Y) {
+            } else if (by < -mut_cfg.goal_base_threshold_y) {
                 goal_flag = 1;
                 score_team = 1;
             }
@@ -389,7 +532,7 @@ __global__ void StepSimulationKernel(
                                 car_state.boost[car_idx] = current_boost;
                                 arena_state.pad_is_active[pad_idx] = 0;
                                 if (arena_state.pad_cooldown) {
-                                    arena_state.pad_cooldown[pad_idx] = pad.cooldown;
+                                    arena_state.pad_cooldown[pad_idx] = pad.is_big ? mut_cfg.boost_pad_cooldown_big : mut_cfg.boost_pad_cooldown_small;
                                 }
                                 if (current_boost >= BOOST_MAX) {
                                     break;
@@ -422,7 +565,10 @@ void sim_step_batch(SimContext* ctx, uint32_t batch_size, const CarControlsSoA* 
         ctx->GetArenaState(),
         ctrl_soa,
         actions_tensor,
-        DELTA_TIME
+        DELTA_TIME,
+        ctx->GetMutatorConfig(),
+        ctx->GetArenaConfig(),
+        ctx->GetCarConfig()
     );
 }
 

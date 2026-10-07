@@ -7,6 +7,8 @@
 #include "types/ball_state.cuh"
 #include "types/car_controls.cuh"
 #include "types/arena_state.cuh"
+#include "types/car_config.cuh"
+#include "types/arena_config.cuh"
 
 namespace rocketsim_cuda {
 
@@ -38,6 +40,15 @@ public:
 
     const ArenaStateSoA& GetArenaState() const { return m_arena_state; }
     ArenaStateSoA& GetArenaState() { return m_arena_state; }
+
+    const CarConfigSoA& GetCarConfig() const { return m_car_config; }
+    CarConfigSoA& GetCarConfig() { return m_car_config; }
+
+    const MutatorConfigSoA& GetMutatorConfig() const { return m_mutator_config; }
+    MutatorConfigSoA& GetMutatorConfig() { return m_mutator_config; }
+
+    const ArenaConfigSoA& GetArenaConfig() const { return m_arena_config; }
+    ArenaConfigSoA& GetArenaConfig() { return m_arena_config; }
 
     const float* GetRewards() const { return m_arena_state.rewards; }
     float* GetRewards() { return m_arena_state.rewards; }
@@ -84,6 +95,9 @@ private:
     CarStateSoA m_car_state;
     ArenaStateSoA m_arena_state;
     CarControlsSoA m_controls;
+    CarConfigSoA m_car_config;
+    MutatorConfigSoA m_mutator_config;
+    ArenaConfigSoA m_arena_config;
 };
 
 // Global Simulation Step Entry Point (GEMINI.md Section 6.2)

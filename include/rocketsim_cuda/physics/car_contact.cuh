@@ -7,6 +7,7 @@
 #include "rocketsim_cuda/math/mat3.cuh"
 #include "rocketsim_cuda/types/car_state.cuh"
 #include "rocketsim_cuda/types/arena_state.cuh"
+#include "rocketsim_cuda/types/car_config.cuh"
 
 namespace rocketsim_cuda {
 
@@ -929,9 +930,23 @@ __device__ inline bool resolve_car_pair_collision_device(
     Quat quat_b(car_state.q_w[car_idx_b], car_state.q_x[car_idx_b], car_state.q_y[car_idx_b], car_state.q_z[car_idx_b]);
     Mat3 basis_b = Mat3::from_quat(quat_b);
 
+    // Hitbox configs for Car A and Car B (R5)
+    uint8_t type_a = car_state.hitbox_type ? car_state.hitbox_type[car_idx_a] : 0;
+    uint8_t type_b = car_state.hitbox_type ? car_state.hitbox_type[car_idx_b] : 0;
+    Vec3 offset_a = get_hitbox_offset(type_a);
+    Vec3 half_a = get_hitbox_half(type_a);
+    Vec3 offset_b = get_hitbox_offset(type_b);
+    Vec3 half_b = get_hitbox_half(type_b);
+    Vec3 inv_inertia_a = get_inv_inertia(type_a);
+    Vec3 inv_inertia_b = get_inv_inertia(type_b);
+
     // Run OBB-OBB narrowphase collision detection
     CarContactManifold manifold;
-    bool is_colliding = test_car_car_collision_obb(pos_a, basis_a, pos_b, basis_b, manifold);
+    bool is_colliding = test_car_car_collision_obb(
+        pos_a, basis_a, offset_a, half_a,
+        pos_b, basis_b, offset_b, half_b,
+        manifold
+    );
     if (!is_colliding || manifold.num_points <= 0) {
         return false;
     }
@@ -1001,10 +1016,9 @@ __device__ inline bool resolve_car_pair_collision_device(
 
     // If neither was demoed, resolve contact constraint restitution, friction and pushback
     if (!a_demoed && !b_demoed) {
-        Vec3 inv_inertia = get_car_inv_inertia_local_default();
         resolve_car_car_contact(
-            pos_a, vel_a, omega_a, basis_a, inv_inertia,
-            pos_b, vel_b, omega_b, basis_b, inv_inertia,
+            pos_a, vel_a, omega_a, basis_a, inv_inertia_a,
+            pos_b, vel_b, omega_b, basis_b, inv_inertia_b,
             manifold
         );
     }

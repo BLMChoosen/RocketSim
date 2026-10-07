@@ -8,6 +8,8 @@
 #include "rocketsim_cuda/types/car_state.cuh"
 #include "rocketsim_cuda/types/ball_state.cuh"
 #include "rocketsim_cuda/types/arena_state.cuh"
+#include "rocketsim_cuda/types/car_config.cuh"
+#include "rocketsim_cuda/types/arena_config.cuh"
 #include "rocketsim_cuda/physics/suspension.cuh"
 
 namespace rocketsim_cuda {
@@ -54,14 +56,14 @@ __device__ __forceinline__ float evaluate_ball_car_extra_impulse_factor(float re
 __device__ __forceinline__ bool test_car_ball_collision(
     const Vec3& car_pos,
     const Mat3& car_basis,
+    const Vec3& hitbox_offset,
+    const Vec3& hitbox_half,
     const Vec3& ball_pos,
     float ball_radius,
     Vec3& out_normal_world,
     Vec3& out_contact_pt_world,
     float& out_penetration)
 {
-    Vec3 hitbox_offset = get_octane_hitbox_offset();
-    Vec3 hitbox_half = get_octane_hitbox_half();
     Vec3 hitbox_center = car_pos + car_basis * hitbox_offset;
 
     constexpr float BOX_MARGIN = 2.0f; // Bullet CONVEX_DISTANCE_MARGIN = 0.04 BT = 2.0 UU
@@ -149,6 +151,23 @@ __device__ __forceinline__ bool test_car_ball_collision(
     return true;
 }
 
+__device__ __forceinline__ bool test_car_ball_collision(
+    const Vec3& car_pos,
+    const Mat3& car_basis,
+    const Vec3& ball_pos,
+    float ball_radius,
+    Vec3& out_normal_world,
+    Vec3& out_contact_pt_world,
+    float& out_penetration)
+{
+    return test_car_ball_collision(
+        car_pos, car_basis,
+        get_octane_hitbox_offset(), get_octane_hitbox_half(),
+        ball_pos, ball_radius,
+        out_normal_world, out_contact_pt_world, out_penetration
+    );
+}
+
 /**
  * @brief Resolves analytical Car-Ball collision with bilateral impulse exchange,
  * RocketSim extra hit impulse curve, velocity limits, and hit tracking state updates.
@@ -159,7 +178,9 @@ __device__ __forceinline__ bool resolve_car_ball_collision(
     BallStateSoA& ball_state,
     CarStateSoA& car_state,
     ArenaStateSoA& arena_state,
-    float dt)
+    float dt,
+    const MutatorConfig& mut_cfg,
+    const CarConfig& car_cfg)
 {
     // Load car pose & velocities
     Vec3 car_pos(car_state.pos_x[car_idx], car_state.pos_y[car_idx], car_state.pos_z[car_idx]);
@@ -177,7 +198,13 @@ __device__ __forceinline__ bool resolve_car_ball_collision(
     Vec3 contact_pt_world;
     float penetration = 0.0f;
 
-    if (!test_car_ball_collision(car_pos, car_basis, ball_pos, BALL_RADIUS, normal_world, contact_pt_world, penetration)) {
+    float ball_radius = mut_cfg.ball_radius;
+    float ball_mass = mut_cfg.ball_mass;
+    float car_mass = mut_cfg.car_mass;
+    Vec3 hitbox_offset = car_cfg.hitbox_pos_offset;
+    Vec3 hitbox_half = car_cfg.get_hitbox_half();
+
+    if (!test_car_ball_collision(car_pos, car_basis, hitbox_offset, hitbox_half, ball_pos, ball_radius, normal_world, contact_pt_world, penetration)) {
         return false;
     }
 
@@ -207,12 +234,12 @@ __device__ __forceinline__ bool resolve_car_ball_collision(
         hit_dir = (adj_len > 1e-6f) ? (adj_hit_dir * (1.0f / adj_len)) : hit_dir;
 
         float factor = evaluate_ball_car_extra_impulse_factor(rel_speed);
-        added_vel = hit_dir * (rel_speed * factor);
+        added_vel = hit_dir * (rel_speed * factor * mut_cfg.ball_hit_extra_force_scale);
     }
 
     // Contact point lever arms
     Vec3 r_c = contact_pt_world - car_pos;
-    Vec3 r_b = normal_world * (-BALL_RADIUS);
+    Vec3 r_b = normal_world * (-ball_radius);
 
     // Contact point velocities
     Vec3 v_c_pt = car_vel + car_omega.cross(r_c);
@@ -221,10 +248,10 @@ __device__ __forceinline__ bool resolve_car_ball_collision(
     float vn = v_rel_pt.dot(normal_world);
 
     // Inertia and mass parameters
-    float inv_m_c = 1.0f / CAR_MASS;
-    float inv_m_b = 1.0f / BALL_MASS;
-    Vec3 inv_I_c_local = get_octane_inv_inertia_local();
-    float inv_I_b = 1.0f / (0.4f * BALL_MASS * BALL_RADIUS * BALL_RADIUS);
+    float inv_m_c = 1.0f / car_mass;
+    float inv_m_b = 1.0f / ball_mass;
+    Vec3 inv_I_c_local = car_cfg.calculate_inv_inertia(car_mass);
+    float inv_I_b = 1.0f / (0.4f * ball_mass * ball_radius * ball_radius);
 
     // Bilateral impulse exchange (restitution e = 0.0f, friction mu = 2.0f)
     Vec3 J_total(0.0f, 0.0f, 0.0f);
@@ -285,38 +312,34 @@ __device__ __forceinline__ bool resolve_car_ball_collision(
     // Resolve interpenetration: distribute split-impulse penetration push
     if (penetration > 0.0f) {
         float p_push = penetration * 0.8f; // erp2 = 0.8f
-        float mass_sum = CAR_MASS + BALL_MASS; // 180 + 30 = 210
-        float ball_frac = CAR_MASS / mass_sum; // 180 / 210 = 6/7
-        float car_frac  = BALL_MASS / mass_sum; // 30 / 210 = 1/7
+        float mass_sum = car_mass + ball_mass;
+        float ball_frac = car_mass / mass_sum;
+        float car_frac  = ball_mass / mass_sum;
 
         ball_pos = ball_pos + normal_world * (p_push * ball_frac);
         car_pos  = car_pos  - normal_world * (p_push * car_frac);
     }
 
     // Velocity Clamping
-    // Clamp ball linear speed to 6000.0f UU/s
     float b_speed = ball_vel.length();
-    if (b_speed > BALL_MAX_SPEED) {
-        ball_vel = ball_vel * (BALL_MAX_SPEED / b_speed);
+    if (b_speed > mut_cfg.ball_max_speed) {
+        ball_vel = ball_vel * (mut_cfg.ball_max_speed / b_speed);
     }
-    // Clamp ball angular speed to 6.0f rad/s
     float b_ang_speed = ball_omega.length();
     if (b_ang_speed > BALL_MAX_ANG_SPEED) {
         ball_omega = ball_omega * (BALL_MAX_ANG_SPEED / b_ang_speed);
     }
-    // Clamp car linear speed to 2300.0f UU/s
     float c_speed = car_vel.length();
     if (c_speed > CAR_MAX_SPEED) {
         car_vel = car_vel * (CAR_MAX_SPEED / c_speed);
     }
-    // Clamp car angular speed to 5.5f rad/s
     float c_ang_speed = car_omega.length();
     if (c_ang_speed > CAR_MAX_ANG_SPEED) {
         car_omega = car_omega * (CAR_MAX_ANG_SPEED / c_ang_speed);
     }
 
-    // Relative position on ball surface (in ball local coordinates matching Bullet manifoldPoint.m_localPointA)
-    Vec3 rel_pos_on_ball = normal_world * (-BALL_RADIUS);
+    // Relative position on ball surface
+    Vec3 rel_pos_on_ball = normal_world * (-ball_radius);
 
     // Populate Hit State Tracking
     car_state.ball_hit_is_valid[car_idx] = 1;
@@ -355,6 +378,21 @@ __device__ __forceinline__ bool resolve_car_ball_collision(
     car_state.ang_vel_z[car_idx] = car_omega.z;
 
     return true;
+}
+
+__device__ __forceinline__ bool resolve_car_ball_collision(
+    uint32_t env_idx,
+    uint32_t car_idx,
+    BallStateSoA& ball_state,
+    CarStateSoA& car_state,
+    ArenaStateSoA& arena_state,
+    float dt)
+{
+    uint8_t ht = car_state.hitbox_type ? car_state.hitbox_type[car_idx] : 0;
+    return resolve_car_ball_collision(
+        env_idx, car_idx, ball_state, car_state, arena_state, dt,
+        MutatorConfig(), get_car_config(ht)
+    );
 }
 
 /**
@@ -421,11 +459,11 @@ __device__ __forceinline__ void resolve_chassis_arena_collision(
     Vec3& vel,
     Vec3& omega,
     const Mat3& basis,
-    float dt)
+    float dt,
+    const Vec3& hitbox_offset = get_octane_hitbox_offset(),
+    const Vec3& hitbox_half = get_octane_hitbox_half(),
+    float car_mass = CAR_MASS)
 {
-    Vec3 hitbox_offset = get_octane_hitbox_offset();
-    Vec3 hitbox_half = get_octane_hitbox_half();
-
     bool has_contact = false;
     Vec3 sum_normal(0.0f, 0.0f, 0.0f);
 
@@ -460,9 +498,9 @@ __device__ __forceinline__ void resolve_chassis_arena_collision(
 
             if (vn < 0.0f) {
                 float impulse_mag = -(1.1f * vn) + (0.2f * depth / dt);
-                Vec3 impulse = normal * (impulse_mag * CAR_MASS * 0.125f);
-                vel = vel + impulse * (1.0f / CAR_MASS);
-                omega = omega + rel_pos.cross(impulse) * (1.0f / (CAR_MASS * 1000.0f));
+                Vec3 impulse = normal * (impulse_mag * car_mass * 0.125f);
+                vel = vel + impulse * (1.0f / car_mass);
+                omega = omega + rel_pos.cross(impulse) * (1.0f / (car_mass * 1000.0f));
             }
         }
     }

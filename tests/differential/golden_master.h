@@ -61,7 +61,8 @@ struct RsGoldCarRecord {
     uint8_t is_demoed = 0;
     uint8_t team = 0;
     uint8_t wheels_with_contact[4] = {0, 0, 0, 0};
-    uint8_t padding[2] = {0, 0};
+    uint8_t hitbox_type = 0;
+    uint8_t padding = 0;
     float suspension_lengths[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 };
 

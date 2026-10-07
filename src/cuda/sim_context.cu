@@ -80,6 +80,7 @@ __device__ inline void init_single_car(
 {
     uint8_t team = (cars_per_env > 1) ? (car_in_env_idx % 2) : 0;
     if (car_state.team) car_state.team[idx] = team;
+    if (car_state.hitbox_type) car_state.hitbox_type[idx] = 0;
     uint32_t team_car_idx = (cars_per_env > 1) ? (car_in_env_idx / 2) : car_in_env_idx;
     uint32_t base_slot = get_kickoff_slot(env_idx, seed);
     uint32_t spawn_slot = (base_slot + team_car_idx) % 5;
@@ -330,13 +331,19 @@ SimContext::SimContext(SimContext&& o) noexcept
       m_ball_state(o.m_ball_state),
       m_car_state(o.m_car_state),
       m_arena_state(o.m_arena_state),
-      m_controls(o.m_controls) {
+      m_controls(o.m_controls),
+      m_car_config(o.m_car_config),
+      m_mutator_config(o.m_mutator_config),
+      m_arena_config(o.m_arena_config) {
     o.m_d_pool = nullptr;
     o.m_allocated_bytes = 0;
     o.m_num_envs = 0;
     o.m_cars_per_env = 0;
     o.m_total_cars = 0;
     o.m_arena_state = ArenaStateSoA{};
+    o.m_car_config = CarConfigSoA{};
+    o.m_mutator_config = MutatorConfigSoA{};
+    o.m_arena_config = ArenaConfigSoA{};
 }
 
 SimContext& SimContext::operator=(SimContext&& o) noexcept {
@@ -352,6 +359,9 @@ SimContext& SimContext::operator=(SimContext&& o) noexcept {
         m_car_state = o.m_car_state;
         m_arena_state = o.m_arena_state;
         m_controls = o.m_controls;
+        m_car_config = o.m_car_config;
+        m_mutator_config = o.m_mutator_config;
+        m_arena_config = o.m_arena_config;
 
         o.m_d_pool = nullptr;
         o.m_allocated_bytes = 0;
@@ -359,6 +369,9 @@ SimContext& SimContext::operator=(SimContext&& o) noexcept {
         o.m_cars_per_env = 0;
         o.m_total_cars = 0;
         o.m_arena_state = ArenaStateSoA{};
+        o.m_car_config = CarConfigSoA{};
+        o.m_mutator_config = MutatorConfigSoA{};
+        o.m_arena_config = ArenaConfigSoA{};
     }
     return *this;
 }
@@ -414,8 +427,8 @@ void SimContext::AllocateArena() {
     // Auto-flip & handbrake: 1 uint8, 3 floats
     total += calc_slice(car_count, sizeof(uint8_t));
     total += calc_slice(car_count, sizeof(float)) * 3;
-    // Supersonic, demo & team: 3 uint8, 2 floats
-    total += calc_slice(car_count, sizeof(uint8_t)) * 3;
+    // Supersonic, demo, team & hitbox_type: 4 uint8, 2 floats
+    total += calc_slice(car_count, sizeof(uint8_t)) * 4;
     total += calc_slice(car_count, sizeof(float)) * 2;
     // Contacts: 1 uint8, 3 floats, 1 int32, 1 float
     total += calc_slice(car_count, sizeof(uint8_t));
@@ -557,6 +570,8 @@ void SimContext::AllocateArena() {
     m_car_state.is_demoed        = static_cast<uint8_t*>(assign_slice(car_count, sizeof(uint8_t)));
     m_car_state.demo_respawn_timer = static_cast<float*>(assign_slice(car_count, sizeof(float)));
     m_car_state.team             = static_cast<uint8_t*>(assign_slice(car_count, sizeof(uint8_t)));
+    m_car_state.hitbox_type      = static_cast<uint8_t*>(assign_slice(car_count, sizeof(uint8_t)));
+    m_car_config.hitbox_type     = m_car_state.hitbox_type;
 
     m_car_state.world_contact_has_contact = static_cast<uint8_t*>(assign_slice(car_count, sizeof(uint8_t)));
     m_car_state.world_contact_normal_x    = static_cast<float*>(assign_slice(car_count, sizeof(float)));

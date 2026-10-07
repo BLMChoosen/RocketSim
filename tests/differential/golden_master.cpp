@@ -305,6 +305,7 @@ void RsGoldWriter::WriteTick(const CarControls* controls, const BallStatePOD* ba
             cr.has_flipped = cars[i].has_flipped;
             cr.is_demoed = cars[i].is_demoed;
             cr.team = cars[i].team;
+            cr.hitbox_type = cars[i].hitbox_type;
             for (int w = 0; w < 4; w++) {
                 cr.wheels_with_contact[w] = cars[i].wheels_with_contact[w];
                 cr.suspension_lengths[w] = cars[i].suspension_lengths[w];
@@ -402,6 +403,7 @@ bool RsGoldReader::ReadTick(CarControls* controls, BallStatePOD* balls, CarState
             cars[i].has_flipped = cr.has_flipped;
             cars[i].is_demoed = cr.is_demoed;
             cars[i].team = cr.team;
+            cars[i].hitbox_type = cr.hitbox_type;
             for (int w = 0; w < 4; w++) {
                 cars[i].wheels_with_contact[w] = cr.wheels_with_contact[w];
                 cars[i].suspension_lengths[w] = cr.suspension_lengths[w];

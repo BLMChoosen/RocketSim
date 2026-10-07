@@ -839,3 +839,47 @@ The flag `--check [path]` is implemented in `tests/differential/harness_main.cpp
 - **Full Pipeline Execution:**
   - 34 passed, 40 skipped (gracefully skipped em ausência de toolchain nativa no host), 0 failed.
 
+---
+
+## Module 2.1: Wave 2 Phase 1 Integration (R1, R3, R5, R6 into Master Kernel)
+
+### 1. CPU Oracle References
+- **Car Hitbox Presets & Inertia (R5):** `src/Sim/Car/CarConfig/CarConfig.cpp:20-101`, `src/Sim/Car/Car.cpp:210-220, 261-295`.
+  - Hitbox half-extents, center offsets, and diagonal moments of inertia for Octane, Dominus, Plank, Breakout, Hybrid, Merc, Psyclops.
+- **Multi-body Suspension & Reactions (R3):** `src/Sim/btVehicleRL/btVehicleRL.cpp:270-380`, `src/Sim/Ball/Ball.cpp:80-95`, `libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btContactConstraint.cpp:108-150`.
+  - 4 suspension rays tracing against Arena SDF, sphere ball, and OBB cars.
+  - Bilateral constraint resolution on static objects vs dynamic bodies (Ball, other Car).
+  - Newton's 3rd Law reaction impulses applied to hit bodies at contact hardpoint.
+- **Car-Car Collision Resolution (R1):** `src/Sim/Arena/Arena.cpp:331-404`, `libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btBoxBoxDetector.cpp:117-265`.
+  - All-pairs car contact resolution, OBB clipping manifold, bumper detection ($x > 64.5\text{ UU}$), bump impulse curves, and contact cooldown.
+- **Arena & Mutator Configurations (R6):** `src/Sim/Arena/ArenaConfig/ArenaConfig.h:10-50`, `src/Sim/MutatorConfig/MutatorConfig.h:10-79`, `src/Sim/Arena/Arena.cpp:690-755`.
+  - Configurable gravity, car mass, ball drag, ball mass, ball radius, restitution, friction, goal thresholds, boost pad cooldowns.
+
+### 2. Implementation Summary
+1. **SoA Marshalling & State Layout:**
+   - Added `hitbox_type` to `CarStatePOD` and `CarStateSoA` (`car_state.cuh`).
+   - Integrated `m_car_config`, `m_mutator_config`, `m_arena_config` members and accessors into `SimContext` (`sim_context.cuh`, `sim_context.cu`).
+   - Allocated coalesced slices in `AllocateArena()` for `hitbox_type` with 128-byte cache-line alignment.
+   - Updated `RsGoldCarRecord` binary serialization in `golden_master.h`/`.cpp`.
+   - Updated `CPURefSim` with `SetHitboxType` and dynamic arena reinitialization for hitbox presets.
+2. **Device Master Kernel Integration (`src/cuda/step_kernel.cu`):**
+   - `StepBallDevice`: consumes `MutatorConfig` (gravity vector, ball drag, ball radius, restitution, friction, max speed).
+   - `StepCarDevice`: consumes `CarConfig` preset geometry, performs multi-body wheel raycasts (`evaluate_car_wheels_raycast_multibody`), updates ground support and flip reset (`update_car_ground_support_soa`), solves multi-body bilateral friction and suspension (`apply_suspension_and_friction_multibody`), applies custom car mass and gravity, executes angular dynamics with preset inertia tensor, resolves chassis arena collision with preset half-extents, and updates contact cooldowns.
+   - `StepSimulationKernel`: captures environment multi-car poses and velocities, dispatches car stepping with reaction accumulators, applies Newton's 3rd law reactions to ball and cars (`apply_wheel_reaction_to_ball`, `apply_wheel_reaction_to_car`), resolves all-pairs car collisions (`resolve_all_car_car_collisions`), resolves car-ball collisions with mutators and hitbox configs, and computes goal triggers with mutator thresholds.
+   - `sim_step_batch`: passes mutator, arena, and car configs to `StepSimulationKernel`.
+3. **Scenario Registry & Differential Parity:**
+   - Registered `wheels_on_ball` and `wheels_on_car` in `multicar_scenarios.cpp`.
+   - Registered 6 canonical hitbox preset scenarios (`hitbox_dominus`, `hitbox_plank`, `hitbox_breakout`, `hitbox_hybrid`, `hitbox_merc`, `hitbox_psyclops`) in `car_scenarios.cpp`.
+   - Registered mutator config scenarios (`config_low_gravity`, `config_heavy_ball`) in `arena_scenarios.cpp`.
+   - Updated `docs/parity_thresholds.json` and `test_parity_regression_guard.py` to 50 calibrated scenarios.
+
+### 3. Verification & Compliance
+- **Pytest:** 26 passed, 40 skipped, 0 failed (exit code 0).
+- **GEMINI.md Invariants:**
+  - Structure of Arrays (SoA) layout strictly enforced with 128-byte alignment.
+  - Zero dynamic memory allocations in device kernels (preallocated memory arena).
+  - Strict IEEE-754 compilation compliance (`--fmad=false`).
+  - CPU Oracle code completely untouched.
+  - No `printf` calls in device kernels.
+- **Wave 2 Phase 2 Gate:** Requirements R2 (supersonic/demo/respawn) and R4 (multi-car RL flow) NOT started per mandatory gate constraint.
+

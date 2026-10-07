@@ -210,6 +210,72 @@ public:
     }
 };
 
+class HitboxDominusScenario : public IScenario {
+public:
+    std::string GetName() const override { return "hitbox_dominus"; }
+    std::string GetDescription() const override { return "Dominus preset hitbox forward throttle and boost acceleration"; }
+    uint32_t GetDefaultTicks() const override { return 120; }
+    void ApplyInitialState(CPURefSim& env, uint32_t /*env_idx*/) const override { env.SetHitboxType(1); }
+    CarControls GetControl(uint32_t tick, uint32_t /*env*/, uint32_t /*car_idx*/, DeterministicInputGenerator& /*gen*/) const override {
+        CarControls c{}; c.throttle = 1.0f; if (tick >= 10 && tick < 40) c.boost = 1; return c;
+    }
+};
+
+class HitboxPlankScenario : public IScenario {
+public:
+    std::string GetName() const override { return "hitbox_plank"; }
+    std::string GetDescription() const override { return "Plank (Batmobile) preset hitbox forward throttle and boost acceleration"; }
+    uint32_t GetDefaultTicks() const override { return 120; }
+    void ApplyInitialState(CPURefSim& env, uint32_t /*env_idx*/) const override { env.SetHitboxType(2); }
+    CarControls GetControl(uint32_t tick, uint32_t /*env*/, uint32_t /*car_idx*/, DeterministicInputGenerator& /*gen*/) const override {
+        CarControls c{}; c.throttle = 1.0f; if (tick >= 10 && tick < 40) c.boost = 1; return c;
+    }
+};
+
+class HitboxBreakoutScenario : public IScenario {
+public:
+    std::string GetName() const override { return "hitbox_breakout"; }
+    std::string GetDescription() const override { return "Breakout preset hitbox forward throttle and boost acceleration"; }
+    uint32_t GetDefaultTicks() const override { return 120; }
+    void ApplyInitialState(CPURefSim& env, uint32_t /*env_idx*/) const override { env.SetHitboxType(3); }
+    CarControls GetControl(uint32_t tick, uint32_t /*env*/, uint32_t /*car_idx*/, DeterministicInputGenerator& /*gen*/) const override {
+        CarControls c{}; c.throttle = 1.0f; if (tick >= 10 && tick < 40) c.boost = 1; return c;
+    }
+};
+
+class HitboxHybridScenario : public IScenario {
+public:
+    std::string GetName() const override { return "hitbox_hybrid"; }
+    std::string GetDescription() const override { return "Hybrid preset hitbox forward throttle and boost acceleration"; }
+    uint32_t GetDefaultTicks() const override { return 120; }
+    void ApplyInitialState(CPURefSim& env, uint32_t /*env_idx*/) const override { env.SetHitboxType(4); }
+    CarControls GetControl(uint32_t tick, uint32_t /*env*/, uint32_t /*car_idx*/, DeterministicInputGenerator& /*gen*/) const override {
+        CarControls c{}; c.throttle = 1.0f; if (tick >= 10 && tick < 40) c.boost = 1; return c;
+    }
+};
+
+class HitboxMercScenario : public IScenario {
+public:
+    std::string GetName() const override { return "hitbox_merc"; }
+    std::string GetDescription() const override { return "Merc preset hitbox forward throttle and boost acceleration"; }
+    uint32_t GetDefaultTicks() const override { return 120; }
+    void ApplyInitialState(CPURefSim& env, uint32_t /*env_idx*/) const override { env.SetHitboxType(5); }
+    CarControls GetControl(uint32_t tick, uint32_t /*env*/, uint32_t /*car_idx*/, DeterministicInputGenerator& /*gen*/) const override {
+        CarControls c{}; c.throttle = 1.0f; if (tick >= 10 && tick < 40) c.boost = 1; return c;
+    }
+};
+
+class HitboxPsyclopsScenario : public IScenario {
+public:
+    std::string GetName() const override { return "hitbox_psyclops"; }
+    std::string GetDescription() const override { return "Psyclops 3-wheel preset hitbox forward throttle and boost acceleration"; }
+    uint32_t GetDefaultTicks() const override { return 120; }
+    void ApplyInitialState(CPURefSim& env, uint32_t /*env_idx*/) const override { env.SetHitboxType(6); }
+    CarControls GetControl(uint32_t tick, uint32_t /*env*/, uint32_t /*car_idx*/, DeterministicInputGenerator& /*gen*/) const override {
+        CarControls c{}; c.throttle = 1.0f; if (tick >= 10 && tick < 40) c.boost = 1; return c;
+    }
+};
+
 } // namespace
 
 void RegisterCarScenarios() {
@@ -222,6 +288,12 @@ void RegisterCarScenarios() {
     reg.Register(std::make_shared<CarBallHitScenario>());
     reg.Register(std::make_shared<KickoffGoalieScenario>());
     reg.Register(std::make_shared<BoostPadPickupScenario>());
+    reg.Register(std::make_shared<HitboxDominusScenario>());
+    reg.Register(std::make_shared<HitboxPlankScenario>());
+    reg.Register(std::make_shared<HitboxBreakoutScenario>());
+    reg.Register(std::make_shared<HitboxHybridScenario>());
+    reg.Register(std::make_shared<HitboxMercScenario>());
+    reg.Register(std::make_shared<HitboxPsyclopsScenario>());
 }
 
 } // namespace rocketsim_cuda
