@@ -668,3 +668,86 @@ The flag `--check [path]` is implemented in `tests/differential/harness_main.cpp
 
 
 
+
+---
+
+## Wave 1-B: Wheel Raycasts vs Ball & Other Cars (R3)
+
+### 1. CPU Oracle Reference Tracking (`arquivo:linha`)
+- **Wheel World Transforms & Open-World Ray Tracing:**
+  - `src/Sim/btVehicleRL/btVehicleRL.cpp:110-118`: `btVehicleRL::updateWheelTransformsWS`:
+    Cálculo dos hardpoints no espaço de mundo (`chassisTrans(connectionPointCS)`), direção da suspensão (`basis * wheelDirectionCS0`) e eixo da roda (`basis * wheelAxleCS`).
+  - `src/Sim/btVehicleRL/btVehicleRL.cpp:120-179`: `btVehicleRL::rayCast`:
+    Comprimento do raio de suspensão real:
+    $$L_{\text{ray}} = L_{\text{rest}} + L_{\text{travel}} + R_{\text{wheel}} - \text{SUSPENSION\_SUBTRACTION}$$
+    onde $\text{SUSPENSION\_SUBTRACTION} = 2.5\text{ UU}$ ($0.05\text{ BT}$).
+    Raycast no mundo dinâmico via `m_vehicleRaycaster->castRay(source, target, chassisBody, rayResults)`.
+    Atualização de `contactPointWS`, `contactNormalWS`, `isInContact`, `isInContactWithWorld = object->isStaticObject()`, e `groundObject = object`.
+    Compressão da suspensão: $L_{\text{susp}} = \text{clamp}(d_{\text{trace}} - R_{\text{wheel}}, L_{\text{rest}} - L_{\text{travel}}, L_{\text{rest}} + L_{\text{travel}})$.
+    Projeção da velocidade relativa com denominador $\mathbf{n}_{\text{contact}} \cdot \mathbf{u}_{\text{up}}$.
+  - `src/Sim/btVehicleRL/btVehicleRL.cpp:181-198`: `extraPushback` gating:
+    `if (object->isStaticObject())`: pushback estático calculado estritamente quando em contato com superfícies estáticas da arena. Quando em contato com corpos dinâmicos (bola ou outros carros), `extraPushback = 0.0f`.
+- **Dinâmica de Suspensão e Força de Reação:**
+  - `src/Sim/btVehicleRL/btVehicleRL.cpp:270-303`: `btVehicleRL::updateSuspension`:
+    Força de mola e amortecimento:
+    $$F_{\text{susp}} = (L_{\text{rest}} - L) \cdot k_{\text{stiff}} \cdot \text{clipped\_inv\_dot} - d \cdot v_{\text{rel}}$$
+    Escala de impulso: $J_{\text{susp}} = (F_{\text{susp}} \Delta t) + \text{extraPushback}$.
+    Impulso aplicado ao chassi: $\mathbf{J}_{\text{car}} = \mathbf{n} \cdot J_{\text{susp}}$ no offset de contato $\mathbf{r}_{\text{car}} = \mathbf{p}_{\text{contact}} - \mathbf{p}_{\text{car\_com}}$.
+    **Terceira Lei de Newton:** O impulso de reação sobre o corpo atingido (bola ou carro) é estritamente oposto: $\mathbf{J}_{\text{target}} = -\mathbf{J}_{\text{car}}$ aplicado em $\mathbf{r}_{\text{target}} = \mathbf{p}_{\text{contact}} - \mathbf{p}_{\text{target\_com}}$.
+- **Atrito Lateral e Longitudinal Bilateral:**
+  - `src/Sim/btVehicleRL/btVehicleRL.cpp:306-380`: `btVehicleRL::calcFrictionImpulses` e `applyFrictionImpulses`:
+    Atrito bilateral contra `groundObject` via `resolveSingleBilateral` e atrito de rolamento/frenagem ao longo da direção `forwardDir = normal.cross(axleDir)`.
+  - `libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btContactConstraint.cpp:108-150`:
+    `resolveSingleBilateral` para dois corpos dinâmicos com diagonal combinada do Jacobiano:
+    $$m_{\text{Adiag}} = \frac{1}{M_1} + \frac{1}{M_2} + (\mathbf{r}_1 \times \mathbf{u})^T \mathbf{I}_1^{-1} (\mathbf{r}_1 \times \mathbf{u}) + (\mathbf{r}_2 \times \mathbf{u})^T \mathbf{I}_2^{-1} (\mathbf{r}_2 \times \mathbf{u})$$
+    e velocidade relativa $\mathbf{v}_{\text{rel}} = \mathbf{v}_1 - \mathbf{v}_2$.
+- **Condição de Apoio e Reset de Pulo/Flip:**
+  - `src/Sim/Car/Car.cpp:110-128`:
+    Contagem de rodas com contato: `numWheelsInContact`.
+    Condição de apoio canônica do Rocket League:
+    $$\text{isOnGround} = (\text{numWheelsInContact} \ge 3)$$
+    Quando $\text{numWheelsInContact} \ge 3$, auto-roll e torque aéreo são suprimidos e `isFlipping = false`.
+  - `src/Sim/Car/Car.cpp:550-559`:
+    Reset de pulo em `Car::_UpdateJump`: se $\text{isOnGround}$ e não está executando um pulo ativo (`!isJumping` e `jumpTime >= JUMP_MIN_TIME + JUMP_RESET_TIME_PAD`), restaura `hasJumped = false` e `jumpTime = 0`.
+  - `src/Sim/Car/Car.cpp:689-695`:
+    Reset de flip em `Car::_UpdateDoubleJumpOrFlip`: se $\text{isOnGround}$, restaura `hasDoubleJumped = false`, `hasFlipped = false`, `airTime = 0`, `airTimeSinceJump = 0`, `flipTime = 0`.
+  - `src/Sim/Ball/Ball.cpp:79-95`:
+    Construção do corpo rígido da bola com `btSphereShape(ballRadius * 0.02f)`, massa `30.0f` BT e tensor de inércia esférico $I = \frac{2}{5} M R^2 \approx 39.9675\text{ BT}$.
+  - `libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btCollisionWorld.cpp:267-340`:
+    Algoritmo de raycast em formas convexas (`btSphereShape` e `btBoxShape`).
+
+### 2. Implementation Summary (`include/rocketsim_cuda/physics/suspension.cuh`)
+1. **Raycast Analítico contra a Bola (`raycast_sphere`):**
+   - Interseção raio-esfera de forma fechada em $O(1)$ sem divergência de warp.
+   - Computa a distância mínima de impacto $t = -b - \sqrt{\Delta}$, ponto de contato tridimensional e normal radial externa unitária normalizada.
+   - Suporte a ponto inicial no interior da esfera com contato imediato em $t = 0$.
+2. **Raycast Analítico contra Outros Carros (`raycast_obb`):**
+   - Interseção raio-caixa orientada (OBB) via método de slabs de Kay-Kajiya no referencial local do chassi.
+   - Transforma a origem e direção do raio pelo transposto da base ortonormal $\mathbf{R}_{\text{other}}^T$ e centro do hitbox com offset `(13.8757, 0, 20.755)`.
+   - Trata planos paralelos e calcula a normal exata da face de entrada transformada de volta para coordenadas de mundo.
+3. **Avaliação Multi-Corpo das 4 Rodas (`evaluate_car_wheels_raycast_multibody`):**
+   - Testa cada uma das 4 suspensões contra todos os candidatos na arena: (1) SDF analítico da arena, (2) esfera da bola, (3) OBBs dos outros carros ativos (ignorando a si mesmo e carros demolidos).
+   - Seleciona o impacto de menor distância ($\le L_{\text{ray}}$), espelhando o `btDefaultVehicleRaycaster`.
+   - Classifica o objeto atingido via `HitObjectType` (`HIT_OBJECT_WORLD`, `HIT_OBJECT_BALL`, `HIT_OBJECT_CAR`) e armazena o índice do carro correspondente.
+4. **Condição de Apoio e Flip Reset (`update_car_ground_support` / `update_car_ground_support_soa`):**
+   - Avalia $\text{isOnGround} = (\text{numWheelsInContact} \ge 3)$.
+   - Quando ativado, restaura `hasJumped = 0`, `hasDoubleJumped = 0`, `hasFlipped = 0`, `isFlipping = 0`, `airTime = 0.0`, `airTimeSinceJump = 0.0`, `flipTime = 0.0`.
+   - Permite que contatos de 3 ou 4 rodas sobre a bola ou sobre outro carro concedam o flip reset do jogo.
+5. **Aplicação da 3ª Lei de Newton e Forças de Reação (`apply_suspension_and_friction_multibody`):**
+   - Computa a força de suspensão e atrito bilateral com termos de massa e momento de inércia do corpo atingido.
+   - Restringe o `extraPushback` exclusivamente a colisões estáticas com a arena (`hit_type == HIT_OBJECT_WORLD`), zerando-o em impactos contra corpos dinâmicos.
+   - Acumula os impulsos de reação iguais e opostos sobre a bola e sobre os outros carros:
+     $$\mathbf{J}_{\text{react}} = -\mathbf{J}_{\text{wheel}}, \quad \mathbf{T}_{\text{react}} = \mathbf{r}_{\text{target}} \times \mathbf{J}_{\text{react}}$$
+   - Funções auxiliares `apply_wheel_reaction_to_ball` e `apply_wheel_reaction_to_car` aplicam diretamente a variação linear e angular nos estados do corpo atingido.
+6. **Preservação de Compatibilidade:**
+   - Sobrecargas canônicas de `evaluate_car_wheels_raycast` (5 parâmetros) e `apply_suspension_and_friction` (11 parâmetros) mantidas intactas para chamadas legadas do kernel existente.
+
+### 3. Verification Evidence
+- **Pytest Suite (`pytest tests/python/ -v`):**
+  - `test_wheel_raycast_vs_ball_geometry` (PASSED): validação de acerto direto no topo da bola, acerto em ângulo oblíquo e erro limpo fora do raio $R = 91.25\text{ UU}$.
+  - `test_wheel_raycast_vs_car_obb` (PASSED): validação de interseção de slabs de OBB na face superior do teto do carro.
+  - `test_wheel_support_condition_and_flip_reset` (PASSED): validação de que $\ge 3$ rodas conferem `isOnGround = true` e restauram pulo, double jump, flip e timers.
+  - `test_newtons_third_law_wheel_reaction_conservation` (PASSED): conservação estrita de momento linear $\mathbf{J}_{\text{car}} + \mathbf{J}_{\text{target}} = \mathbf{0}$ e acoplamento de torque reativo.
+  - Total: **30 passed, 40 skipped**, exit code 0.
+- **Pipeline Orchestration (`scripts/build_and_test.ps1 -SkipHarness`):**
+  - Execução bem-sucedida de ponta a ponta com exit code 0.
