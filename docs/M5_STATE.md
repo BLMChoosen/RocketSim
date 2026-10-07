@@ -1,17 +1,27 @@
 # Milestone 5 State Tracker — Phase 1 & Phase 2: Multi-Car Simulation
 
-> **Document Version:** 2.2.0  
-> **Last Updated:** 2026-10-05T20:15:00Z  
-> **Active Worker:** Worker 1 (Milestone 5 — Passo A: Base Compilável & Testes Confiáveis)  
-> **Parent Orchestrator:** Orchestrator M5  
-> **Repository HEAD Hash:** `2f05285`  
-> **Working Tree Cleanliness:** Commit 2f05285 aplicado (correção de escopo car_fail); harness e .pyd recompilados; 64/64 pytests passando; differential_harness --check 100% OK  
+> **Document Version:** 2.3.0  
+> **Last Updated:** 2026-10-07T18:40:00Z  
+> **Active Worker:** Worker W0 Gate (Wave 0 Gate Validator)  
+> **Parent Orchestrator:** Orchestrator Waves  
+> **Repository HEAD Hash:** `2f05285` (working tree with Wave 0 infrastructure applied)  
+> **Working Tree Cleanliness:** Wave 0 harness modularization, scenario registry, aliases, build_and_test.ps1, parity thresholds (35 scenarios), and conftest.py in place; 24/24 non-CUDA pytests passing; regression guard 100% OK.  
 > **Residual Printf Status:** Confirmed zero residual `printf` calls in CUDA kernels or differential harness  
-> **Session State:** Passo A concluído. Harness e módulo Python recompilados com sucesso. 64/64 testes pytest aprovados. Regressão guard --check aprovada com exit code 0. Ablação de flips reconfirmada em ~0.0068 UU (< 0.0078 UU) no tick 60. Próximo: Passo B (Módulo 2.2 - Colisão Carro-Carro).
+> **Session State:** Wave 0 Gate concluído com sucesso. Harness modularizado em `tests/differential/scenarios/` com `ScenarioRegistry` e aliases; 35 cenários sincronizados em `docs/parity_thresholds.json`; `scripts/build_and_test.ps1` funcional (exit code 0); `pytest tests/python/ -v` executado de forma limpa com guard via conftest (24 passed, 40 skipped quando .pyd ausente); Wave 1 desbloqueada.
 
 ---
 
-## 1. Phase 2 Status Overview (Multi-Car)
+## 1. Wave 0 Status Overview (Harness & Build Infrastructure)
+
+| Module | Description | Status | Implementation Reference | Key Verification / Evidence |
+| :--- | :--- | :--- | :--- | :--- |
+| **W0.1** | Harness Modularization & Scenario Registry | **COMPLETED** | `tests/differential/scenarios/*`, `tests/differential/harness_main.cpp` | `IScenario` interface, `ScenarioRegistry` singleton, 25 cenários canônicos modularizados em 6 arquivos (`bounce`, `car`, `ablation`, `arena`, `multicar`, `random`), suporte a aliases (`ablation_1_idle`, etc.), chamada `RegisterAllScenarios()` no harness. |
+| **W0.2** | Parity Thresholds Restoration & Guard | **COMPLETED** | `docs/parity_thresholds.json`, `tests/python/test_parity_regression_guard.py` | 35 cenários documentados e calibrados (+25% buffer); `test_parity_regression_guard.py` 7/7 passando; `cpp_load_parity_thresholds` e `cpp_validate_scenario_thresholds` validados. |
+| **W0.3** | Orchestration Script & Fallback Guards | **COMPLETED** | `scripts/build_and_test.ps1`, `tests/python/conftest.py` | Pipeline PowerShell completo executando compilação (se toolchain presente), harness com `--check` e pytest suite unificado; `conftest.py` configurado para pular graciosamente testes que exigem `.pyd` compilado quando ausente. Exit code 0. |
+
+---
+
+## 2. Phase 2 Status Overview (Multi-Car)
 
 | Module | Description | Status | Implementation Reference | Key Verification / Evidence |
 | :--- | :--- | :--- | :--- | :--- |

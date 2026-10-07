@@ -267,14 +267,14 @@ def cpp_validate_scenario_thresholds(rep: ScenarioReport, all_thresholds: dict) 
 # ==============================================================================
 
 def test_docs_parity_thresholds_schema_and_counts():
-    """Verify that docs/parity_thresholds.json parses cleanly and has exactly 29 scenarios."""
+    """Verify that docs/parity_thresholds.json parses cleanly and has all 35 scenarios."""
     path = os.path.join(os.path.dirname(__file__), "..", "..", "docs", "parity_thresholds.json")
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
     assert "scenarios" in data, "Missing 'scenarios' root key"
     scenarios = data["scenarios"]
-    assert len(scenarios) == 29, f"Expected 29 scenarios, found {len(scenarios)}"
+    assert len(scenarios) == 35, f"Expected 35 scenarios, found {len(scenarios)}"
     assert data.get("tolerance_buffer_percent") == 25.0, "Expected buffer percent to be 25.0"
 
 
@@ -310,7 +310,7 @@ def test_cpp_parser_loads_actual_json():
 
     ok, cpp_thresh, err = cpp_load_parity_thresholds(content)
     assert ok, f"cpp_load_parity_thresholds failed: {err}"
-    assert len(cpp_thresh) == 29, f"C++ parser parsed {len(cpp_thresh)} scenarios, expected 29"
+    assert len(cpp_thresh) == 35, f"C++ parser parsed {len(cpp_thresh)} scenarios, expected 35"
 
     std_data = json.loads(content)["scenarios"]
     for scn, s_data in std_data.items():

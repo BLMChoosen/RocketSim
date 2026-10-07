@@ -91,10 +91,18 @@ add_executable(differential_harness
     tests/differential/harness_main.cpp
     tests/differential/cpu_ref_sim.cpp
     tests/differential/golden_master.cpp
+    tests/differential/scenarios/scenario_registry.cpp
+    tests/differential/scenarios/bounce_scenarios.cpp
+    tests/differential/scenarios/car_scenarios.cpp
+    tests/differential/scenarios/ablation_scenarios.cpp
+    tests/differential/scenarios/arena_scenarios.cpp
+    tests/differential/scenarios/multicar_scenarios.cpp
+    tests/differential/scenarios/random_scenarios.cpp
 )
 
 target_include_directories(differential_harness PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/differential
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/differential/scenarios
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/libsrc/bullet3-3.24
