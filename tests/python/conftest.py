@@ -20,15 +20,12 @@ except Exception:
 @pytest.fixture(autouse=True)
 def require_native_extension(request):
     """
-    Skip tests requiring compiled C++/CUDA extension if rocketsim_cuda.pyd is not built.
-    When the native extension is present, all tests execute normally.
+    Enforce that rocketsim_cuda native extension (.pyd) is compiled.
+    Tests must fail and abort with an explicit error if the binary is missing.
+    No test skipping permitted.
     """
     if not _NATIVE_AVAILABLE:
-        module_name = request.module.__name__
-        pure_python_modules = [
-            "test_parity_regression_guard",
-            "test_dodge_adversarial",
-            "test_multi_car_kickoff",
-        ]
-        if not any(pure in module_name for pure in pure_python_modules):
-            pytest.skip("rocketsim_cuda native extension (.pyd) not compiled in build/")
+        raise RuntimeError(
+            "rocketsim_cuda native extension (.pyd) is NOT compiled or importable from build/. "
+            "Please build the project first via scripts/build_and_test.ps1 or cmake."
+        )
