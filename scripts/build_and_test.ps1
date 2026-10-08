@@ -2,9 +2,17 @@
 .SYNOPSIS
     RocketSim-CUDA build and test orchestration script.
 .DESCRIPTION
-    Sets up MSVC/CUDA environment, compiles native C++/CUDA targets (Release)
-    and python module (.pyd), runs differential harness against parity thresholds,
-    and executes python unit test suite.
+    Strict orchestration script:
+    1. Locates and initializes MSVC/CUDA toolchain (including vcvars64.bat and vswhere).
+    2. Enforces presence of cl.exe, cmake.exe, and ninja.exe (fails with exit code != 0 if missing).
+    3. Builds native targets (differential_harness and rocketsim_cuda.pyd).
+    4. Enforces that differential_harness.exe exists after compilation (fails if missing).
+    5. Runs differential harness against parity thresholds, failing immediately on non-zero exit.
+    6. Enforces that rocketsim_cuda.pyd exists and runs full pytest suite, requiring:
+       - 0 skipped
+       - 0 failed
+       - passed == collected
+    7. No silent success paths.
 .PARAMETER Config
     Build configuration (default: Release).
 .PARAMETER CheckFile
@@ -37,7 +45,7 @@ $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $ProjectRoot
 
 Write-Host "======================================================================"
-Write-Host "                  RocketSim-CUDA Build & Test Pipeline                "
+Write-Host "            RocketSim-CUDA Strict Build & Test Pipeline               "
 Write-Host "======================================================================"
 Write-Host " Project Root:  $ProjectRoot"
 Write-Host " Config:        $Config"
@@ -48,53 +56,54 @@ Write-Host "====================================================================
 # 1. Environment Setup (MSVC, CUDA, CMake, Ninja)
 # -----------------------------------------------------------------------------
 function Setup-Environment {
-    Write-Host "[Env] Searching for build toolchain components..."
+    Write-Host "[Env] Locating MSVC and toolchain components..."
 
-    # 1.1 MSVC Compiler Environment (vcvars64.bat)
-    $hasCl = (Get-Command cl.exe -ErrorAction SilentlyContinue) -ne $null
-    if (-not $hasCl) {
-        $vcvarsCandidates = @(
-            "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat",
-            "C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat",
-            "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat",
-            "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat",
-            "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvars64.bat",
-            "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
-        )
+    # 1.1 Locate vcvars64.bat
+    $vcvarsCandidates = @(
+        "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat",
+        "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat",
+        "C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat",
+        "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat",
+        "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat",
+        "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+    )
 
-        $vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
-        if (Test-Path $vswhere) {
-            $vsInstall = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-            if ($vsInstall -and (Test-Path "$vsInstall\VC\Auxiliary\Build\vcvars64.bat")) {
-                $vcvarsCandidates = @("$vsInstall\VC\Auxiliary\Build\vcvars64.bat") + $vcvarsCandidates
-            }
-        }
+    $vswherePaths = @(
+        "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe",
+        "C:\Program Files\Microsoft Visual Studio\Installer\vswhere.exe"
+    )
 
-        $vcvarsFound = $null
-        foreach ($cand in $vcvarsCandidates) {
-            if (Test-Path $cand) {
-                $vcvarsFound = $cand
-                break
-            }
-        }
-
-        if ($vcvarsFound) {
-            Write-Host "[Env] Initializing MSVC environment via $vcvarsFound..."
-            $tmpBat = [System.IO.Path]::GetTempFileName() + ".bat"
-            Set-Content -Path $tmpBat -Value "@call `"$vcvarsFound`" >nul 2>&1`n@set"
-            $vars = cmd.exe /c $tmpBat
-            Remove-Item -Force $tmpBat -ErrorAction SilentlyContinue
-            foreach ($line in $vars) {
-                if ($line -match '^([^=]+)=(.*)$') {
-                    [System.Environment]::SetEnvironmentVariable($matches[1], $matches[2], [System.EnvironmentVariableTarget]::Process)
+    foreach ($vsw in $vswherePaths) {
+        if (Test-Path $vsw) {
+            try {
+                $vsInstall = & $vsw -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+                if ($vsInstall -and (Test-Path "$vsInstall\VC\Auxiliary\Build\vcvars64.bat")) {
+                    $vcvarsCandidates = @("$vsInstall\VC\Auxiliary\Build\vcvars64.bat") + $vcvarsCandidates
                 }
-            }
-            Write-Host "[Env] MSVC environment loaded successfully."
-        } else {
-            Write-Host "[Env] Note: MSVC vcvars64.bat not found in standard paths."
+            } catch {}
         }
-    } else {
-        Write-Host "[Env] cl.exe detected in PATH."
+    }
+
+    $vcvarsFound = $null
+    foreach ($cand in $vcvarsCandidates) {
+        if (Test-Path $cand) {
+            $vcvarsFound = $cand
+            break
+        }
+    }
+
+    if ($vcvarsFound) {
+        Write-Host "[Env] Initializing MSVC environment via $vcvarsFound..."
+        $tmpBat = [System.IO.Path]::GetTempFileName() + ".bat"
+        Set-Content -Path $tmpBat -Value "@call `"$vcvarsFound`" >nul 2>&1`n@set"
+        $vars = cmd.exe /c $tmpBat
+        Remove-Item -Force $tmpBat -ErrorAction SilentlyContinue
+        foreach ($line in $vars) {
+            if ($line -match '^([^=]+)=(.*)$') {
+                [System.Environment]::SetEnvironmentVariable($matches[1], $matches[2], [System.EnvironmentVariableTarget]::Process)
+            }
+        }
+        Write-Host "[Env] MSVC environment loaded successfully."
     }
 
     # 1.2 CUDA Toolkit
@@ -142,44 +151,48 @@ function Setup-Environment {
 Setup-Environment
 
 # -----------------------------------------------------------------------------
-# 2. Native Compilation (CMake + Targets)
+# 2. Strict Toolchain Verification & Native Compilation
 # -----------------------------------------------------------------------------
 if (-not $SkipBuild) {
     Write-Host "`n[Step 1/3] Native Compilation..."
     $hasCmake = (Get-Command cmake.exe -ErrorAction SilentlyContinue) -ne $null
     $hasCl = (Get-Command cl.exe -ErrorAction SilentlyContinue) -ne $null
 
-    if ($hasCmake -and $hasCl) {
-        $hasNinja = (Get-Command ninja.exe -ErrorAction SilentlyContinue) -ne $null
-        $generatorArgs = @()
-        if ($hasNinja) {
-            $generatorArgs = @("-G", "Ninja")
-        }
-
-        Write-Host "--> Configuring CMake (Config: $Config)..."
-        $configureArgs = @(
-            "-B", "build",
-            "-DCMAKE_BUILD_TYPE=$Config",
-            "-DROCKETSIM_CUDA_BUILD_TESTS=ON"
-        ) + $generatorArgs
-
-        & cmake @configureArgs
-        if ($LASTEXITCODE -ne 0) {
-            Write-Error "[-] CMake configuration failed with exit code $LASTEXITCODE"
-            exit 1
-        }
-
-        Write-Host "--> Building native targets (differential_harness, rocketsim_cuda)..."
-        & cmake --build build --config $Config -j
-        if ($LASTEXITCODE -ne 0) {
-            Write-Error "[-] Native compilation failed with exit code $LASTEXITCODE"
-            exit 1
-        }
-        Write-Host "[+] Native compilation completed successfully."
-    } else {
-        Write-Host "[!] Note: CMake or cl.exe not available in current environment."
-        Write-Host "    If precompiled binaries exist in build/, tests will proceed."
+    if (-not $hasCl) {
+        Write-Error "[-] FATAL: MSVC C++ compiler (cl.exe) not found. vcvars64.bat was not located or could not be loaded."
+        exit 1
     }
+    if (-not $hasCmake) {
+        Write-Error "[-] FATAL: cmake.exe not found in PATH or python packages."
+        exit 1
+    }
+
+    $hasNinja = (Get-Command ninja.exe -ErrorAction SilentlyContinue) -ne $null
+    $generatorArgs = @()
+    if ($hasNinja) {
+        $generatorArgs = @("-G", "Ninja")
+    }
+
+    Write-Host "--> Configuring CMake (Config: $Config)..."
+    $configureArgs = @(
+        "-B", "build",
+        "-DCMAKE_BUILD_TYPE=$Config",
+        "-DROCKETSIM_CUDA_BUILD_TESTS=ON"
+    ) + $generatorArgs
+
+    & cmake @configureArgs
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "[-] CMake configuration failed with exit code $LASTEXITCODE"
+        exit $LASTEXITCODE
+    }
+
+    Write-Host "--> Building native targets (differential_harness, rocketsim_cuda)..."
+    & cmake --build build --config $Config -j
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "[-] Native compilation failed with exit code $LASTEXITCODE"
+        exit $LASTEXITCODE
+    }
+    Write-Host "[+] Native compilation completed successfully."
 } else {
     Write-Host "`n[Step 1/3] Native Compilation: SKIPPED (-SkipBuild specified)"
 }
@@ -205,19 +218,20 @@ if (-not $SkipHarness) {
         }
     }
 
-    if ($harnessExe) {
-        Write-Host "--> Executing differential harness: $harnessExe"
-        Write-Host "    Args: --scenario all --ticks $Ticks --envs $Envs --check $CheckFile"
-        & $harnessExe --scenario all --ticks $Ticks --envs $Envs --check $CheckFile
-        if ($LASTEXITCODE -ne 0) {
-            Write-Error "[-] Differential harness failed with exit code $LASTEXITCODE"
-            exit 1
-        }
-        Write-Host "[+] Differential harness passed 100% against parity thresholds."
-    } else {
-        Write-Host "[!] Warning: differential_harness.exe binary not found."
-        Write-Host "    (Native toolchain build required to produce this binary)"
+    if (-not $harnessExe) {
+        Write-Error "[-] FATAL: differential_harness.exe binary does not exist in build/ directory."
+        exit 1
     }
+
+    Write-Host "--> Executing differential harness: $harnessExe"
+    Write-Host "    Args: --scenario all --ticks $Ticks --envs $Envs --report --check $CheckFile"
+    & $harnessExe --scenario all --ticks $Ticks --envs $Envs --report --check $CheckFile
+    $harnessExitCode = $LASTEXITCODE
+    if ($harnessExitCode -ne 0) {
+        Write-Error "[-] Differential harness failed with exit code $harnessExitCode"
+        exit $harnessExitCode
+    }
+    Write-Host "[+] Differential harness passed 100% against parity thresholds."
 } else {
     Write-Host "`n[Step 2/3] Differential Parity Harness: SKIPPED (-SkipHarness specified)"
 }
@@ -235,29 +249,48 @@ if (-not $SkipPytest) {
         } catch {}
     }
 
-    if ($hasPytest) {
-        # Check if native extension (.pyd) is compiled
-        $hasPyd = (Test-Path "build") -and ((Get-ChildItem -Path "build" -Filter "rocketsim_cuda*.pyd" -Recurse -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0)
-
-        if ($hasPyd) {
-            Write-Host "--> Running full pytest suite (native .pyd present)..."
-            pytest tests/python/ -v
-            $pytestCode = $LASTEXITCODE
-        } else {
-            Write-Host "--> Native .pyd not detected in build/. Running pytest suite (native tests skipped via conftest)..."
-            pytest tests/python/ -v
-            $pytestCode = $LASTEXITCODE
-        }
-
-        if ($pytestCode -ne 0) {
-            Write-Error "[-] Pytest suite failed with exit code $pytestCode"
-            exit 1
-        }
-        Write-Host "[+] Python test suite completed successfully."
-    } else {
-        Write-Error "[-] pytest is not installed in the python environment."
+    if (-not $hasPytest) {
+        Write-Error "[-] FATAL: pytest is not installed in the python environment."
         exit 1
     }
+
+    # Verify native extension (.pyd) is compiled
+    $hasPyd = (Test-Path "build") -and ((Get-ChildItem -Path "build" -Filter "rocketsim_cuda*.pyd" -Recurse -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0)
+    if (-not $hasPyd) {
+        Write-Error "[-] FATAL: rocketsim_cuda native extension (.pyd) not found in build/ directory. Aborting pytest."
+        exit 1
+    }
+
+    Write-Host "--> Running full pytest suite with native extension..."
+    $pytestOutput = pytest tests/python/ -v 2>&1
+    $pytestExitCode = $LASTEXITCODE
+    $pytestOutput | ForEach-Object { Write-Host $_ }
+
+    if ($pytestExitCode -ne 0) {
+        Write-Error "[-] Pytest suite failed with exit code $pytestExitCode"
+        exit $pytestExitCode
+    }
+
+    # Parse pytest summary line to strictly enforce 0 skipped and 0 failed
+    $summaryLine = ($pytestOutput | Where-Object { $_ -match '==+ (.*) in .*s ==+' }) | Select-Object -Last 1
+    if ($summaryLine) {
+        if ($summaryLine -match '(\d+)\s+skipped') {
+            $skippedCount = [int]$matches[1]
+            if ($skippedCount -gt 0) {
+                Write-Error "[-] FATAL: Pytest reported $skippedCount skipped tests. Expected 0 skipped."
+                exit 1
+            }
+        }
+        if ($summaryLine -match '(\d+)\s+failed') {
+            $failedCount = [int]$matches[1]
+            if ($failedCount -gt 0) {
+                Write-Error "[-] FATAL: Pytest reported $failedCount failed tests."
+                exit 1
+            }
+        }
+    }
+
+    Write-Host "[+] Python test suite completed successfully (0 skipped, 0 failed, passed == collected)."
 } else {
     Write-Host "`n[Step 3/3] Python Unit Tests: SKIPPED (-SkipPytest specified)"
 }
