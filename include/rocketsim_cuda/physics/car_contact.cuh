@@ -643,11 +643,20 @@ __device__ __host__ inline bool test_car_car_collision_obb(
     Vec3 center_a = pos_a + basis_a * hitbox_offset_a;
     Vec3 center_b = pos_b + basis_b * hitbox_offset_b;
 
-    return test_box_box_collision(
+    bool hit = test_box_box_collision(
         center_a, basis_a, hitbox_half_a,
         center_b, basis_b, hitbox_half_b,
         out_manifold
     );
+
+    if (hit) {
+        for (int i = 0; i < out_manifold.num_points; ++i) {
+            out_manifold.points[i].point_local_a = out_manifold.points[i].point_local_a + hitbox_offset_a;
+            out_manifold.points[i].point_local_b = out_manifold.points[i].point_local_b + hitbox_offset_b;
+        }
+    }
+
+    return hit;
 }
 
 // Default overload using Octane hitbox
@@ -994,13 +1003,6 @@ __device__ inline bool resolve_car_pair_collision_device(
         if (car_state.demo_respawn_timer) car_state.demo_respawn_timer[car_idx_b] = respawn_delay;
         if (car_state.is_supersonic) car_state.is_supersonic[car_idx_b] = 0;
         if (car_state.supersonic_time) car_state.supersonic_time[car_idx_b] = 0.0f;
-        vel_b = Vec3(0.0f, 0.0f, 0.0f);
-        omega_b = Vec3(0.0f, 0.0f, 0.0f);
-        if (car_state.vel_bt_x) {
-            car_state.vel_bt_x[car_idx_b] = 0.0f;
-            car_state.vel_bt_y[car_idx_b] = 0.0f;
-            car_state.vel_bt_z[car_idx_b] = 0.0f;
-        }
         if (car_state.car_contact_other_car_id) car_state.car_contact_other_car_id[car_idx_a] = (int32_t)car_idx_b;
         if (car_state.car_contact_cooldown_timer) car_state.car_contact_cooldown_timer[car_idx_a] = BUMP_COOLDOWN_TIME;
     } else if (bump_a_to_b.type == CarBumpType::BUMP) {
@@ -1017,13 +1019,6 @@ __device__ inline bool resolve_car_pair_collision_device(
             if (car_state.demo_respawn_timer) car_state.demo_respawn_timer[car_idx_a] = respawn_delay;
             if (car_state.is_supersonic) car_state.is_supersonic[car_idx_a] = 0;
             if (car_state.supersonic_time) car_state.supersonic_time[car_idx_a] = 0.0f;
-            vel_a = Vec3(0.0f, 0.0f, 0.0f);
-            omega_a = Vec3(0.0f, 0.0f, 0.0f);
-            if (car_state.vel_bt_x) {
-                car_state.vel_bt_x[car_idx_a] = 0.0f;
-                car_state.vel_bt_y[car_idx_a] = 0.0f;
-                car_state.vel_bt_z[car_idx_a] = 0.0f;
-            }
             if (car_state.car_contact_other_car_id) car_state.car_contact_other_car_id[car_idx_b] = (int32_t)car_idx_a;
             if (car_state.car_contact_cooldown_timer) car_state.car_contact_cooldown_timer[car_idx_b] = BUMP_COOLDOWN_TIME;
         } else if (bump_b_to_a.type == CarBumpType::BUMP) {
@@ -1033,14 +1028,12 @@ __device__ inline bool resolve_car_pair_collision_device(
         }
     }
 
-    // If neither was demoed, resolve contact constraint restitution, friction and pushback
-    if (!a_demoed && !b_demoed) {
-        resolve_car_car_contact(
-            pos_a, vel_a, omega_a, basis_a, inv_inertia_a,
-            pos_b, vel_b, omega_b, basis_b, inv_inertia_b,
-            manifold
-        );
-    }
+    // Resolve contact constraint restitution, friction and pushback matching Bullet
+    resolve_car_car_contact(
+        pos_a, vel_a, omega_a, basis_a, inv_inertia_a,
+        pos_b, vel_b, omega_b, basis_b, inv_inertia_b,
+        manifold
+    );
 
     // Write back updated states to SoA (Coalesced 128-byte transactions)
     car_state.pos_x[car_idx_a] = pos_a.x;

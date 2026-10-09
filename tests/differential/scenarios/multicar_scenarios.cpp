@@ -32,6 +32,10 @@ public:
     uint32_t GetDefaultTicks() const override { return 120; }
 
     void ApplyInitialState(CPURefSim& env, uint32_t /*env_idx*/) const override {
+        BallStatePOD b{};
+        b.pos = Vec3(0.0f, 3000.0f, 93.15f);
+        env.SetBallState(b);
+
         CarStatePOD c0{};
         c0.pos = Vec3(0.0f, -1200.0f, 17.0f);
         c0.quat = Quat(0.7071068f, 0.0f, 0.0f, 0.7071068f); // Facing +Y (Blue)
@@ -65,6 +69,10 @@ public:
     uint32_t GetDefaultTicks() const override { return 120; }
 
     void ApplyInitialState(CPURefSim& env, uint32_t /*env_idx*/) const override {
+        BallStatePOD b{};
+        b.pos = Vec3(0.0f, 3000.0f, 93.15f);
+        env.SetBallState(b);
+
         CarStatePOD c0{};
         c0.pos = Vec3(0.0f, -400.0f, 17.0f);
         c0.vel = Vec3(0.0f, 1000.0f, 0.0f);
@@ -97,6 +105,10 @@ public:
     uint32_t GetDefaultTicks() const override { return 120; }
 
     void ApplyInitialState(CPURefSim& env, uint32_t /*env_idx*/) const override {
+        BallStatePOD b{};
+        b.pos = Vec3(0.0f, 3000.0f, 93.15f);
+        env.SetBallState(b);
+
         CarStatePOD c0{};
         c0.pos = Vec3(0.0f, -500.0f, 17.0f);
         c0.vel = Vec3(0.0f, 1400.0f, 0.0f);
@@ -130,6 +142,10 @@ public:
     uint32_t GetDefaultTicks() const override { return 120; }
 
     void ApplyInitialState(CPURefSim& env, uint32_t /*env_idx*/) const override {
+        BallStatePOD b{};
+        b.pos = Vec3(0.0f, 3000.0f, 93.15f);
+        env.SetBallState(b);
+
         CarStatePOD c0{};
         c0.pos = Vec3(-600.0f, 0.0f, 600.0f);
         c0.vel = Vec3(1000.0f, 0.0f, 0.0f);
@@ -160,6 +176,10 @@ public:
     uint32_t GetDefaultTicks() const override { return 120; }
 
     void ApplyInitialState(CPURefSim& env, uint32_t /*env_idx*/) const override {
+        BallStatePOD b{};
+        b.pos = Vec3(0.0f, 3000.0f, 93.15f);
+        env.SetBallState(b);
+
         CarStatePOD c0{};
         c0.pos = Vec3(0.0f, 0.0f, 17.0f);
         c0.vel = Vec3(0.0f, 0.0f, 0.0f);
@@ -197,7 +217,7 @@ public:
         env.SetBallState(b);
 
         CarStatePOD c{};
-        c.pos = Vec3(0.0f, 0.0f, 150.0f);
+        c.pos = Vec3(0.0f, 0.0f, 220.0f);
         c.vel = Vec3(0.0f, 0.0f, -50.0f);
         c.quat = Quat::identity();
         c.is_on_ground = 0;
@@ -217,6 +237,10 @@ public:
     uint32_t GetDefaultTicks() const override { return 120; }
 
     void ApplyInitialState(CPURefSim& env, uint32_t /*env_idx*/) const override {
+        BallStatePOD b{};
+        b.pos = Vec3(0.0f, 3000.0f, 93.15f);
+        env.SetBallState(b);
+
         CarStatePOD c0{};
         c0.pos = Vec3(0.0f, 0.0f, 17.0f);
         c0.vel = Vec3(0.0f, 0.0f, 0.0f);
@@ -226,7 +250,7 @@ public:
         env.SetCarState(0, c0);
 
         CarStatePOD c1{};
-        c1.pos = Vec3(0.0f, 0.0f, 65.0f);
+        c1.pos = Vec3(0.0f, 0.0f, 90.0f);
         c1.vel = Vec3(0.0f, 0.0f, -20.0f);
         c1.quat = Quat::identity();
         c1.is_on_ground = 0;
@@ -247,6 +271,10 @@ public:
     uint32_t GetDefaultTicks() const override { return 120; }
 
     void ApplyInitialState(CPURefSim& env, uint32_t /*env_idx*/) const override {
+        BallStatePOD b{};
+        b.pos = Vec3(0.0f, 3000.0f, 93.15f);
+        env.SetBallState(b);
+
         CarStatePOD c0{};
         c0.pos = Vec3(0.0f, -400.0f, 17.0f);
         c0.vel = Vec3(0.0f, 2250.0f, 0.0f);
@@ -284,6 +312,10 @@ public:
     uint32_t GetDefaultTicks() const override { return 120; }
 
     void ApplyInitialState(CPURefSim& env, uint32_t /*env_idx*/) const override {
+        BallStatePOD b{};
+        b.pos = Vec3(0.0f, 3000.0f, 93.15f);
+        env.SetBallState(b);
+
         CarStatePOD c0{};
         c0.pos = Vec3(0.0f, -400.0f, 17.0f);
         c0.vel = Vec3(0.0f, 2250.0f, 0.0f);
@@ -321,6 +353,10 @@ public:
     uint32_t GetDefaultTicks() const override { return 400; }
 
     void ApplyInitialState(CPURefSim& env, uint32_t /*env_idx*/) const override {
+        BallStatePOD b{};
+        b.pos = Vec3(0.0f, 3000.0f, 93.15f);
+        env.SetBallState(b);
+
         CarStatePOD c0{};
         c0.pos = Vec3(0.0f, -300.0f, 17.0f);
         c0.vel = Vec3(0.0f, 2250.0f, 0.0f);
