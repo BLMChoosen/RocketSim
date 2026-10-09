@@ -23,7 +23,8 @@ __device__ void StepBallDevice(
     Quat quat(ball_state.q_w[env_idx], ball_state.q_x[env_idx], ball_state.q_y[env_idx], ball_state.q_z[env_idx]);
 
     // Check if sleeping (zero velocity on ground)
-    if (vel.length_sq() == 0.0f && ang_vel.length_sq() == 0.0f && pos.z <= mut_cfg.ball_radius + 0.05f) {
+    // Matches RocketSim Arena.cpp:695 where zero-vel ball sleeps at BALL_REST_Z (93.15 UU)
+    if (vel.length_sq() == 0.0f && ang_vel.length_sq() == 0.0f && pos.z <= BALL_REST_Z + 0.1f) {
         return;
     }
 
@@ -489,10 +490,11 @@ __global__ void StepSimulationKernel(
         uint8_t goal_flag = 0;
         uint8_t score_team = 0;
         if (fabsf(bx) < GOAL_WIDTH * 0.5f && bz < GOAL_HEIGHT) {
-            if (by > mut_cfg.goal_base_threshold_y) {
+            float goal_threshold = mut_cfg.goal_base_threshold_y + mut_cfg.ball_radius;
+            if (by > goal_threshold) {
                 goal_flag = 1;
                 score_team = 0;
-            } else if (by < -mut_cfg.goal_base_threshold_y) {
+            } else if (by < -goal_threshold) {
                 goal_flag = 1;
                 score_team = 1;
             }

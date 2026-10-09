@@ -153,8 +153,9 @@ __device__ __forceinline__ bool raycast_sphere(
     float b = m.dot(ray_dir);
     float c = m.dot(m) - (sphere_radius * sphere_radius);
 
-    // Ray origin outside sphere and pointing away
-    if (c > 0.0f && b > 0.0f) {
+    // Ray origin inside sphere (c <= 0) or outside pointing away (b > 0) -> no hit
+    // Matches Bullet btSubsimplexConvexCast which returns false for rays originating inside convex shapes
+    if (c <= 0.0f || b > 0.0f) {
         return false;
     }
 
@@ -166,12 +167,7 @@ __device__ __forceinline__ bool raycast_sphere(
     float s = sqrtf(fmaxf(0.0f, discr));
     float t = -b - s;
 
-    // If ray starts inside the sphere (c <= 0), contact is immediate at origin
-    if (t < 0.0f) {
-        t = 0.0f;
-    }
-
-    if (t > max_dist) {
+    if (t < 0.0f || t > max_dist) {
         return false;
     }
 
