@@ -29,12 +29,16 @@
     Skip pytest suite step.
 #>
 
-[CmdletBinding()]
 param(
     [string]$Config = "Release",
     [string]$CheckFile = "docs/parity_thresholds.json",
     [int]$Ticks = 60,
     [int]$Envs = 4,
+    [string]$Scenario = "all",
+    [int]$Cars = 1,
+    [int]$Seed = 42,
+    [string]$OutReport = "",
+    [switch]$Baseline,
     [switch]$SkipBuild,
     [switch]$SkipHarness,
     [switch]$SkipPytest
@@ -223,9 +227,16 @@ if (-not $SkipHarness) {
         exit 1
     }
 
+    $harnessArgs = @("--scenario", $Scenario, "--ticks", $Ticks, "--envs", $Envs)
+    if ($Cars -gt 1) { $harnessArgs += @("--cars", $Cars) }
+    if ($Seed -ne 42) { $harnessArgs += @("--seed", $Seed) }
+    if ($Baseline) { $harnessArgs += "--baseline" }
+    if ($OutReport) { $harnessArgs += @("--out-report", $OutReport) }
+    $harnessArgs += @("--report", "--check", $CheckFile)
+
     Write-Host "--> Executing differential harness: $harnessExe"
-    Write-Host "    Args: --scenario all --ticks $Ticks --envs $Envs --report --check $CheckFile"
-    & $harnessExe --scenario all --ticks $Ticks --envs $Envs --report --check $CheckFile
+    Write-Host "    Args: $($harnessArgs -join ' ')"
+    & $harnessExe @harnessArgs
     $harnessExitCode = $LASTEXITCODE
     if ($harnessExitCode -ne 0) {
         Write-Error "[-] Differential harness failed with exit code $harnessExitCode"
@@ -271,26 +282,54 @@ if (-not $SkipPytest) {
         exit $pytestExitCode
     }
 
-    # Parse pytest summary line to strictly enforce 0 skipped and 0 failed
+    # Strictly parse pytest output to verify collected count and enforce:
+    # 1. collected > 0
+    # 2. 0 skipped
+    # 3. 0 failed
+    # 4. passed == collected
+    $collectedLine = ($pytestOutput | Where-Object { $_ -match 'collected\s+(\d+)\s+items' }) | Select-Object -Last 1
+    if (-not $collectedLine -or -not ($collectedLine -match 'collected\s+(\d+)\s+items')) {
+        Write-Error "[-] FATAL: Could not determine collected test count from pytest output."
+        exit 1
+    }
+    $collectedCount = [int]$matches[1]
+    if ($collectedCount -le 0) {
+        Write-Error "[-] FATAL: Pytest collected 0 items. Expected > 0 tests."
+        exit 1
+    }
+
     $summaryLine = ($pytestOutput | Where-Object { $_ -match '==+ (.*) in .*s ==+' }) | Select-Object -Last 1
-    if ($summaryLine) {
-        if ($summaryLine -match '(\d+)\s+skipped') {
-            $skippedCount = [int]$matches[1]
-            if ($skippedCount -gt 0) {
-                Write-Error "[-] FATAL: Pytest reported $skippedCount skipped tests. Expected 0 skipped."
-                exit 1
-            }
+    if (-not $summaryLine) {
+        Write-Error "[-] FATAL: Pytest summary line not found in output."
+        exit 1
+    }
+
+    if ($summaryLine -match '(\d+)\s+skipped') {
+        $skippedCount = [int]$matches[1]
+        if ($skippedCount -gt 0) {
+            Write-Error "[-] FATAL: Pytest reported $skippedCount skipped tests. Expected 0 skipped."
+            exit 1
         }
-        if ($summaryLine -match '(\d+)\s+failed') {
-            $failedCount = [int]$matches[1]
-            if ($failedCount -gt 0) {
-                Write-Error "[-] FATAL: Pytest reported $failedCount failed tests."
-                exit 1
-            }
+    }
+    if ($summaryLine -match '(\d+)\s+failed') {
+        $failedCount = [int]$matches[1]
+        if ($failedCount -gt 0) {
+            Write-Error "[-] FATAL: Pytest reported $failedCount failed tests."
+            exit 1
         }
     }
 
-    Write-Host "[+] Python test suite completed successfully (0 skipped, 0 failed, passed == collected)."
+    $passedCount = 0
+    if ($summaryLine -match '(\d+)\s+passed') {
+        $passedCount = [int]$matches[1]
+    }
+
+    if ($passedCount -ne $collectedCount) {
+        Write-Error "[-] FATAL: Pytest passed count ($passedCount) does not equal collected count ($collectedCount)."
+        exit 1
+    }
+
+    Write-Host "[+] Python test suite completed successfully (0 skipped, 0 failed, passed: $passedCount == collected: $collectedCount)."
 } else {
     Write-Host "`n[Step 3/3] Python Unit Tests: SKIPPED (-SkipPytest specified)"
 }
