@@ -298,6 +298,17 @@ void CPURefSim::GetCarState(int carIdx, CarStatePOD& out) const {
     out.last_controls.handbrake = cs.lastControls.handbrake ? 1 : 0;
 }
 
+void CPURefSim::GetWheelDebug(int carIdx, int w, float& susp_force, float& v_rel, float& pushback, float& comp_bt) const {
+    susp_force = 0.0f; v_rel = 0.0f; pushback = 0.0f; comp_bt = 0.0f;
+    if (carIdx < 0 || carIdx >= static_cast<int>(m_cars.size())) return;
+    RocketSim::Car* car = m_cars[carIdx];
+    const auto& wi = car->_bulletVehicle.m_wheelInfo[w];
+    susp_force = wi.m_wheelsSuspensionForce;
+    v_rel = wi.m_suspensionRelativeVelocity;
+    pushback = wi.m_extraPushback;
+    comp_bt = wi.getSuspensionRestLength() - wi.m_raycastInfo.m_suspensionLength;
+}
+
 void CPURefSim::SetBallState(const BallStatePOD& in) {
     if (!m_arena || !m_arena->ball) return;
 
@@ -345,6 +356,27 @@ void CPURefSim::SetCarState(int carIdx, const CarStatePOD& in) {
     car->SetState(cs);
     car->_rigidBody.activate(true);
     car->_rigidBody.setActivationState(ACTIVE_TAG);
+}
+
+void CPURefSim::DumpCarInternalState(int carIdx) const {
+    if (carIdx < 0 || carIdx >= static_cast<int>(m_cars.size())) return;
+    RocketSim::Car* car = m_cars[carIdx];
+    auto is = car->_internalState;
+    std::cout << "  [CPU Car " << carIdx << " Internal] "
+              << "og=" << (int)is.isOnGround
+              << " hasJmp=" << (int)is.hasJumped
+              << " isJmp=" << (int)is.isJumping
+              << " jmpTime=" << is.jumpTime
+              << " hasDblJmp=" << (int)is.hasDoubleJumped
+              << " hasFlip=" << (int)is.hasFlipped
+              << " isFlip=" << (int)is.isFlipping
+              << " flipTime=" << is.flipTime
+              << " isAutoFlip=" << (int)is.isAutoFlipping
+              << " wheelsContact=(" << (int)is.wheelsWithContact[0] << "," << (int)is.wheelsWithContact[1]
+              << "," << (int)is.wheelsWithContact[2] << "," << (int)is.wheelsWithContact[3] << ")"
+              << " worldContact=" << (int)is.worldContact.hasContact
+              << " lastJmp=" << (int)is.lastControls.jump
+              << "\n";
 }
 
 } // namespace rocketsim_cuda

@@ -1,0 +1,229 @@
+﻿======================================================================
+                   ROCKETSIM-CUDA DIFFERENTIAL HARNESS                
+======================================================================
+  Environments: 1
+  Ticks:        25
+  PRNG Seed:    1337
+  Tolerance:    0.0001 UU
+  Scenario:     random
+  Report Mode:  ENABLED (Windowed Stats)
+  Record File:  milestone1_golden.rsgold
+======================================================================
+
+[Test 1/4] Running CPU Reference Simulation & Recording .rsgold...
+[CPU STEP START tick 19] w=(5.40746,0.138097,-0.99516) v=(2.57077,-6.66052,1.88646)
+  after _PreTickUpdate: w=(4.97763,-0.536096,-1.33242) torq=(18121.4,3874.89,-1616.39) force=(284.022,3155.15,410.752)
+  after stepSimulation: w=(6.5731,0.0213132,-1.33733) v=(2.43738,-6.49248,2.32869)
+[CPU STEP START tick 20] w=(5.38955,0.0174756,-1.09654) v=(2.43738,-6.49248,2.32869)
+  after _PreTickUpdate: w=(5.26609,-0.460764,-1.43261) torq=(3623.19,3144.66,1438) force=(337.637,3219.31,704.325)
+  after stepSimulation: w=(4.97952,-0.970295,-1.37283) v=(2.23075,-5.91354,3.20943)
+[CPU STEP START tick 21] w=(4.97952,-0.970295,-1.37283) v=(2.23075,-5.91354,3.20943)
+  after _PreTickUpdate: w=(5.20662,-0.862211,-1.55292) torq=(11950.8,3221.8,-54.6002) force=(336.456,2954.44,713.104)
+  after stepSimulation: w=(5.86885,-1.00342,-1.56852) v=(1.99776,-5.40151,3.48804)
+[CPU STEP START tick 22] w=(5.24247,-0.896329,-1.40111) v=(1.99776,-5.40151,3.48804)
+  after _PreTickUpdate: w=(5.2389,-0.792849,-1.52584) torq=(17194.8,3107.94,-826.661) force=(347.707,2778.8,808.94)
+  after stepSimulation: w=(5.84971,-1.70652,-1.85738) v=(1.69041,-5.08456,3.03261)
+[+] Successfully recorded 25 ticks for 1 environments to milestone1_golden.rsgold
+
+[Test 2/4] Verifying .rsgold Binary Replay & Deserialization Parity...
+[CPU STEP START tick 19] w=(5.40746,0.138097,-0.99516) v=(2.57077,-6.66052,1.88646)
+  after _PreTickUpdate: w=(4.97763,-0.536096,-1.33242) torq=(18121.4,3874.89,-1616.39) force=(284.022,3155.15,410.752)
+  after stepSimulation: w=(6.5731,0.0213132,-1.33733) v=(2.43738,-6.49248,2.32869)
+[CPU STEP START tick 20] w=(5.38955,0.0174756,-1.09654) v=(2.43738,-6.49248,2.32869)
+  after _PreTickUpdate: w=(5.26609,-0.460764,-1.43261) torq=(3623.19,3144.66,1438) force=(337.637,3219.31,704.325)
+  after stepSimulation: w=(4.97952,-0.970295,-1.37283) v=(2.23075,-5.91354,3.20943)
+[CPU STEP START tick 21] w=(4.97952,-0.970295,-1.37283) v=(2.23075,-5.91354,3.20943)
+  after _PreTickUpdate: w=(5.20662,-0.862211,-1.55292) torq=(11950.8,3221.8,-54.6002) force=(336.456,2954.44,713.104)
+  after stepSimulation: w=(5.86885,-1.00342,-1.56852) v=(1.99776,-5.40151,3.48804)
+[CPU STEP START tick 22] w=(5.24247,-0.896329,-1.40111) v=(1.99776,-5.40151,3.48804)
+  after _PreTickUpdate: w=(5.2389,-0.792849,-1.52584) torq=(17194.8,3107.94,-826.661) force=(347.707,2778.8,808.94)
+  after stepSimulation: w=(5.84971,-1.70652,-1.85738) v=(1.69041,-5.08456,3.03261)
+[+] Replay verified: 100% deterministic parity across all 25 ticks.
+
+[Test 3/4] Verifying GPU SimContext Pre-allocated SoA Round-Trip...
+    SimContext allocated 16 KB pre-allocated device memory arena.
+[+] GPU SoA Round-Trip verified: Zero-loss fidelity on 128-byte aligned device memory.
+
+[Test 4/4] Verifying Comparator Sensitivity (Rejection of Injected Perturbation)...
+    Correctly rejected perturbed Ball: Delta 0.0002 UU > Threshold 0.0001 UU
+    Correctly rejected perturbed Car: Delta 0.000199974 > Threshold 1e-05
+[+] Comparator Sensitivity verified: Strictly enforces GEMINI.md tolerances.
+
+[Test 5/5] Lockstep Differential Simulation: GPU vs CPU Oracle (25 ticks, 1 envs)...
+  --> Running scenario: random (25 ticks)...
+[TICK 14] ctrl: thr=-0.374022 str=-0.964353 jmp=0 bst=0 p=-0.963394 y=-0.892145 r=0.689157
+  CPU pos=-2290.52,-4643.78,32.273 vel=154.265,-385.444,-28.0833 ang=4.96169,2.01214,0.00506091 susp=(-12,-12,-9.04659,1.54647) og=0
+  [CPU Car 0 Internal] og=0 hasJmp=0 isJmp=0 jmpTime=0 hasDblJmp=0 hasFlip=1 isFlip=1 flipTime=0.0833333 isAutoFlip=0 wheelsContact=(0,0,1,1) worldContact=0 lastJmp=0
+  GPU pos=-2290.31,-4644.12,32.2702 vel=164.744,-406.791,-28.3283 ang=4.89736,1.86765,-0.163282 susp=(-12,-12,-9.0092,1.48017) og=0
+  [GPU Car 0 Internal] og=0 hasJmp=0 isJmp=0 jmpTime=0 hasDblJmp=0 hasFlip=1 isFlip=1 flipTime=0.0833333 wheelsContact=(0,0,1,1)
+  Delta: pos=0.347168 vel=21.3467 quat=0.00152726 ang=0.168343
+[TICK 15] ctrl: thr=0.386329 str=-0.980705 jmp=0 bst=0 p=-0.651625 y=0.253164 r=-0.139663
+  CPU pos=-2289.29,-4646.99,32.3245 vel=148.61,-385.841,6.17818 ang=4.66834,1.31912,-0.210696 susp=(-12,-12,-8.43297,3.38079) og=0
+  [CPU Car 0 Internal] og=0 hasJmp=0 isJmp=0 jmpTime=0 hasDblJmp=0 hasFlip=1 isFlip=1 flipTime=0.0916667 isAutoFlip=0 wheelsContact=(0,0,1,1) worldContact=0 lastJmp=0
+  GPU pos=-2288.94,-4647.51,32.3089 vel=164.65,-406.602,4.64639 ang=4.62898,1.18073,-0.273714 susp=(-12,-12,-8.36001,3.27063) og=0
+  [GPU Car 0 Internal] og=0 hasJmp=0 isJmp=0 jmpTime=0 hasDblJmp=0 hasFlip=1 isFlip=1 flipTime=0.0916667 wheelsContact=(0,0,1,1)
+  Delta: pos=0.519531 vel=20.7611 quat=0.0020401 ang=0.138392
+[TICK 16] ctrl: thr=0.204545 str=-0.853755 jmp=0 bst=1 p=0.960814 y=0.748234 r=-0.314299
+  CPU pos=-2288.09,-4650.14,32.6474 vel=142.876,-377.358,38.745 ang=5.40733,0.802568,-0.605572 susp=(-12,-12,-8.01187,4.67584) og=0
+  [CPU Car 0 Internal] og=0 hasJmp=0 isJmp=0 jmpTime=0 hasDblJmp=0 hasFlip=1 isFlip=1 flipTime=0.1 isAutoFlip=0 wheelsContact=(0,0,1,1) worldContact=0 lastJmp=0
+  GPU pos=-2287.57,-4650.83,32.6103 vel=165.017,-398.423,36.1644 ang=5.43145,0.661635,-0.558173 susp=(-12,-12,-7.88699,4.54121) og=0
+  [GPU Car 0 Internal] og=0 hasJmp=0 isJmp=0 jmpTime=0 hasDblJmp=0 hasFlip=1 isFlip=1 flipTime=0.1 wheelsContact=(0,0,1,1)
+  Delta: pos=0.695312 vel=22.1418 quat=0.00251684 ang=0.140933
+[TICK 17] ctrl: thr=0.711082 str=-0.94999 jmp=0 bst=1 p=-0.997258 y=-0.404377 r=0.818978
+  CPU pos=-2286.96,-4653.09,33.2407 vel=136.162,-354.898,71.2015 ang=4.79917,0.305043,-0.718277 susp=(-12,-12,-7.60947,5.75393) og=0
+  [CPU Car 0 Internal] og=0 hasJmp=0 isJmp=0 jmpTime=0 hasDblJmp=0 hasFlip=1 isFlip=1 flipTime=0.108333 isAutoFlip=0 wheelsContact=(0,0,1,1) worldContact=0 lastJmp=0
+  GPU pos=-2286.19,-4654.08,33.1764 vel=165.429,-390.175,67.9368 ang=4.66812,0.128452,-0.522487 susp=(-12,-12,-7.41245,5.60443) og=0
+  [GPU Car 0 Internal] og=0 hasJmp=0 isJmp=0 jmpTime=0 hasDblJmp=0 hasFlip=1 isFlip=1 flipTime=0.108333 wheelsContact=(0,0,1,1)
+  Delta: pos=0.98877 vel=35.2766 quat=0.00329927 ang=0.19579
+[TICK 18] ctrl: thr=-0.235228 str=0.966042 jmp=1 bst=1 p=0.467705 y=0.370067 r=0.853854
+  CPU pos=-2285.89,-4655.87,34.0268 vel=128.538,-333.026,94.323 ang=5.40746,0.138097,-0.99516 susp=(-12,-12,-7.55433,6.19007) og=0
+  [CPU Car 0 Internal] og=0 hasJmp=0 isJmp=0 jmpTime=0 hasDblJmp=0 hasFlip=1 isFlip=1 flipTime=0.116667 isAutoFlip=0 wheelsContact=(0,0,1,1) worldContact=0 lastJmp=1
+  GPU pos=-2284.8,-4657.27,33.9218 vel=165.825,-382.556,89.4466 ang=5.45513,-0.044929,-0.699676 susp=(-12,-12,-7.28195,6.00397) og=0
+  [GPU Car 0 Internal] og=0 hasJmp=0 isJmp=0 jmpTime=0 hasDblJmp=0 hasFlip=1 isFlip=1 flipTime=0.116667 wheelsContact=(0,0,1,1)
+  Delta: pos=1.40088 vel=49.5297 quat=0.00449616 ang=0.295483
+[CPU STEP START tick 19] w=(5.40746,0.138097,-0.99516) v=(2.57077,-6.66052,1.88646)
+  after _PreTickUpdate: w=(4.97763,-0.536096,-1.33242) torq=(18121.4,3874.89,-1616.39) force=(284.022,3155.15,410.752)
+  after stepSimulation: w=(6.5731,0.0213132,-1.33733) v=(2.43738,-6.49248,2.32869)
+[TICK 19] ctrl: thr=-0.395314 str=0.258946 jmp=0 bst=1 p=0.677659 y=-0.950416 r=-0.465324
+  CPU pos=-2284.87,-4658.58,34.9971 vel=121.869,-324.624,116.434 ang=5.38955,0.0174756,-1.09654 susp=(-12,-12,-7.54429,6.59854) og=0
+  [CPU Car 0 Internal] og=0 hasJmp=0 isJmp=0 jmpTime=0 hasDblJmp=0 hasFlip=1 isFlip=1 flipTime=0.125 isAutoFlip=0 wheelsContact=(0,0,1,1) worldContact=0 lastJmp=0
+  GPU pos=-2283.42,-4660.4,34.8435 vel=166.256,-375.206,110.609 ang=5.44652,-0.167683,-0.746517 susp=(-12,-12,-7.17899,6.35255) og=0
+  [GPU Car 0 Internal] og=0 hasJmp=0 isJmp=0 jmpTime=0 hasDblJmp=0 hasFlip=1 isFlip=1 flipTime=0.125 wheelsContact=(0,0,1,1)
+  Delta: pos=1.82227 vel=50.5816 quat=0.00478345 ang=0.350019
+[CPU STEP START tick 20] w=(5.38955,0.0174756,-1.09654) v=(2.43738,-6.49248,2.32869)
+  after _PreTickUpdate: w=(5.26609,-0.460764,-1.43261) torq=(3623.19,3144.66,1438) force=(337.637,3219.31,704.325)
+  after stepSimulation: w=(4.97952,-0.970295,-1.37283) v=(2.23075,-5.91354,3.20943)
+[TICK 20] ctrl: thr=0.513381 str=0.933804 jmp=0 bst=1 p=-0.711856 y=0.348212 r=-0.597894
+  CPU pos=-2283.94,-4661.04,36.3343 vel=111.537,-295.677,160.472 ang=4.97952,-0.970295,-1.37283 susp=(-12,-12,-7.78082,6.77104) og=0
+  [CPU Car 0 Internal] og=0 hasJmp=0 isJmp=0 jmpTime=0 hasDblJmp=0 hasFlip=1 isFlip=1 flipTime=0.133333 isAutoFlip=0 wheelsContact=(0,0,1,1) worldContact=1 lastJmp=0
+  GPU pos=-2282.03,-4663.46,35.9023 vel=166.756,-367.724,127.057 ang=5.4559,-0.230041,-0.655922 susp=(-12,-12,-7.2283,6.53651) og=0
+  [GPU Car 0 Internal] og=0 hasJmp=0 isJmp=0 jmpTime=0 hasDblJmp=0 hasFlip=1 isFlip=1 flipTime=0.133333 wheelsContact=(0,0,1,1)
+  Delta: pos=2.42236 vel=72.0471 quat=0.0041582 ang=0.740255
+[CPU STEP START tick 21] w=(4.97952,-0.970295,-1.37283) v=(2.23075,-5.91354,3.20943)
+  after _PreTickUpdate: w=(5.20662,-0.862211,-1.55292) torq=(11950.8,3221.8,-54.6002) force=(336.456,2954.44,713.104)
+  after stepSimulation: w=(5.86885,-1.00342,-1.56852) v=(1.99776,-5.40151,3.48804)
+[TICK 21] ctrl: thr=-0.355403 str=-0.416166 jmp=1 bst=0 p=-0.279492 y=-0.983276 r=-0.0974637
+  CPU pos=-2283.11,-4663.29,37.7877 vel=99.8878,-270.075,174.402 ang=5.24247,-0.896329,-1.40111 susp=(-12,-12,-8.47258,5.80757) og=0
+  [CPU Car 0 Internal] og=0 hasJmp=0 isJmp=0 jmpTime=0 hasDblJmp=0 hasFlip=1 isFlip=1 flipTime=0.141667 isAutoFlip=0 wheelsContact=(0,0,1,1) worldContact=1 lastJmp=1
+  GPU pos=-2280.64,-4666.47,37.033 vel=167.242,-360.873,135.683 ang=5.47314,-0.0568185,-0.539875 susp=(-12,-12,-7.74766,6.20647) og=0
+  [GPU Car 0 Internal] og=0 hasJmp=0 isJmp=0 jmpTime=0 hasDblJmp=0 hasFlip=1 isFlip=1 flipTime=0.141667 wheelsContact=(0,0,1,1)
+  Delta: pos=3.17871 vel=90.7975 quat=0.00595623 ang=0.861236
+[CPU STEP START tick 22] w=(5.24247,-0.896329,-1.40111) v=(1.99776,-5.40151,3.48804)
+  after _PreTickUpdate: w=(5.2389,-0.792849,-1.52584) torq=(17194.8,3107.94,-826.661) force=(347.707,2778.8,808.94)
+  after stepSimulation: w=(5.84971,-1.70652,-1.85738) v=(1.69041,-5.08456,3.03261)
+[TICK 22] ctrl: thr=-0.671948 str=-0.435148 jmp=0 bst=0 p=0.30599 y=-0.889864 r=-0.353351
+  CPU pos=-2282.41,-4665.41,39.0513 vel=84.5203,-254.228,151.63 ang=5.0505,-1.47337,-1.60362 susp=(-12,-12,-9.37745,4.70346) og=0
+  [CPU Car 0 Internal] og=0 hasJmp=0 isJmp=0 jmpTime=0 hasDblJmp=0 hasFlip=1 isFlip=1 flipTime=0.15 isAutoFlip=0 wheelsContact=(0,0,1,1) worldContact=1 lastJmp=0
+  GPU pos=-2279.24,-4669.42,37.7975 vel=167.754,-354.459,91.7438 ang=5.48015,0.194826,-0.424285 susp=(-12,-12,-8.48803,5.86173) og=0
+  [GPU Car 0 Internal] og=0 hasJmp=0 isJmp=0 jmpTime=0 hasDblJmp=0 hasFlip=1 isFlip=1 flipTime=0.15 wheelsContact=(0,0,1,1)
+  Delta: pos=4.01367 vel=100.231 quat=0.0123941 ang=1.66819
+
+| Scenario | Window (Ticks) | Car Pos (UU) | Car Vel (UU/s) | Car Quat | Ball Pos (UU) | Ball Vel (UU/s) | First Breach Tick | Status |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| random            | 1 (0.008s)     | 0.000e+00 | 4.044e-08 | 5.960e-08 | 0.000e+00 | 0.000e+00 | 7 | PASS |
+| random            | 10 (0.083s)    | 9.766e-04 | 1.755e-04 | 3.360e-06 | 0.000e+00 | 0.000e+00 | 7 | DRIFT |
+
+### Milestone 5 Phase 1 Component-Wise Parity Baseline (random, 1 environments)
+
+#### Absolute Error (|Δ|) — Median and P95 across Snapshot Ticks
+
+| Component | Tick 1 (Med) | Tick 1 (P95) | Tick 10 (Med) | Tick 10 (P95) |
+| :--- | :--- | :--- | :--- | :--- |
+| Car Pos X         | 0.000e+00 | 0.000e+00 | 2.441e-04 | 2.441e-04 |
+| Car Pos Y         | 0.000e+00 | 0.000e+00 | 9.766e-04 | 9.766e-04 |
+| Car Pos Z         | 0.000e+00 | 0.000e+00 | 1.144e-05 | 1.144e-05 |
+| Car Vel X         | 4.044e-08 | 4.044e-08 | 9.155e-05 | 9.155e-05 |
+| Car Vel Y         | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Car Vel Z         | 0.000e+00 | 0.000e+00 | 1.755e-04 | 1.755e-04 |
+| Car Quat W        | 0.000e+00 | 0.000e+00 | 4.172e-07 | 4.172e-07 |
+| Car Quat X        | 7.276e-12 | 7.276e-12 | 3.360e-06 | 3.360e-06 |
+| Car Quat Y        | 5.821e-11 | 5.821e-11 | 1.295e-06 | 1.295e-06 |
+| Car Quat Z        | 5.960e-08 | 5.960e-08 | 5.960e-08 | 5.960e-08 |
+| Ball Pos X        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Pos Y        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Pos Z        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel X        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel Y        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel Z        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel X     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel Y     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel Z     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+
+#### Relative Error (|Δ| / (|v_cpu| + 1.0)) — Median and P95 across Snapshot Ticks
+
+| Component | Tick 1 (Med) | Tick 1 (P95) | Tick 10 (Med) | Tick 10 (P95) |
+| :--- | :--- | :--- | :--- | :--- |
+| Car Pos X         | 0.000e+00 | 0.000e+00 | 1.063e-07 | 1.063e-07 |
+| Car Pos Y         | 0.000e+00 | 0.000e+00 | 2.109e-07 | 2.109e-07 |
+| Car Pos Z         | 0.000e+00 | 0.000e+00 | 3.311e-07 | 3.311e-07 |
+| Car Vel X         | 4.044e-08 | 4.044e-08 | 5.543e-07 | 5.543e-07 |
+| Car Vel Y         | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Car Vel Z         | 0.000e+00 | 0.000e+00 | 3.461e-06 | 3.461e-06 |
+| Car Quat W        | 0.000e+00 | 0.000e+00 | 2.444e-07 | 2.444e-07 |
+| Car Quat X        | 7.275e-12 | 7.275e-12 | 3.051e-06 | 3.051e-06 |
+| Car Quat Y        | 5.818e-11 | 5.818e-11 | 1.263e-06 | 1.263e-06 |
+| Car Quat Z        | 3.492e-08 | 3.492e-08 | 3.507e-08 | 3.507e-08 |
+| Ball Pos X        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Pos Y        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Pos Z        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel X        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel Y        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel Z        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel X     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel Y     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel Z     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+
+#### Snapshot Detail (Per-Tick Breakdown)
+
+**Tick 1** (1 environments):
+
+| Component | Median Abs Error | P95 Abs Error | Median Rel Error | P95 Rel Error |
+| :--- | :--- | :--- | :--- | :--- |
+| Car Pos X         | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Car Pos Y         | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Car Pos Z         | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Car Vel X         | 4.044e-08 | 4.044e-08 | 4.044e-08 | 4.044e-08 |
+| Car Vel Y         | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Car Vel Z         | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Car Quat W        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Car Quat X        | 7.276e-12 | 7.276e-12 | 7.275e-12 | 7.275e-12 |
+| Car Quat Y        | 5.821e-11 | 5.821e-11 | 5.818e-11 | 5.818e-11 |
+| Car Quat Z        | 5.960e-08 | 5.960e-08 | 3.492e-08 | 3.492e-08 |
+| Ball Pos X        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Pos Y        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Pos Z        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel X        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel Y        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel Z        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel X     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel Y     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel Z     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+
+**Tick 10** (1 environments):
+
+| Component | Median Abs Error | P95 Abs Error | Median Rel Error | P95 Rel Error |
+| :--- | :--- | :--- | :--- | :--- |
+| Car Pos X         | 2.441e-04 | 2.441e-04 | 1.063e-07 | 1.063e-07 |
+| Car Pos Y         | 9.766e-04 | 9.766e-04 | 2.109e-07 | 2.109e-07 |
+| Car Pos Z         | 1.144e-05 | 1.144e-05 | 3.311e-07 | 3.311e-07 |
+| Car Vel X         | 9.155e-05 | 9.155e-05 | 5.543e-07 | 5.543e-07 |
+| Car Vel Y         | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Car Vel Z         | 1.755e-04 | 1.755e-04 | 3.461e-06 | 3.461e-06 |
+| Car Quat W        | 4.172e-07 | 4.172e-07 | 2.444e-07 | 2.444e-07 |
+| Car Quat X        | 3.360e-06 | 3.360e-06 | 3.051e-06 | 3.051e-06 |
+| Car Quat Y        | 1.295e-06 | 1.295e-06 | 1.263e-06 | 1.263e-06 |
+| Car Quat Z        | 5.960e-08 | 5.960e-08 | 3.507e-08 | 3.507e-08 |
+| Ball Pos X        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Pos Y        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Pos Z        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel X        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel Y        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel Z        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel X     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel Y     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel Z     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+
+
+======================================================================
+  DIFFERENTIAL PARITY REPORT COMPLETED ACROSS ALL REQUESTED WINDOWS!  
+======================================================================

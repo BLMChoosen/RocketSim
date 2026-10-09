@@ -73,7 +73,9 @@ __global__ void k_device_stress_dodge_air_control(
     car_state.flip_rel_torque_z = &s_flip_rel_torque_z;
 
     Vec3 total_force(0.0f, 0.0f, 0.0f);
-    update_car_air_control(0, car_state, ctrl, basis, DELTA_TIME, omega, total_force, true);
+    Vec3 total_torque_omega(0.0f, 0.0f, 0.0f);
+    update_car_air_control(0, car_state, ctrl, basis, DELTA_TIME, omega, total_torque_omega, total_force, true);
+    omega = omega + total_torque_omega * DELTA_TIME;
 
     // Apply CAR_MAX_ANG_SPEED clamp matching step_kernel.cu:216-219
     float ang_speed_sq = omega.length_sq();

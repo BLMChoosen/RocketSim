@@ -1,0 +1,215 @@
+﻿======================================================================
+                   ROCKETSIM-CUDA DIFFERENTIAL HARNESS                
+======================================================================
+  Environments: 1
+  Ticks:        60
+  PRNG Seed:    1337
+  Tolerance:    0.0001 UU
+  Scenario:     ablation_10_random_full
+  Report Mode:  ENABLED (Windowed Stats)
+  Record File:  milestone1_golden.rsgold
+======================================================================
+
+[Test 1/4] Running CPU Reference Simulation & Recording .rsgold...
+[+] Successfully recorded 60 ticks for 1 environments to milestone1_golden.rsgold
+
+[Test 2/4] Verifying .rsgold Binary Replay & Deserialization Parity...
+[+] Replay verified: 100% deterministic parity across all 60 ticks.
+
+[Test 3/4] Verifying GPU SimContext Pre-allocated SoA Round-Trip...
+    SimContext allocated 16 KB pre-allocated device memory arena.
+[+] GPU SoA Round-Trip verified: Zero-loss fidelity on 128-byte aligned device memory.
+
+[Test 4/4] Verifying Comparator Sensitivity (Rejection of Injected Perturbation)...
+    Correctly rejected perturbed Ball: Delta 0.0002 UU > Threshold 0.0001 UU
+    Correctly rejected perturbed Car: Delta 0.000200003 > Threshold 1e-05
+[+] Comparator Sensitivity verified: Strictly enforces GEMINI.md tolerances.
+
+[Test 5/5] Lockstep Differential Simulation: GPU vs CPU Oracle (60 ticks, 1 envs)...
+  --> Running scenario: ablation_10_random_full (60 ticks)...
+[TICK 10] d_pos=0.000976562 d_vel=0.000175476 d_quat=3.36021e-06 CPU(og=0,wh=0001) GPU(og=0,wh=0001)
+[TICK 11] d_pos=0.00610352 d_vel=0.715103 d_quat=4.00543e-05 CPU(og=0,wh=0001) GPU(og=0,wh=0001)
+[TICK 12] d_pos=0.0170898 d_vel=1.3213 d_quat=0.000103772 CPU(og=0,wh=0001) GPU(og=0,wh=0001)
+[TICK 13] d_pos=0.0341797 d_vel=2.00336 d_quat=0.000197113 CPU(og=0,wh=0001) GPU(og=0,wh=0001)
+[TICK 14] d_pos=0.0544434 d_vel=2.42265 d_quat=0.000292838 CPU(og=0,wh=0011) GPU(og=0,wh=0011)
+[TICK 15] d_pos=0.0827637 d_vel=3.39935 d_quat=0.000443041 CPU(og=0,wh=0011) GPU(og=0,wh=0011)
+[TICK 16] d_pos=0.121094 d_vel=4.53859 d_quat=0.000657797 CPU(og=0,wh=0011) GPU(og=0,wh=0011)
+[TICK 17] d_pos=0.16333 d_vel=5.07918 d_quat=0.000896573 CPU(og=0,wh=0011) GPU(og=0,wh=0011)
+[TICK 18] d_pos=0.214355 d_vel=6.10031 d_quat=0.00119686 CPU(og=0,wh=0011) GPU(og=0,wh=0011)
+[TICK 19] d_pos=0.272705 d_vel=7.01289 d_quat=0.00151294 CPU(og=0,wh=0011) GPU(og=0,wh=0011)
+[TICK 20] d_pos=0.362793 d_vel=27.3514 d_quat=0.00465763 CPU(og=0,wh=0011) GPU(og=0,wh=0011)
+[TICK 21] d_pos=0.499352 d_vel=31.7336 d_quat=0.0099622 CPU(og=0,wh=0011) GPU(og=0,wh=0011)
+[TICK 22] d_pos=0.953312 d_vel=54.4754 d_quat=0.01916 CPU(og=0,wh=0011) GPU(og=0,wh=0011)
+[TICK 23] d_pos=1.02197 d_vel=36.0419 d_quat=0.0181518 CPU(og=0,wh=0001) GPU(og=0,wh=0001)
+[TICK 24] d_pos=1.3894 d_vel=44.0772 d_quat=0.0180682 CPU(og=0,wh=0001) GPU(og=0,wh=0001)
+[TICK 25] d_pos=1.77881 d_vel=46.7701 d_quat=0.0179294 CPU(og=0,wh=0001) GPU(og=0,wh=0001)
+[TICK 26] d_pos=2.24243 d_vel=55.6549 d_quat=0.017868 CPU(og=0,wh=0001) GPU(og=0,wh=0001)
+[TICK 27] d_pos=2.75684 d_vel=61.6895 d_quat=0.0178954 CPU(og=0,wh=0001) GPU(og=0,wh=0001)
+[TICK 28] d_pos=3.26147 d_vel=60.5555 d_quat=0.0129457 CPU(og=0,wh=0001) GPU(og=0,wh=0001)
+[TICK 29] d_pos=3.77417 d_vel=61.5274 d_quat=0.0132514 CPU(og=0,wh=0001) GPU(og=0,wh=0001)
+[TICK 30] d_pos=4.28516 d_vel=61.3213 d_quat=0.0127644 CPU(og=0,wh=0001) GPU(og=0,wh=0001)
+[TICK 31] d_pos=4.76929 d_vel=64.1553 d_quat=0.0120491 CPU(og=0,wh=0000) GPU(og=0,wh=0001)
+[TICK 32] d_pos=5.25513 d_vel=64.1279 d_quat=0.0118765 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 33] d_pos=5.7417 d_vel=64.1999 d_quat=0.0111821 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 34] d_pos=6.22925 d_vel=64.2766 d_quat=0.0131937 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 35] d_pos=6.71777 d_vel=64.3949 d_quat=0.0166691 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 36] d_pos=7.20728 d_vel=64.5736 d_quat=0.0191312 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 37] d_pos=7.69751 d_vel=64.7738 d_quat=0.0201483 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 38] d_pos=8.1897 d_vel=64.9724 d_quat=0.0207966 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 39] d_pos=8.68311 d_vel=65.1636 d_quat=0.0211817 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 40] d_pos=9.03223 d_vel=82.151 d_quat=0.0219413 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 41] d_pos=9.38135 d_vel=78.2222 d_quat=0.0180151 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 42] d_pos=9.94092 d_vel=78.2213 d_quat=0.0175565 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 43] d_pos=10.5928 d_vel=78.2305 d_quat=0.0193664 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 44] d_pos=11.2446 d_vel=78.2393 d_quat=0.0226242 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 45] d_pos=11.917 d_vel=80.7462 d_quat=0.029738 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 46] d_pos=12.5898 d_vel=80.7699 d_quat=0.0347314 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 47] d_pos=13.2622 d_vel=80.6842 d_quat=0.0462054 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 48] d_pos=13.9326 d_vel=80.4795 d_quat=0.0564893 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 49] d_pos=14.6006 d_vel=80.1468 d_quat=0.0658721 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 50] d_pos=15.2646 d_vel=79.706 d_quat=0.0746909 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 51] d_pos=15.9248 d_vel=79.2134 d_quat=0.0844821 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 52] d_pos=16.5801 d_vel=78.6315 d_quat=0.0955848 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 53] d_pos=17.229 d_vel=77.9125 d_quat=0.105385 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 54] d_pos=17.8726 d_vel=77.1495 d_quat=0.114356 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 55] d_pos=18.5073 d_vel=76.2353 d_quat=0.124101 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 56] d_pos=19.1348 d_vel=75.286 d_quat=0.135076 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 57] d_pos=19.7617 d_vel=75.3032 d_quat=0.144691 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 58] d_pos=20.3789 d_vel=74.0899 d_quat=0.154013 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 59] d_pos=20.9858 d_vel=72.8018 d_quat=0.162268 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+[TICK 60] d_pos=21.582 d_vel=71.5445 d_quat=0.16978 CPU(og=0,wh=0000) GPU(og=0,wh=0000)
+
+| Scenario | Window (Ticks) | Car Pos (UU) | Car Vel (UU/s) | Car Quat | Ball Pos (UU) | Ball Vel (UU/s) | First Breach Tick | Status |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| ablation_10_random_full | 1 (0.008s)     | 0.000e+00 | 4.044e-08 | 5.960e-08 | 0.000e+00 | 0.000e+00 | 7 | PASS |
+| ablation_10_random_full | 10 (0.083s)    | 9.766e-04 | 1.755e-04 | 3.360e-06 | 0.000e+00 | 0.000e+00 | 7 | DRIFT |
+| ablation_10_random_full | 60 (0.5s)      | 2.158e+01 | 8.215e+01 | 1.698e-01 | 0.000e+00 | 0.000e+00 | 7 | DRIFT |
+
+### Milestone 5 Phase 1 Component-Wise Parity Baseline (ablation_10_random_full, 1 environments)
+
+#### Absolute Error (|Δ|) — Median and P95 across Snapshot Ticks
+
+| Component | Tick 1 (Med) | Tick 1 (P95) | Tick 10 (Med) | Tick 10 (P95) | Tick 60 (Med) | Tick 60 (P95) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| Car Pos X         | 0.000e+00 | 0.000e+00 | 2.441e-04 | 2.441e-04 | 1.454e+01 | 1.454e+01 |
+| Car Pos Y         | 0.000e+00 | 0.000e+00 | 9.766e-04 | 9.766e-04 | 2.158e+01 | 2.158e+01 |
+| Car Pos Z         | 0.000e+00 | 0.000e+00 | 1.144e-05 | 1.144e-05 | 8.297e-01 | 8.297e-01 |
+| Car Vel X         | 4.044e-08 | 4.044e-08 | 9.155e-05 | 9.155e-05 | 3.388e+01 | 3.388e+01 |
+| Car Vel Y         | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 7.154e+01 | 7.154e+01 |
+| Car Vel Z         | 0.000e+00 | 0.000e+00 | 1.755e-04 | 1.755e-04 | 1.561e+01 | 1.561e+01 |
+| Car Quat W        | 0.000e+00 | 0.000e+00 | 4.172e-07 | 4.172e-07 | 1.043e-01 | 1.043e-01 |
+| Car Quat X        | 7.276e-12 | 7.276e-12 | 3.360e-06 | 3.360e-06 | 3.982e-02 | 3.982e-02 |
+| Car Quat Y        | 5.821e-11 | 5.821e-11 | 1.295e-06 | 1.295e-06 | 1.564e-01 | 1.564e-01 |
+| Car Quat Z        | 5.960e-08 | 5.960e-08 | 5.960e-08 | 5.960e-08 | 1.698e-01 | 1.698e-01 |
+| Ball Pos X        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Pos Y        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Pos Z        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel X        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel Y        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel Z        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel X     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel Y     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel Z     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+
+#### Relative Error (|Δ| / (|v_cpu| + 1.0)) — Median and P95 across Snapshot Ticks
+
+| Component | Tick 1 (Med) | Tick 1 (P95) | Tick 10 (Med) | Tick 10 (P95) | Tick 60 (Med) | Tick 60 (P95) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| Car Pos X         | 0.000e+00 | 0.000e+00 | 1.063e-07 | 1.063e-07 | 6.392e-03 | 6.392e-03 |
+| Car Pos Y         | 0.000e+00 | 0.000e+00 | 2.109e-07 | 2.109e-07 | 4.592e-03 | 4.592e-03 |
+| Car Pos Z         | 0.000e+00 | 0.000e+00 | 3.311e-07 | 3.311e-07 | 9.248e-03 | 9.248e-03 |
+| Car Vel X         | 4.044e-08 | 4.044e-08 | 5.543e-07 | 5.543e-07 | 1.115e+00 | 1.115e+00 |
+| Car Vel Y         | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 1.624e+00 | 1.624e+00 |
+| Car Vel Z         | 0.000e+00 | 0.000e+00 | 3.461e-06 | 3.461e-06 | 6.768e-02 | 6.768e-02 |
+| Car Quat W        | 0.000e+00 | 0.000e+00 | 2.444e-07 | 2.444e-07 | 9.724e-02 | 9.724e-02 |
+| Car Quat X        | 7.275e-12 | 7.275e-12 | 3.051e-06 | 3.051e-06 | 2.236e-02 | 2.236e-02 |
+| Car Quat Y        | 5.818e-11 | 5.818e-11 | 1.263e-06 | 1.263e-06 | 9.866e-02 | 9.866e-02 |
+| Car Quat Z        | 3.492e-08 | 3.492e-08 | 3.507e-08 | 3.507e-08 | 1.407e-01 | 1.407e-01 |
+| Ball Pos X        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Pos Y        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Pos Z        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel X        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel Y        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel Z        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel X     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel Y     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel Z     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+
+#### Snapshot Detail (Per-Tick Breakdown)
+
+**Tick 1** (1 environments):
+
+| Component | Median Abs Error | P95 Abs Error | Median Rel Error | P95 Rel Error |
+| :--- | :--- | :--- | :--- | :--- |
+| Car Pos X         | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Car Pos Y         | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Car Pos Z         | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Car Vel X         | 4.044e-08 | 4.044e-08 | 4.044e-08 | 4.044e-08 |
+| Car Vel Y         | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Car Vel Z         | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Car Quat W        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Car Quat X        | 7.276e-12 | 7.276e-12 | 7.275e-12 | 7.275e-12 |
+| Car Quat Y        | 5.821e-11 | 5.821e-11 | 5.818e-11 | 5.818e-11 |
+| Car Quat Z        | 5.960e-08 | 5.960e-08 | 3.492e-08 | 3.492e-08 |
+| Ball Pos X        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Pos Y        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Pos Z        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel X        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel Y        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel Z        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel X     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel Y     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel Z     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+
+**Tick 10** (1 environments):
+
+| Component | Median Abs Error | P95 Abs Error | Median Rel Error | P95 Rel Error |
+| :--- | :--- | :--- | :--- | :--- |
+| Car Pos X         | 2.441e-04 | 2.441e-04 | 1.063e-07 | 1.063e-07 |
+| Car Pos Y         | 9.766e-04 | 9.766e-04 | 2.109e-07 | 2.109e-07 |
+| Car Pos Z         | 1.144e-05 | 1.144e-05 | 3.311e-07 | 3.311e-07 |
+| Car Vel X         | 9.155e-05 | 9.155e-05 | 5.543e-07 | 5.543e-07 |
+| Car Vel Y         | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Car Vel Z         | 1.755e-04 | 1.755e-04 | 3.461e-06 | 3.461e-06 |
+| Car Quat W        | 4.172e-07 | 4.172e-07 | 2.444e-07 | 2.444e-07 |
+| Car Quat X        | 3.360e-06 | 3.360e-06 | 3.051e-06 | 3.051e-06 |
+| Car Quat Y        | 1.295e-06 | 1.295e-06 | 1.263e-06 | 1.263e-06 |
+| Car Quat Z        | 5.960e-08 | 5.960e-08 | 3.507e-08 | 3.507e-08 |
+| Ball Pos X        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Pos Y        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Pos Z        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel X        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel Y        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel Z        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel X     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel Y     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel Z     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+
+**Tick 60** (1 environments):
+
+| Component | Median Abs Error | P95 Abs Error | Median Rel Error | P95 Rel Error |
+| :--- | :--- | :--- | :--- | :--- |
+| Car Pos X         | 1.454e+01 | 1.454e+01 | 6.392e-03 | 6.392e-03 |
+| Car Pos Y         | 2.158e+01 | 2.158e+01 | 4.592e-03 | 4.592e-03 |
+| Car Pos Z         | 8.297e-01 | 8.297e-01 | 9.248e-03 | 9.248e-03 |
+| Car Vel X         | 3.388e+01 | 3.388e+01 | 1.115e+00 | 1.115e+00 |
+| Car Vel Y         | 7.154e+01 | 7.154e+01 | 1.624e+00 | 1.624e+00 |
+| Car Vel Z         | 1.561e+01 | 1.561e+01 | 6.768e-02 | 6.768e-02 |
+| Car Quat W        | 1.043e-01 | 1.043e-01 | 9.724e-02 | 9.724e-02 |
+| Car Quat X        | 3.982e-02 | 3.982e-02 | 2.236e-02 | 2.236e-02 |
+| Car Quat Y        | 1.564e-01 | 1.564e-01 | 9.866e-02 | 9.866e-02 |
+| Car Quat Z        | 1.698e-01 | 1.698e-01 | 1.407e-01 | 1.407e-01 |
+| Ball Pos X        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Pos Y        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Pos Z        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel X        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel Y        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball Vel Z        | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel X     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel Y     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+| Ball AngVel Z     | 0.000e+00 | 0.000e+00 | 0.000e+00 | 0.000e+00 |
+
+
+======================================================================
+  DIFFERENTIAL PARITY REPORT COMPLETED ACROSS ALL REQUESTED WINDOWS!  
+======================================================================

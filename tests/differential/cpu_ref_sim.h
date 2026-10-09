@@ -43,6 +43,8 @@ public:
     RocketSim::Arena* GetArena() { return m_arena; }
     const RocketSim::Arena* GetArena() const { return m_arena; }
     uint64_t GetTickCount() const;
+    void GetWheelDebug(int carIdx, int w, float& susp_force, float& v_rel, float& pushback, float& comp_bt) const;
+    void DumpCarInternalState(int carIdx) const;
 
 private:
     void InitArena();
