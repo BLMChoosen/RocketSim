@@ -166,7 +166,6 @@ To maintain absolute scientific and technical integrity, the following game mode
 
 ## 6. Audit Conclusion & Sign-Off
 
-* **Parity Threshold Verification:** All 54 scenarios registered in `docs/parity_thresholds.json` execute within calibrated bounds.
-* **Test Suite Status:** 26/26 Python test units passing with 0 failures (`pytest tests/python/ -v`, exit code 0).
-* **Pipeline Status:** `scripts/build_and_test.ps1` passes with exit code 0.
-* **Final Verdict:** Milestone 5 parity, multi-car simulation, and governance criteria are **100% SATISFIED**. RocketSim-CUDA is certified ready for v0.1.0 release tagging.
+* **Parity Threshold Verification:** Calibrated threshold regression guard validated via `differential_harness.exe --check docs/parity_thresholds.json`. Known multi-body deep penetration residual errors documented in `docs/M5_BLOCKERS.md`.
+* **Test Suite Status:** Exactly 66/66 Python test units passing with 0 failures, 0 skipped (`pytest tests/python/ -v`, 66 passed in ~10s).
+* **Pipeline Status:** `scripts/build_and_test.ps1` strictly enforces toolchain presence (vcvars64.bat, MSVC cl.exe, CMake, Ninja), native compilation of harness and `.pyd`, threshold checking, and pytest `passed == collected` with zero skipped tests.
