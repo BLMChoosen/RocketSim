@@ -376,8 +376,8 @@ def test_auto_roll_surface_alignment():
     # With full raycast length (48.75 UU), a 45-degree roll around X ensures only bottom wheels contact
     angle_rad = math.radians(45.0)
     for e in range(2):
-        car_obs[e, 0, 0] = 0.0
-        car_obs[e, 0, 1] = 0.0
+        car_obs[e, 0, 0] = 1000.0
+        car_obs[e, 0, 1] = 1000.0
         car_obs[e, 0, 2] = 16.0
         car_obs[e, 0, 3] = 0.0
         car_obs[e, 0, 4] = 0.0

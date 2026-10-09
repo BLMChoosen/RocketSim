@@ -12,6 +12,26 @@ for d in [_build_dir, _src_dir]:
     if d not in sys.path:
         sys.path.insert(0, d)
 
+if sys.platform == "win32":
+    if os.path.isdir(_build_dir):
+        try:
+            os.add_dll_directory(_build_dir)
+        except OSError:
+            pass
+    _cuda_candidates = [
+        os.environ.get("CUDA_PATH", ""),
+        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6",
+        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4",
+        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.2",
+    ]
+    for _c in _cuda_candidates:
+        if _c and os.path.isdir(os.path.join(_c, "bin")):
+            try:
+                os.add_dll_directory(os.path.join(_c, "bin"))
+                break
+            except OSError:
+                pass
+
 # Load binary extension
 _pyd = None
 if os.path.isdir(_build_dir):
