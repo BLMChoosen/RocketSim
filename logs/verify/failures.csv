@@ -1,0 +1,94 @@
+scenario,window,worst_component,value,threshold,ratio,classification,notes
+jump_flip,120,Car Vel,2.345e+02,2.109e+02,1.11,(c) FÍSICA,
+ball_floor_drop,120,Ball Pos,2.154e+00,1.531e+00,1.41,(c) FÍSICA,
+ablation_5_flips,120,Car Vel,2.345e+02,2.200e+02,1.07,(b) LIMITE NÃO MEDIDO,Threshold unmeasured (< 1 UU target)
+ablation_1_discrete_throttle_steer,10,Car Pos,1.953e-03,1.221e-03,1.60,(b) LIMITE NÃO MEDIDO,Threshold unmeasured (< 1 UU target)
+ablation_1_discrete_throttle_steer,60,Car Pos,1.074e-01,9.765e-03,11.00,(b) LIMITE NÃO MEDIDO,Threshold unmeasured (< 1 UU target)
+ablation_1_discrete_throttle_steer,60,Car Vel,1.309e+00,3.116e-02,42.01,(b) LIMITE NÃO MEDIDO,Threshold unmeasured (< 1 UU target)
+ablation_1_discrete_throttle_steer,60,Car Quat,7.797e-04,2.661e-06,293.01,(b) LIMITE NÃO MEDIDO,Threshold unmeasured (< 1 UU target)
+ablation_1_discrete_throttle_steer,120,Car Pos,8.496e-01,1.770e-02,48.00,(b) LIMITE NÃO MEDIDO,Threshold unmeasured (< 1 UU target)
+ablation_1_discrete_throttle_steer,120,Car Vel,8.843e+00,3.116e-02,283.79,(b) LIMITE NÃO MEDIDO,Threshold unmeasured (< 1 UU target)
+ablation_1_discrete_throttle_steer,120,Car Quat,3.409e-03,2.661e-06,1281.10,(b) LIMITE NÃO MEDIDO,Threshold unmeasured (< 1 UU target)
+ablation_2_analog_throttle_steer,10,Car Pos,1.953e-03,1.221e-03,1.60,(b) LIMITE NÃO MEDIDO,Threshold unmeasured (< 1 UU target)
+ablation_2_analog_throttle_steer,60,Car Pos,5.908e-02,9.765e-03,6.05,(b) LIMITE NÃO MEDIDO,Threshold unmeasured (< 1 UU target)
+ablation_2_analog_throttle_steer,60,Car Vel,5.321e-01,3.116e-02,17.08,(b) LIMITE NÃO MEDIDO,Threshold unmeasured (< 1 UU target)
+ablation_2_analog_throttle_steer,60,Car Quat,3.900e-04,2.661e-06,146.56,(b) LIMITE NÃO MEDIDO,Threshold unmeasured (< 1 UU target)
+ablation_2_analog_throttle_steer,120,Car Pos,3.037e-01,1.770e-02,17.16,(b) LIMITE NÃO MEDIDO,Threshold unmeasured (< 1 UU target)
+ablation_2_analog_throttle_steer,120,Car Vel,1.761e+01,3.116e-02,565.15,(b) LIMITE NÃO MEDIDO,Threshold unmeasured (< 1 UU target)
+ablation_2_analog_throttle_steer,120,Car Quat,5.218e-04,2.661e-06,196.09,(b) LIMITE NÃO MEDIDO,Threshold unmeasured (< 1 UU target)
+ablation_3_plus_boost,10,Car Pos,1.465e-03,1.221e-03,1.20,(b) LIMITE NÃO MEDIDO,Threshold unmeasured (< 1 UU target)
+ablation_3_plus_boost,60,Car Pos,2.842e-01,6.714e-03,42.33,(b) LIMITE NÃO MEDIDO,Threshold unmeasured (< 1 UU target)
+ablation_3_plus_boost,60,Car Vel,2.440e+00,3.115e-02,78.33,(b) LIMITE NÃO MEDIDO,Threshold unmeasured (< 1 UU target)
+ablation_3_plus_boost,60,Car Quat,1.207e-03,2.655e-06,454.61,(b) LIMITE NÃO MEDIDO,Threshold unmeasured (< 1 UU target)
+ablation_3_plus_boost,120,Car Pos,1.983e+00,1.313e-02,151.03,(b) LIMITE NÃO MEDIDO,Threshold unmeasured (< 1 UU target)
+ablation_3_plus_boost,120,Car Vel,6.530e+00,3.115e-02,209.63,(b) LIMITE NÃO MEDIDO,Threshold unmeasured (< 1 UU target)
+ablation_3_plus_boost,120,Car Quat,4.672e-03,2.655e-06,1759.70,(b) LIMITE NÃO MEDIDO,Threshold unmeasured (< 1 UU target)
+car_side_wall,120,Car Pos,4.334e+02,5.000e+00,86.68,(c) FÍSICA,
+car_side_wall,120,Car Vel,1.436e+03,1.500e+01,95.73,(c) FÍSICA,
+car_side_wall,120,Car Quat,6.575e-01,5.000e-02,13.15,(c) FÍSICA,
+car_ceiling,120,Car Pos,3.546e+01,5.000e+00,7.09,(c) FÍSICA,
+car_ceiling,120,Car Vel,3.152e+02,1.500e+01,21.01,(c) FÍSICA,
+car_ceiling,120,Car Quat,2.145e-01,5.000e-02,4.29,(c) FÍSICA,
+car_floor_wall_transition,120,Car Pos,4.334e+02,5.000e+00,86.68,(c) FÍSICA,
+car_floor_wall_transition,120,Car Vel,1.436e+03,1.500e+01,95.73,(c) FÍSICA,
+car_floor_wall_transition,120,Car Quat,6.575e-01,5.000e-02,13.15,(c) FÍSICA,
+config_heavy_ball,60,Car Pos,5.542e-01,5.000e-01,1.11,(b) LIMITE NÃO MEDIDO,Extreme mutator unmeasured threshold
+config_heavy_ball,60,Car Vel,1.318e+02,2.000e+00,65.90,(b) LIMITE NÃO MEDIDO,Extreme mutator unmeasured threshold
+config_heavy_ball,60,Ball Pos,5.375e+00,5.000e-01,10.75,(b) LIMITE NÃO MEDIDO,Extreme mutator unmeasured threshold
+config_heavy_ball,60,Ball Vel,1.430e+03,2.000e+00,715.00,(b) LIMITE NÃO MEDIDO,Extreme mutator unmeasured threshold
+config_heavy_ball,120,Car Vel,1.318e+02,1.000e+01,13.18,(b) LIMITE NÃO MEDIDO,Extreme mutator unmeasured threshold
+config_heavy_ball,120,Ball Pos,7.572e+00,2.000e+00,3.79,(b) LIMITE NÃO MEDIDO,Extreme mutator unmeasured threshold
+config_heavy_ball,120,Ball Vel,1.430e+03,1.000e+01,143.00,(b) LIMITE NÃO MEDIDO,Extreme mutator unmeasured threshold
+car_car_rear,60,Car Pos,5.058e+00,1.000e+00,5.06,(c) FÍSICA,
+car_car_rear,60,Car Vel,7.121e+02,1.000e+01,71.21,(c) FÍSICA,
+car_car_rear,120,Car Pos,2.380e+02,1.000e+01,23.80,(c) FÍSICA,
+car_car_rear,120,Car Vel,7.121e+02,5.000e+01,14.24,(c) FÍSICA,
+car_car_air,120,Car Pos,4.391e+02,1.000e+01,43.91,(c) FÍSICA,
+car_car_air,120,Car Vel,1.041e+03,5.000e+01,20.82,(c) FÍSICA,
+car_car_air,120,Car Quat,4.792e-01,1.000e-01,4.79,(c) FÍSICA,
+car_on_car,60,Car Pos,2.264e+00,1.000e+00,2.26,(c) FÍSICA,
+car_on_car,60,Car Vel,9.244e+01,1.000e+01,9.24,(c) FÍSICA,
+car_on_car,120,Car Vel,9.244e+01,5.000e+01,1.85,(c) FÍSICA,
+wheels_on_ball,60,Car Pos,6.573e+00,1.000e+00,6.57,(c) FÍSICA,
+wheels_on_ball,60,Car Vel,4.855e+01,1.000e+01,4.85,(c) FÍSICA,
+wheels_on_ball,60,Ball Pos,5.793e+00,1.000e+00,5.79,(c) FÍSICA,
+wheels_on_ball,60,Ball Vel,2.461e+02,1.000e+01,24.61,(c) FÍSICA,
+wheels_on_ball,120,Car Pos,1.565e+01,5.000e+00,3.13,(c) FÍSICA,
+wheels_on_ball,120,Car Vel,4.855e+01,2.500e+01,1.94,(c) FÍSICA,
+wheels_on_ball,120,Ball Pos,1.968e+01,5.000e+00,3.94,(c) FÍSICA,
+wheels_on_ball,120,Ball Vel,2.461e+02,2.500e+01,9.84,(c) FÍSICA,
+wheels_on_car,60,Car Pos,1.803e+00,1.000e+00,1.80,(c) FÍSICA,
+wheels_on_car,60,Car Vel,4.576e+01,1.000e+01,4.58,(c) FÍSICA,
+car_bump_supersonic,60,Car Pos,2.603e+02,5.000e-01,520.60,(c) FÍSICA,Post-collision multi-body resolution drift
+car_bump_supersonic,60,Car Vel,1.038e+03,1.000e+00,1038.00,(c) FÍSICA,Post-collision multi-body resolution drift
+car_bump_supersonic,60,Car Quat,1.625e-01,5.000e-03,32.50,(c) FÍSICA,Post-collision multi-body resolution drift
+car_bump_supersonic,120,Car Pos,4.203e+02,2.000e+00,210.15,(c) FÍSICA,
+car_bump_supersonic,120,Car Vel,1.038e+03,5.000e+00,207.60,(c) FÍSICA,
+car_bump_supersonic,120,Car Quat,1.869e-01,2.000e-02,9.35,(c) FÍSICA,
+car_demo,60,Car Pos,2.681e+02,5.000e-01,536.20,(c) FÍSICA,Post-collision multi-body resolution drift
+car_demo,60,Car Vel,1.314e+03,1.000e+00,1314.00,(c) FÍSICA,Post-collision multi-body resolution drift
+car_demo,60,Car Quat,5.403e-01,5.000e-03,108.06,(c) FÍSICA,Post-collision multi-body resolution drift
+car_demo,120,Car Pos,5.144e+02,2.000e+00,257.20,(c) FÍSICA,
+car_demo,120,Car Vel,1.314e+03,5.000e+00,262.80,(c) FÍSICA,
+car_demo,120,Car Quat,7.202e-01,2.000e-02,36.01,(c) FÍSICA,
+car_demo_respawn,10,Car Pos,1.572e+01,5.000e-03,3144.00,(c) FÍSICA,
+car_demo_respawn,10,Car Vel,1.259e+03,1.000e-02,125900.00,(c) FÍSICA,
+car_demo_respawn,10,Car Quat,2.054e-02,1.000e-05,2054.00,(c) FÍSICA,
+car_demo_respawn,60,Car Pos,3.864e+02,5.000e-01,772.80,(c) FÍSICA,Post-collision multi-body resolution drift
+car_demo_respawn,60,Car Vel,1.259e+03,1.000e+00,1259.00,(c) FÍSICA,Post-collision multi-body resolution drift
+car_demo_respawn,60,Car Quat,5.501e-01,5.000e-03,110.02,(c) FÍSICA,Post-collision multi-body resolution drift
+car_demo_respawn,120,Car Pos,6.972e+02,2.000e+00,348.60,(c) FÍSICA,
+car_demo_respawn,120,Car Vel,1.259e+03,5.000e+00,251.80,(c) FÍSICA,
+car_demo_respawn,120,Car Quat,5.903e-01,2.000e-02,29.52,(c) FÍSICA,
+multicar_2v2_goal_demo,10,Ball Pos,4.193e+00,5.000e-03,838.60,(c) FÍSICA,
+multicar_2v2_goal_demo,10,Ball Vel,2.140e+02,1.000e-02,21400.00,(c) FÍSICA,
+multicar_2v2_goal_demo,60,Car Pos,3.249e+02,5.000e-01,649.80,(c) FÍSICA,
+multicar_2v2_goal_demo,60,Car Vel,1.314e+03,1.000e+00,1314.00,(c) FÍSICA,
+multicar_2v2_goal_demo,60,Car Quat,5.221e-01,5.000e-03,104.42,(c) FÍSICA,
+multicar_2v2_goal_demo,60,Ball Pos,8.082e+01,5.000e-01,161.64,(c) FÍSICA,
+multicar_2v2_goal_demo,60,Ball Vel,5.868e+02,1.000e+00,586.80,(c) FÍSICA,
+multicar_2v2_goal_demo,120,Car Pos,7.022e+02,2.000e+00,351.10,(c) FÍSICA,
+multicar_2v2_goal_demo,120,Car Vel,1.314e+03,5.000e+00,262.80,(c) FÍSICA,
+multicar_2v2_goal_demo,120,Car Quat,5.644e-01,2.000e-02,28.22,(c) FÍSICA,
+multicar_2v2_goal_demo,120,Ball Pos,1.362e+02,2.000e+00,68.10,(c) FÍSICA,
+multicar_2v2_goal_demo,120,Ball Vel,5.868e+02,5.000e+00,117.36,(c) FÍSICA,

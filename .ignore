@@ -1,0 +1,35 @@
+# Third-party heavy physics engine (Bullet 3.24 legacy reference)
+libsrc/bullet3-3.24/examples/
+libsrc/bullet3-3.24/test/
+libsrc/bullet3-3.24/Demos/
+libsrc/bullet3-3.24/Extras/
+
+# Build and binary artifacts
+build/
+out/
+x64/
+x86/
+Release/
+Debug/
+*.obj
+*.lib
+*.exe
+*.pyd
+*.whl
+*.pdb
+*.ilk
+*.bin
+*.rsgold
+*.cmf
+
+# Past teamwork run transcripts and logs
+.agents/teamwork/*/*.md
+.agents/teamwork/*/*.log
+!.agents/teamwork/ORIGINAL_REQUEST.md
+
+# Cache & temporary files
+.pytest_cache/
+__pycache__/
+*.pyc
+.vs/
+.vscode/
