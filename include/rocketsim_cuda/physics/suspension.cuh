@@ -128,6 +128,9 @@ struct WheelRaycastResult {
     Vec3 contact_normal = Vec3(0.0f, 0.0f, 1.0f); // Outward normal from hit body towards wheel
     uint8_t hit_object_type = HIT_OBJECT_NONE; // HitObjectType
     int hit_car_index = -1; // Index of hit car, or -1 if not a car
+    float v_rel_bt = 0.0f;
+    float inv_dot = 1.0f;
+    float proj_vel_bt = 0.0f;
 };
 
 // ============================================================================
@@ -313,7 +316,9 @@ __device__ __forceinline__ void evaluate_car_wheels_raycast_multibody(
     const uint8_t* __restrict__ other_cars_hitbox_type,
     uint8_t* __restrict__ wheels_in_contact,
     float* __restrict__ suspension_lengths,
-    WheelRaycastResult* __restrict__ results)
+    WheelRaycastResult* __restrict__ results,
+    const Vec3& vel_bt = Vec3(0.0f, 0.0f, 0.0f),
+    const Vec3& omega = Vec3(0.0f, 0.0f, 0.0f))
 {
     Vec3 up_dir = basis.up;
     Vec3 wheel_dir = up_dir * -1.0f;
@@ -394,6 +399,20 @@ __device__ __forceinline__ void evaluate_car_wheels_raycast_multibody(
             wheels_in_contact[w] = 1;
             float cur_susp_len = fminf(fmaxf(closest_dist - radius, config_rest - SUSP_MAX_TRAVEL), config_rest + SUSP_MAX_TRAVEL);
             suspension_lengths[w] = config_rest - cur_susp_len; // Compression in UU
+
+            Vec3 rel_pos_bt = (results[w].contact_pt - car_pos) * 0.02f;
+            Vec3 vel_at_pt_bt = vel_bt + omega.cross(rel_pos_bt);
+            float denominator = closest_normal.dot(up_dir);
+            float proj_vel = closest_normal.dot(vel_at_pt_bt);
+            results[w].proj_vel_bt = proj_vel;
+            if (denominator > 0.1f) {
+                float inv = 1.0f / denominator;
+                results[w].v_rel_bt = proj_vel * inv;
+                results[w].inv_dot = inv;
+            } else {
+                results[w].v_rel_bt = 0.0f;
+                results[w].inv_dot = 10.0f;
+            }
         } else {
             results[w].in_contact = false;
             results[w].hit_dist = real_ray_len;
@@ -401,6 +420,9 @@ __device__ __forceinline__ void evaluate_car_wheels_raycast_multibody(
             results[w].contact_normal = up_dir;
             results[w].hit_object_type = HIT_OBJECT_NONE;
             results[w].hit_car_index = -1;
+            results[w].v_rel_bt = 0.0f;
+            results[w].inv_dot = 1.0f;
+            results[w].proj_vel_bt = 0.0f;
 
             wheels_in_contact[w] = 0;
             suspension_lengths[w] = -SUSP_MAX_TRAVEL;
@@ -624,7 +646,7 @@ __device__ __forceinline__ void apply_wheel_reaction_to_car(
     uint8_t target_hitbox_type,
     float target_car_mass = CAR_MASS)
 {
-    Vec3 inv_inertia_bt = get_inv_inertia(target_hitbox_type, target_car_mass) * (1.0f / 2500.0f);
+    Vec3 inv_inertia_bt = get_inv_inertia_bt(target_hitbox_type, target_car_mass);
     target_vel_bt = target_vel_bt + reaction.lin_impulse_bt * (1.0f / target_car_mass);
     Vec3 delta_omega_loc = Vec3(
         inv_inertia_bt.x * (target_basis.transpose() * reaction.ang_impulse_bt).x,
@@ -673,7 +695,7 @@ __device__ __forceinline__ void apply_suspension_and_friction_multibody(
     BodyReactionImpulse* other_cars_reactions = nullptr,
     float car_mass = CAR_MASS)
 {
-    Vec3 inv_inertia_bt = car_cfg.calculate_inv_inertia(car_mass) * (1.0f / 2500.0f);
+    Vec3 inv_inertia_bt = car_cfg.calculate_inv_inertia_bt(car_mass);
     float inv_car_mass_bt = 1.0f / car_mass;
     Vec3 total_lin_imp_bt(0.0f, 0.0f, 0.0f);
     Vec3 total_ang_imp_bt(0.0f, 0.0f, 0.0f);
@@ -696,10 +718,9 @@ __device__ __forceinline__ void apply_suspension_and_friction_multibody(
         Vec3 vel_at_pt_bt = vel_bt + omega.cross(rel_pos_bt);
 
         // 1. Suspension Spring & Damping (btVehicleRL::updateSuspension)
-        float denominator = hit_normal.dot(basis.up);
-        float inv_dot = (denominator > 0.1f) ? (1.0f / denominator) : 10.0f;
-        float proj_vel_bt = hit_normal.dot(vel_at_pt_bt);
-        float v_rel_bt = (denominator > 0.1f) ? (proj_vel_bt * inv_dot) : 0.0f;
+        float inv_dot = wheel_results[w].inv_dot;
+        float proj_vel_bt = wheel_results[w].proj_vel_bt;
+        float v_rel_bt = wheel_results[w].v_rel_bt;
 
         float compression_bt = (config_rest - cur_susp_len) * 0.02f;
         float spring_force = compression_bt * SUSP_STIFFNESS * inv_dot;
@@ -729,7 +750,7 @@ __device__ __forceinline__ void apply_suspension_and_friction_multibody(
 
         Vec3 susp_imp_bt(0.0f, 0.0f, 0.0f);
         Vec3 susp_torque_bt(0.0f, 0.0f, 0.0f);
-        if (susp_force > 0.0f || extra_pushback > 0.0f) {
+        if (susp_force > 0.0f) {
             float base_scale_bt = (susp_force * dt) + extra_pushback;
             susp_imp_bt = hit_normal * base_scale_bt;
             susp_torque_bt = rel_pos_bt.cross(susp_imp_bt);
@@ -760,7 +781,7 @@ __device__ __forceinline__ void apply_suspension_and_friction_multibody(
             target_vel_at_pt_bt = other_cars_vel_bt[hit_car_idx] + other_cars_omega[hit_car_idx].cross(target_rel_pos_bt);
             Vec3 r_cross_axle = target_rel_pos_bt.cross(axle_dir);
             uint8_t other_type = other_cars_hitbox_type ? other_cars_hitbox_type[hit_car_idx] : 0;
-            Vec3 other_inv_inertia_bt = get_inv_inertia(other_type, car_mass) * (1.0f / 2500.0f);
+            Vec3 other_inv_inertia_bt = get_inv_inertia_bt(other_type, car_mass);
             Vec3 m_bJ = other_cars_basis[hit_car_idx].transpose() * r_cross_axle;
             other_ang_term = (other_inv_inertia_bt.x * m_bJ.x * m_bJ.x
                             + other_inv_inertia_bt.y * m_bJ.y * m_bJ.y
@@ -783,12 +804,14 @@ __device__ __forceinline__ void apply_suspension_and_friction_multibody(
                 rolling_friction = 0.0f;
             }
         } else {
-            rolling_friction = -cached_engine_force / 60.0f; // frictionScale = 180 / 3 = 60
+            float fric_scale_bt = car_mass / 3.0f; // btVehicleRL.cpp:308: m_chassisBody->getMass() / 3 (180.f / 3 = 60.f)
+            rolling_friction = -cached_engine_force / fric_scale_bt;
         }
 
+        float fric_scale_bt = car_mass / 3.0f;
         Vec3 total_friction_force = forward_dir * (rolling_friction * cached_long_frictions[w])
                                   + axle_dir * (side_impulse * cached_lat_frictions[w]);
-        Vec3 wheel_fric_imp_bt = total_friction_force * (60.0f * dt);
+        Vec3 wheel_fric_imp_bt = total_friction_force * (fric_scale_bt * dt);
 
         // Planar offset for tire friction: eliminates roll torque from tire sliding
         Vec3 r_planar_bt = rel_pos_bt - basis.up * basis.up.dot(rel_pos_bt);

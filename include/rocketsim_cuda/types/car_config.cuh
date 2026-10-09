@@ -105,6 +105,11 @@ struct alignas(16) CarConfig {
         Vec3 I = calculate_inertia(mass);
         return Vec3(1.0f / I.x, 1.0f / I.y, 1.0f / I.z);
     }
+
+    // Computes diagonal inverse moment of inertia in BT units matching Bullet btRigidBody::m_invInertiaLocal
+    __host__ __device__ inline constexpr Vec3 calculate_inv_inertia_bt(float mass = CAR_MASS) const {
+        return calculate_inv_inertia(mass) * 2500.0f;
+    }
 };
 
 // ============================================================================
@@ -291,6 +296,11 @@ __host__ __device__ inline constexpr float get_susp_rest_effective(uint8_t index
 __host__ __device__ inline constexpr Vec3 get_inv_inertia(uint8_t index, float mass = CAR_MASS) {
     const CarConfig& cfg = get_car_config(index);
     return cfg.calculate_inv_inertia(mass);
+}
+
+__host__ __device__ inline constexpr Vec3 get_inv_inertia_bt(uint8_t index, float mass = CAR_MASS) {
+    const CarConfig& cfg = get_car_config(index);
+    return cfg.calculate_inv_inertia_bt(mass);
 }
 
 // ============================================================================

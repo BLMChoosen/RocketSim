@@ -35,7 +35,7 @@ __device__ void StepBallDevice(
     vel = vel + mut_cfg.gravity * dt;
 
     // 3. Arena / Ground collision resolution (updates velocities and pushes out penetration)
-    resolve_ball_arena_collision(pos, vel, ang_vel, mut_cfg.ball_radius, mut_cfg.ball_world_restitution, mut_cfg.ball_world_friction);
+    resolve_ball_arena_collision(pos, vel, ang_vel, mut_cfg.ball_radius, mut_cfg.ball_world_restitution, mut_cfg.ball_world_friction, mut_cfg.gravity.z, dt);
 
     // 4. Linear pos integration with post-collision velocity (in Bullet units for exact rounding parity)
     pos = (pos * 0.02f + vel * (0.02f * dt)) * 50.0f;
@@ -159,12 +159,14 @@ __device__ void StepCarDevice(
     float susp_lengths[4] = {0};
     WheelRaycastResult wheel_results[4];
 
+    Vec3 vel_bt_init = vel * 0.02f;
     evaluate_car_wheels_raycast_multibody(
         pos, basis, car_cfg,
         has_ball, ball_pos, mut_cfg.ball_radius,
         cars_per_env, car_in_env_idx,
         other_cars_pos, other_cars_basis, other_cars_is_demoed, other_cars_hitbox_type,
-        wheels_contact, susp_lengths, wheel_results
+        wheels_contact, susp_lengths, wheel_results,
+        vel_bt_init, omega
     );
 
     // Track ball touched from wheel contacts (R4)
@@ -202,6 +204,7 @@ __device__ void StepCarDevice(
 
     // 5. Update wheel dynamics (throttle, brake, steer, friction curves, sticky downforce) for NEXT tick
     Vec3 total_force(0.0f, 0.0f, 0.0f);
+    Vec3 total_torque_omega(0.0f, 0.0f, 0.0f);
     Vec3 contact_normals[4] = {
         wheel_results[0].contact_normal,
         wheel_results[1].contact_normal,
@@ -214,14 +217,15 @@ __device__ void StepCarDevice(
         num_wheels_contact, wheels_contact,
         contact_normals, basis,
         vel, omega, dt,
-        total_force
+        total_force,
+        car_cfg
     );
 
     // 6. Air control vs flipping reset
     float fwd_speed = vel.dot(basis.forward);
     if (num_wheels_contact < 3) {
         bool allow_air_torque = (num_wheels_contact == 0);
-        update_car_air_control(car_idx, car_state, ctrl, basis, dt, omega, total_force, allow_air_torque);
+        update_car_air_control(car_idx, car_state, ctrl, basis, dt, omega, total_torque_omega, total_force, allow_air_torque);
     } else {
         car_state.is_flipping[car_idx] = 0;
     }
@@ -232,21 +236,17 @@ __device__ void StepCarDevice(
     // 8. Jump, double jump, flip/dodge
     update_car_jump(car_idx, car_state, ctrl, is_on_ground, basis, fwd_speed, dt, vel, total_force);
 
-    // 9. Surface alignment (auto-roll)
+    // 9. Surface alignment (auto-roll) matching Car.cpp:135
     if (ctrl.throttle != 0.0f && ((num_wheels_contact > 0 && num_wheels_contact < 4) || car_state.world_contact_has_contact[car_idx])) {
         update_car_auto_roll(
             car_idx, car_state, num_wheels_contact, wheels_contact,
-            contact_normals, basis, dt, total_force, omega
+            contact_normals, basis, dt, total_force, total_torque_omega
         );
     }
-
-    // Clear world contact has contact flag after auto-roll / auto-flip have consumed it
     car_state.world_contact_has_contact[car_idx] = 0;
 
-    // 10. Boost update
-    update_car_boost(car_idx, car_state, ctrl, is_on_ground, basis, dt, total_force);
-
-    // 11. Multi-body suspension & bilateral tire friction impulses (btVehicleRL::updateVehicleSecond) (R3)
+    // 10. Multi-body suspension & bilateral tire friction impulses (btVehicleRL::updateVehicleSecond) (R3)
+    float pre_susp_vz = vel.z;
     Vec3 vel_bt = vel * 0.02f;
     apply_suspension_and_friction_multibody(
         pos, basis, car_cfg, wheel_results, dt,
@@ -259,6 +259,10 @@ __device__ void StepCarDevice(
         mut_cfg.car_mass
     );
     vel = vel_bt * 50.0f;
+    float post_susp_vz = vel.z;
+
+    // 11. Boost update matching Car.cpp:143
+    update_car_boost(car_idx, car_state, ctrl, is_on_ground, basis, dt, total_force);
 
     // 12. Gravity (R6)
     total_force = total_force + mut_cfg.gravity * mut_cfg.car_mass;
@@ -267,13 +271,17 @@ __device__ void StepCarDevice(
     vel = vel + total_force * ((1.0f / mut_cfg.car_mass) * dt);
     pos_bt = pos_bt + (vel * 0.02f) * dt;
     pos = pos_bt * 50.0f;
+    float post_euler_vz = vel.z;
 
-    // 14. Angular dynamics with preset inertia (R5, R6)
-    Vec3 total_torque(0.0f, 0.0f, 0.0f);
-    bullet_angular_dynamics(omega, total_torque, car_cfg.calculate_inv_inertia(mut_cfg.car_mass), basis, dt);
+    // 14. Angular dynamics integration matching Bullet integrateVelocities
+    omega = omega + total_torque_omega * dt;
 
     // 15. Chassis arena contact with preset hitbox extents (R5, R6)
-    resolve_chassis_arena_collision(car_idx, car_state, pos, vel, omega, basis, dt, car_cfg.hitbox_pos_offset, car_cfg.get_hitbox_half(), mut_cfg.car_mass);
+    resolve_chassis_arena_collision(
+        car_idx, car_state, pos, vel, omega, basis, dt,
+        car_cfg.hitbox_pos_offset, car_cfg.get_hitbox_half(),
+        mut_cfg.car_mass, car_cfg.calculate_inv_inertia_bt(mut_cfg.car_mass)
+    );
     pos_bt = pos * 0.02f;
 
     // 16. Quaternion integration
@@ -377,6 +385,18 @@ __global__ void StepSimulationKernel(
     MutatorConfig mut_cfg = mutator_config.get(env_idx);
     ArenaConfig arena_cfg = arena_config.get(env_idx);
 
+    // 0. Resolve Car-Car Collisions & Bumps (R1, R2, R5, R6)
+    // Matches Bullet performing discrete collision detection at the beginning of the tick
+    if (cars_per_env > 1) {
+        resolve_all_car_car_collisions(
+            env_idx, cars_per_env, car_state, dt,
+            static_cast<int>(mut_cfg.demo_mode),
+            mut_cfg.enable_team_demos,
+            mut_cfg.bump_force_scale,
+            mut_cfg.respawn_delay
+        );
+    }
+
     // Multi-body kinematics snapshot for this environment (up to 6 cars)
     constexpr uint32_t MAX_ENV_CARS = 6;
     Vec3 cars_pos[MAX_ENV_CARS];
@@ -448,17 +468,6 @@ __global__ void StepSimulationKernel(
 
     // Step Ball (R6 mutators)
     StepBallDevice(env_idx, ball_state, dt, mut_cfg);
-
-    // Resolve Car-Car Collisions & Bumps (R1, R2, R5, R6)
-    if (cars_per_env > 1) {
-        resolve_all_car_car_collisions(
-            env_idx, cars_per_env, car_state, dt,
-            static_cast<int>(mut_cfg.demo_mode),
-            mut_cfg.enable_team_demos,
-            mut_cfg.bump_force_scale,
-            mut_cfg.respawn_delay
-        );
-    }
 
     // Increment Arena Tick Count
     if (arena_state.tick_count) {

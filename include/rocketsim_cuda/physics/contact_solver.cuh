@@ -404,7 +404,9 @@ __device__ __forceinline__ void resolve_ball_arena_collision(
     Vec3& ang_vel,
     float radius = BALL_RADIUS,
     float restitution = BALL_RESTITUTION,
-    float friction = BALL_FRICTION)
+    float friction = BALL_FRICTION,
+    float gravity_z = GRAVITY_Z,
+    float dt = 1.0f / 120.0f)
 {
     float dist = 0.0f;
     Vec3 normal(0.0f, 0.0f, 1.0f);
@@ -462,12 +464,20 @@ __device__ __forceinline__ void resolve_chassis_arena_collision(
     float dt,
     const Vec3& hitbox_offset = get_octane_hitbox_offset(),
     const Vec3& hitbox_half = get_octane_hitbox_half(),
-    float car_mass = CAR_MASS)
+    float car_mass = CAR_MASS,
+    const Vec3& inv_inertia_bt = Vec3(1.0f / 54.0f, 1.0f / 96.0f, 1.0f / 132.0f))
 {
     bool has_contact = false;
     Vec3 sum_normal(0.0f, 0.0f, 0.0f);
+    int num_contacts = 0;
+    int contact_indices[8];
+    float contact_dists[8];
+    Vec3 contact_normals[8];
+    Vec3 contact_corners[8];
 
-    // Check 8 corner vertices of oriented hitbox
+    constexpr float CHASSIS_MARGIN_UU = 0.04f * 50.0f; // 2.0f UU (CONVEX_DISTANCE_MARGIN)
+
+    // 1. Identify penetrating corners against Arena SDF
     #pragma unroll
     for (int i = 0; i < 8; ++i) {
         float sx = (i & 1) ? 1.0f : -1.0f;
@@ -485,24 +495,70 @@ __device__ __forceinline__ void resolve_chassis_arena_collision(
         Vec3 normal(0.0f, 0.0f, 1.0f);
         arena_sdf_and_normal(world_corner, dist, normal);
 
-        if (dist < 0.0f) {
+        if (dist <= CHASSIS_MARGIN_UU) {
             has_contact = true;
             sum_normal = sum_normal + normal;
+            contact_indices[num_contacts] = i;
+            contact_dists[num_contacts] = dist;
+            contact_normals[num_contacts] = normal;
+            contact_corners[num_contacts] = world_corner;
+            num_contacts++;
+        }
+    }
 
-            float depth = -dist;
-            pos = pos + normal * (depth * 0.125f); // Distributed position correction
+    // 2. Resolve contact impulses matching Bullet resolveSingleCollision
+    if (num_contacts > 0) {
+        float contact_scale = 1.0f / static_cast<float>(num_contacts);
+        Vec3 vel_bt = vel * 0.02f;
 
-            Vec3 rel_pos = world_corner - pos;
-            Vec3 pt_vel = vel + omega.cross(rel_pos);
-            float vn = normal.dot(pt_vel);
+        for (int k = 0; k < num_contacts; ++k) {
+            float dist = contact_dists[k];
+            Vec3 normal = contact_normals[k];
+            Vec3 world_corner = contact_corners[k];
 
-            if (vn < 0.0f) {
-                float impulse_mag = -(1.1f * vn) + (0.2f * depth / dt);
-                Vec3 impulse = normal * (impulse_mag * car_mass * 0.125f);
-                vel = vel + impulse * (1.0f / car_mass);
-                omega = omega + rel_pos.cross(impulse) * (1.0f / (car_mass * 1000.0f));
+            float dist_bt = dist * 0.02f;
+            float penetration_bt = 0.04f - dist_bt;
+            if (penetration_bt > 0.0f) {
+                pos = pos + normal * (penetration_bt * 50.0f * contact_scale);
+            }
+
+            Vec3 rel_pos_bt = (world_corner - pos) * 0.02f;
+            Vec3 pt_vel_bt = vel_bt + omega.cross(rel_pos_bt);
+            float rel_vel = normal.dot(pt_vel_bt);
+
+            if (rel_vel < 0.0f || penetration_bt > 0.0f) {
+                float pos_error = (0.2f * penetration_bt) / dt;
+                float vel_error = -(1.0f + 0.3f) * rel_vel; // CARWORLD_COLLISION_RESTITUTION = 0.3f
+
+                Vec3 c0 = rel_pos_bt.cross(normal);
+                Vec3 c0_loc = basis.transpose() * c0;
+                float denom = (1.0f / car_mass) + (c0_loc.x * c0_loc.x * inv_inertia_bt.x
+                                                + c0_loc.y * c0_loc.y * inv_inertia_bt.y
+                                                + c0_loc.z * c0_loc.z * inv_inertia_bt.z);
+
+                float normal_impulse_bt = fmaxf(0.0f, (pos_error + vel_error) / denom) * contact_scale;
+                Vec3 imp_bt = normal * normal_impulse_bt;
+
+                // Coulomb friction: CARWORLD_COLLISION_FRICTION = 0.3f
+                Vec3 tangent_vel = pt_vel_bt - normal * rel_vel;
+                float tangent_speed = tangent_vel.length();
+                if (tangent_speed > 1e-4f && normal_impulse_bt > 0.0f) {
+                    Vec3 tangent_dir = tangent_vel * (1.0f / tangent_speed);
+                    float friction_impulse_bt = fminf(tangent_speed * car_mass, normal_impulse_bt * 0.3f);
+                    imp_bt = imp_bt - tangent_dir * friction_impulse_bt;
+                }
+
+                vel_bt = vel_bt + imp_bt * (1.0f / car_mass);
+                Vec3 ang_imp_loc = basis.transpose() * (rel_pos_bt.cross(imp_bt));
+                Vec3 d_omega_loc(
+                    ang_imp_loc.x * inv_inertia_bt.x,
+                    ang_imp_loc.y * inv_inertia_bt.y,
+                    ang_imp_loc.z * inv_inertia_bt.z
+                );
+                omega = omega + basis * d_omega_loc;
             }
         }
+        vel = vel_bt * 50.0f;
     }
 
     if (has_contact) {

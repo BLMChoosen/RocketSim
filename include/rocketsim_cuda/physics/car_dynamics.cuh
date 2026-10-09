@@ -7,6 +7,7 @@
 #include "rocketsim_cuda/math/mat3.cuh"
 #include "rocketsim_cuda/types/car_state.cuh"
 #include "rocketsim_cuda/types/car_controls.cuh"
+#include "rocketsim_cuda/types/car_config.cuh"
 #include "rocketsim_cuda/physics/suspension.cuh"
 
 namespace rocketsim_cuda {
@@ -78,6 +79,12 @@ __device__ __forceinline__ float get_powerslide_steer_angle(float speed) {
     return 0.12610f;
 }
 
+__device__ __forceinline__ float get_steer_angle_threewheel(float speed) {
+    if (speed <= 0.0f) return 0.342473f;
+    if (speed >= 2300.0f) return 0.034837f;
+    return 0.342473f + (speed / 2300.0f) * (0.034837f - 0.342473f);
+}
+
 __device__ __forceinline__ float get_non_sticky_friction_scale(float normal_z) {
     if (normal_z <= 0.0f) return 0.1f;
     if (normal_z < 0.7075f) return 0.1f + (normal_z / 0.7075f) * (0.5f - 0.1f);
@@ -89,6 +96,12 @@ __device__ __forceinline__ float get_lat_friction(float slip) {
     if (slip <= 0.0f) return 1.0f;
     if (slip < 1.0f) return 1.0f - 0.8f * slip;
     return 0.2f;
+}
+
+__device__ __forceinline__ float get_lat_friction_threewheel(float slip) {
+    if (slip <= 0.0f) return 0.30f;
+    if (slip >= 1.0f) return 0.25f;
+    return 0.30f + slip * (0.25f - 0.30f);
 }
 
 __device__ __forceinline__ float get_handbrake_long_friction(float slip) {
@@ -153,7 +166,8 @@ __device__ __forceinline__ void update_car_wheel_dynamics(
     const Vec3& vel,
     const Vec3& omega,
     float dt,
-    Vec3& total_force)
+    Vec3& total_force,
+    const CarConfig& car_cfg = CAR_CONFIG_OCTANE)
 {
     float fwd_speed = vel.dot(basis.forward);
     float abs_fwd_speed = fabsf(fwd_speed);
@@ -197,21 +211,26 @@ __device__ __forceinline__ void update_car_wheel_dynamics(
         drive_speed_scale /= 4.0f;
     }
 
-    float drive_engine_force = engine_throttle * 1440.0f * drive_speed_scale; // 180 * 400 * 0.02 = 1440
-    float drive_brake_force = real_brake * 52.5f;                             // 180 * 14.58333 * 0.02 = 52.5
+    // CPU Reference Car.cpp:409-410:
+    // THROTTLE_TORQUE_AMOUNT = CAR_MASS_BT * 400.0f = 72000.0f
+    // driveEngineForce = engineThrottle * (THROTTLE_TORQUE_AMOUNT * UU_TO_BT) * driveSpeedScale = 72000.0f * 0.02f = 1440.0f
+    // BRAKE_TORQUE_AMOUNT = CAR_MASS_BT * (14.25f + 1/3f) = 2625.0f
+    // driveBrakeForce = realBrake * (BRAKE_TORQUE_AMOUNT * UU_TO_BT) = 2625.0f * 0.02f = 52.5f
+    float drive_engine_force = engine_throttle * 1440.0f * drive_speed_scale;
+    float drive_brake_force = real_brake * 52.5f;
 
     car_state.wheel_engine_force[car_idx] = drive_engine_force;
     car_state.wheel_brake[car_idx] = drive_brake_force;
 
-    // 3. Steer angle
-    float steer_angle = get_steer_angle(abs_fwd_speed);
+    // 3. Steer angle (Car.cpp:418)
+    float steer_angle = car_cfg.three_wheels ? get_steer_angle_threewheel(abs_fwd_speed) : get_steer_angle(abs_fwd_speed);
     if (handbrake_val > 0.0f) {
         steer_angle += (get_powerslide_steer_angle(abs_fwd_speed) - steer_angle) * handbrake_val;
     }
     steer_angle *= ctrl.steer;
     car_state.wheel_steer_angle[car_idx] = steer_angle;
 
-    // 4. Per-wheel friction coefficients
+    // 4. Per-wheel friction coefficients (Car.cpp:432-475)
     #pragma unroll
     for (int w = 0; w < 4; ++w) {
         if (!wheels_contact[w]) continue;
@@ -221,7 +240,7 @@ __device__ __forceinline__ void update_car_wheel_dynamics(
         Vec3 lat_dir = basis.right * cosf(steer) - basis.forward * sinf(steer);
         Vec3 long_dir = lat_dir.cross(hit_normal);
 
-        Vec3 wheel_offset = get_octane_wheel_offset(w);
+        Vec3 wheel_offset = car_cfg.get_wheel_connection_offset(w);
         Vec3 wheel_delta = basis * wheel_offset;
         Vec3 cross_vec = omega.cross(wheel_delta) + vel;
 
@@ -231,7 +250,7 @@ __device__ __forceinline__ void update_car_wheel_dynamics(
             friction_curve_input = base_friction / (fabsf(cross_vec.dot(long_dir)) + base_friction);
         }
 
-        float lat_fric = get_lat_friction(friction_curve_input);
+        float lat_fric = car_cfg.three_wheels ? get_lat_friction_threewheel(friction_curve_input) : get_lat_friction(friction_curve_input);
         float long_fric = 1.0f;
 
         if (handbrake_val > 0.0f) {
@@ -239,7 +258,8 @@ __device__ __forceinline__ void update_car_wheel_dynamics(
             long_fric *= (get_handbrake_long_friction(friction_curve_input) - 1.0f) * handbrake_val + 1.0f;
         }
 
-        if (real_throttle == 0.0f) {
+        bool is_contact_sticky = (real_throttle != 0.0f) || (abs_fwd_speed > 25.0f);
+        if (!is_contact_sticky) {
             float non_sticky = get_non_sticky_friction_scale(hit_normal.z);
             lat_fric *= non_sticky;
             long_fric *= non_sticky;
@@ -266,7 +286,7 @@ __device__ __forceinline__ void update_car_wheel_dynamics(
         }
         Vec3 upwards_dir = (sum_normals.length_sq() > 1e-6f) ? sum_normals.normalized() : basis.up;
         bool full_stick = (real_throttle != 0.0f) || (abs_fwd_speed > 25.0f);
-        float sticky_scale = 0.5f + (full_stick ? (1.0f - fabsf(upwards_dir.z)) : 0.0f);
+        float sticky_scale = (car_cfg.three_wheels ? 0.0f : 0.5f) + (full_stick ? (1.0f - fabsf(upwards_dir.z)) : 0.0f);
         total_force = total_force + upwards_dir * (sticky_scale * GRAVITY_Z * CAR_MASS);
     }
 }
@@ -443,7 +463,8 @@ __device__ __forceinline__ void update_car_air_control(
     const CarControls& controls,
     const Mat3& basis,
     float dt,
-    Vec3& omega,
+    const Vec3& omega,
+    Vec3& total_torque_omega,
     Vec3& total_force,
     bool allow_air_torque = true)
 {
@@ -490,7 +511,7 @@ __device__ __forceinline__ void update_car_air_control(
                 rel_dodge_torque.y * FLIP_TORQUE_Y,
                 0.0f
             );
-            omega = omega + basis * dodge_torque * dt;
+            total_torque_omega = total_torque_omega + (basis * dodge_torque);
         } else {
             do_air_control = true;
         }
@@ -518,8 +539,8 @@ __device__ __forceinline__ void update_car_air_control(
         float damp_roll = dir_roll.dot(omega_pre) * CAR_AIR_CONTROL_DAMPING_Z;
 
         Vec3 air_damping = dir_yaw * damp_yaw + dir_pitch * damp_pitch + dir_roll * damp_roll;
-        Vec3 delta_omega = (air_torque - air_damping) * (CAR_TORQUE_SCALE * dt);
-        omega = omega + delta_omega;
+        Vec3 delta_omega_accel = (air_torque - air_damping) * CAR_TORQUE_SCALE;
+        total_torque_omega = total_torque_omega + delta_omega_accel;
     }
 }
 
@@ -591,7 +612,7 @@ __device__ __forceinline__ void update_car_auto_roll(
     const Mat3& basis,
     float dt,
     Vec3& total_force,
-    Vec3& omega)
+    Vec3& total_torque_omega)
 {
     Vec3 ground_up_dir;
     if (num_wheels_in_contact > 0) {
@@ -633,7 +654,7 @@ __device__ __forceinline__ void update_car_auto_roll(
     Vec3 torque_forward = torque_dir_forward * forward_torque_factor;
 
     total_force = total_force + ground_down_dir * (CAR_AUTOROLL_FORCE * CAR_MASS);
-    omega = omega + (torque_forward + torque_right) * (CAR_AUTOROLL_TORQUE * dt);
+    total_torque_omega = total_torque_omega + (torque_forward + torque_right) * CAR_AUTOROLL_TORQUE;
 }
 
 /**
